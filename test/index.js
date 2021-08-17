@@ -1,4 +1,5 @@
 const { galeraCluster } = require('../dist/index')
+const { Logger } = require('../dist/lib/Logger');
 require('dotenv').config()
 
 const cluster = galeraCluster.createPoolCluster([
@@ -16,8 +17,16 @@ const cluster = galeraCluster.createPoolCluster([
 
 cluster.connect(process.env.DB_USERNAME, process.env.DB_PASSWORD, process.env.DB_DATABASE)
 
-// cluster.query(`SELECT * from officering_api_doc.MethodType`, (error, result, fields) => {
-//     console.log(error)
-//     console.log(result)
-//     console.log(fields)
-// })
+cluster.query(`SELECT * from officering_api_doc.MethodType`, (error, result) => {
+    if (error) {
+        Logger(error)
+        return
+    }
+
+    console.log(result)
+
+
+    cluster.disconnect()
+})
+
+
