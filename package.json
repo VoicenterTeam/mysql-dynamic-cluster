@@ -1,0 +1,46 @@
+{
+  "name": "mysql-dynamic-cluster",
+  "version": "1.0.0",
+  "description": "mysql cluster implementation with dynamic limit and hashing logic",
+  "homepage": "https://github.com/VoicenterTeam/mysql-dynamic-cluster#readme",
+  "bugs": {
+    "url": "https://github.com/VoicenterTeam/mysql-dynamic-cluster/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VoicenterTeam/mysql-dynamic-cluster.git"
+  },
+  "keywords": [
+    "mysql",
+    "galera",
+    "pool",
+    "client"
+  ],
+  "author": "bodamat",
+  "contributors": [
+    {
+      "name": "bodamat",
+      "email": "bomtvv@gmail.com"
+    }
+  ],
+  "license": "ISC",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "prepublish": "npm run build",
+    "start": "npm run build && node test/index.js"
+  },
+  "dependencies": {
+    "mysql2": "^2.3.0",
+    "typescript": "^4.3.5"
+  },
+  "devDependencies": {
+    "@types/node": "^16.7.2",
+    "dotenv": "^10.0.0",
+    "tslint": "^6.1.3"
+  }
+}
