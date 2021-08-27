@@ -1,4 +1,4 @@
-export interface mysqlGaleraHost {
+export interface MysqlGaleraHost {
     host: string,
     port: number,
     connectionLimit: number

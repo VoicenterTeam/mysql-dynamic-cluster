@@ -1,4 +1,4 @@
-import { mysqlGaleraHost, GaleraClusterOptions } from "./interfaces";
+import { MysqlGaleraHost, GaleraClusterOptions } from "./interfaces";
 import {OkPacket, ResultSetHeader, RowDataPacket, QueryError, FieldPacket, Pool, Query} from "mysql2/typings/mysql";
 import { Logger } from "./Logger"
 
@@ -6,9 +6,9 @@ import { createPool } from "mysql2";
 
 export class GaleraCluster {
     private pools: Pool[] = []
-    private galeraHosts: mysqlGaleraHost[] = []
+    private galeraHosts: MysqlGaleraHost[] = []
 
-    constructor(mysqlGaleraHosts: mysqlGaleraHost[], options?: GaleraClusterOptions ) {
+    constructor(mysqlGaleraHosts: MysqlGaleraHost[], options?: GaleraClusterOptions ) {
         this.galeraHosts = mysqlGaleraHosts
 
         Logger("init configuration")
@@ -21,9 +21,9 @@ export class GaleraCluster {
                 createPool({
                     connectionLimit: host.connectionLimit,
                     host: host.host,
-                    user: user,
-                    password: password,
-                    database: database
+                    user,
+                    password,
+                    database
                 })
             )
         })

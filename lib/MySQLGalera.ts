@@ -1,7 +1,7 @@
 import { GaleraCluster } from './GaleraCluster'
-import { mysqlGaleraHost } from './interfaces'
+import { MysqlGaleraHost } from './interfaces'
 
-function createPoolCluster(mysqlGaleraHosts: Array<mysqlGaleraHost>): GaleraCluster {
+function createPoolCluster(mysqlGaleraHosts: MysqlGaleraHost[]): GaleraCluster {
     return new GaleraCluster(mysqlGaleraHosts);
 }
 
