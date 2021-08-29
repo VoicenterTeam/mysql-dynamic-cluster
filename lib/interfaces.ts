@@ -1,12 +1,23 @@
-export interface MysqlGaleraHost {
+export interface GaleraHostSettings {
+    id?: number,
     host: string,
-    port: number,
-    connectionLimit: number
+    port?: string,
+    connectionLimit?: number,
+    user?: string,
+    password?: string,
+    database?: string,
 }
 
-export interface GaleraClusterOptions {
-    canRetry: boolean,
-    defaultSelector: string,
-    restoreNodeTimeout: number,
-    removeNodeErrorCount: number
+export interface UserSettings {
+    hosts: GaleraHostSettings[],
+    user: string,
+    password: string,
+    database: string,
+    connectionLimit?: number,
+    port?: string,
+
+    canRetry?: boolean,
+    defaultSelector?: string,
+    restoreNodeTimeout?: number,
+    removeNodeErrorCount?: number
 }

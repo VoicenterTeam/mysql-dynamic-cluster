@@ -1,3 +1,10 @@
-import galeraCluster from './lib/MySQLGalera'
+import {UserSettings} from "./lib/interfaces";
+import {GaleraCluster} from "./lib/GaleraCluster";
 
-export { galeraCluster }
+function createPoolCluster(userSettings?: UserSettings): GaleraCluster {
+    return new GaleraCluster(userSettings);
+}
+
+export {
+    createPoolCluster
+};

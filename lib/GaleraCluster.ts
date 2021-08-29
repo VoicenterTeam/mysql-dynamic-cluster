@@ -1,45 +1,58 @@
-import { MysqlGaleraHost, GaleraClusterOptions } from "./interfaces";
-import {OkPacket, ResultSetHeader, RowDataPacket, QueryError, FieldPacket, Pool, Query} from "mysql2/typings/mysql";
+import { UserSettings } from "./interfaces";
 import { Logger } from "./Logger"
 
-import { createPool } from "mysql2";
+import {Host} from "./Host";
+import {FieldPacket, OkPacket, Query, QueryError, ResultSetHeader, RowDataPacket} from "mysql2/typings/mysql";
+import {Utils} from "./Utils";
 
 export class GaleraCluster {
-    private pools: Pool[] = []
-    private galeraHosts: MysqlGaleraHost[] = []
+    private galeraHosts: Host[] = []
 
-    constructor(mysqlGaleraHosts: MysqlGaleraHost[], options?: GaleraClusterOptions ) {
-        this.galeraHosts = mysqlGaleraHosts
+    constructor(userSettings?: UserSettings ) {
+        userSettings.hosts.forEach(hostSettings => {
+            hostSettings = {
+                user: userSettings.user,
+                password: userSettings.password,
+                database: userSettings.database,
+                ...hostSettings
+            }
 
-        Logger("init configuration")
+            if (!hostSettings.connectionLimit && userSettings.connectionLimit) {
+                hostSettings.connectionLimit = userSettings.connectionLimit
+            }
+
+            if (!hostSettings.port && userSettings.port) {
+                hostSettings.port = userSettings.port
+            }
+
+            this.galeraHosts.push(
+                new Host(hostSettings)
+            )
+        })
+
+        Logger("configuration finished")
     }
 
-    public connect(user: string, password: string, database: string) {
+    public connect() {
+        Logger("connecting all hosts")
         this.galeraHosts.forEach((host) => {
-            Logger("Creating pool in host: " + host.host)
-            this.pools.push(
-                createPool({
-                    connectionLimit: host.connectionLimit,
-                    host: host.host,
-                    user,
-                    password,
-                    database
-                })
-            )
+            host.connect();
         })
     }
 
     public disconnect() {
-        this.pools.forEach(pool => {
-            pool.end()
+        Logger("disconnecting all hosts")
+        this.galeraHosts.forEach((host) => {
+            host.disconnect();
         })
     }
 
-    // private async connectPoolEvents(pool: Pool): Promise<void> {
-    //
-    // }
+    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
+    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
+    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query {
+        const activeHosts: Host[] = this.galeraHosts.filter(host => host.checkStatus())
+        const bestHost: Host = activeHosts[Utils.getRandomIntInRange(0, activeHosts.length - 1)]
 
-    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, callback?: (error: QueryError, result: T, fields: FieldPacket) => void): Query {
-        return this.pools[0].query(sql, callback);
+        return bestHost.pool.query(sql, values, callback);
     }
 }
