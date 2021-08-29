@@ -1,32 +1,41 @@
-const { galeraCluster } = require('../dist/index')
-const { Logger } = require('../dist/lib/Logger');
+const galeraCluster = require('../dist/index')
 require('dotenv').config()
 
-const cluster = galeraCluster.createPoolCluster([
-    {
-        host: process.env.DB_HOST2,
-        port: process.env.DB_PORT,
-        connectionLimit: process.env.DB_CONNECTION_LIMIT
-    },
-    {
-        host: process.env.DB_HOST3,
-        port: process.env.DB_PORT,
-        connectionLimit: process.env.DB_CONNECTION_LIMIT
-    }
-])
+const cluster = galeraCluster.createPoolCluster({
+    hosts: [
+        {
+            host: process.env.DB_HOST2
+        },
+        {
+            host: process.env.DB_HOST3
+        }
+    ],
+    user: process.env.DB_USERNAME,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_DATABASE
+})
 
-cluster.connect(process.env.DB_USERNAME, process.env.DB_PASSWORD, process.env.DB_DATABASE)
+cluster.connect()
 
 cluster.query(`SELECT * from officering_api_doc.MethodType`, (error, result) => {
     if (error) {
-        Logger(error)
+        console.log(error.toString())
         return
     }
 
-    console.log(result)
+    console.log("Query1 -> ", result[0])
+})
 
+console.log("Test")
+
+cluster.query(`SELECT * from officering_api_doc.MethodType`, (error, result) => {
+    if (error) {
+        console.log(error.toString())
+        return
+    }
+
+    console.log("Query2 -> ", result[0].MethodTypeName)
 
     cluster.disconnect()
 })
-
 
