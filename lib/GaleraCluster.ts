@@ -1,29 +1,16 @@
-import { UserSettings } from "./interfaces";
+import { UserSettings, PoolSettings } from "./interfaces";
 import { Logger } from "./Logger"
 
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
-import {Utils} from "./Utils";
-import {Pool} from "./Pool";
+import { Utils } from "./Utils";
+import { Pool } from "./Pool";
 
 export class GaleraCluster {
     private pools: Pool[] = []
 
-    constructor(userSettings?: UserSettings ) {
+    constructor(userSettings: UserSettings ) {
         userSettings.hosts.forEach(poolSettings => {
-            poolSettings = {
-                user: userSettings.user,
-                password: userSettings.password,
-                database: userSettings.database,
-                ...poolSettings
-            }
-
-            if (!poolSettings.connectionLimit && userSettings.connectionLimit) {
-                poolSettings.connectionLimit = userSettings.connectionLimit
-            }
-
-            if (!poolSettings.port && userSettings.port) {
-                poolSettings.port = userSettings.port
-            }
+            GaleraCluster.mixPoolSettings(poolSettings, userSettings)
 
             this.pools.push(
                 new Pool(poolSettings)
@@ -31,6 +18,23 @@ export class GaleraCluster {
         })
 
         Logger("configuration finished")
+    }
+
+    private static mixPoolSettings(poolSettings: PoolSettings, userSettings: UserSettings) {
+        poolSettings = {
+            user: userSettings.user,
+            password: userSettings.password,
+            database: userSettings.database,
+            ...poolSettings
+        }
+
+        if (!poolSettings.connectionLimit && userSettings.connectionLimit) {
+            poolSettings.connectionLimit = userSettings.connectionLimit
+        }
+
+        if (!poolSettings.port && userSettings.port) {
+            poolSettings.port = userSettings.port
+        }
     }
 
     public connect() {
