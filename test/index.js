@@ -17,25 +17,27 @@ const cluster = galeraCluster.createPoolCluster({
 
 cluster.connect()
 
-cluster.query(`SELECT * from officering_api_doc.MethodType`, (error, result) => {
-    if (error) {
-        console.log(error.toString())
-        return
-    }
+async function test() {
+    cluster.query(`SELECT * from officering_api_doc.MethodType`)
+        .then(result => {
+            console.log("Query1 -> ", result[0])
+        })
+        .catch(error => {
+            console.log(error.message)
+        })
 
-    console.log("Query1 -> ", result[0])
-})
+    console.log("Test")
 
-console.log("Test")
+    cluster.query(`SELECT * from officering_api_doc.MethodType`)
+        .then(result => {
+            console.log("Query2 -> ", result[0].MethodTypeName)
 
-cluster.query(`SELECT * from officering_api_doc.MethodType`, (error, result) => {
-    if (error) {
-        console.log(error.toString())
-        return
-    }
+            cluster.disconnect()
+        })
+        .catch(error => {
+            console.log(error.message)
+        })
+}
 
-    console.log("Query2 -> ", result[0].MethodTypeName)
-
-    cluster.disconnect()
-})
+test()
 

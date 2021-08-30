@@ -1,7 +1,7 @@
 import { UserSettings } from "./interfaces";
 import { Logger } from "./Logger"
 
-import {FieldPacket, OkPacket, Query, QueryError, ResultSetHeader, RowDataPacket} from "mysql2/typings/mysql";
+import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import {Utils} from "./Utils";
 import {Pool} from "./Pool";
 
@@ -47,9 +47,7 @@ export class GaleraCluster {
         })
     }
 
-    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Promise<T>;
-    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Promise<T>;
-    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Promise<T> {
+    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }): Promise<T> {
         return new Promise((resolve, reject) => {
             try {
                 const activePools: Pool[] = this.pools.filter(pool => pool.status.active)
@@ -59,7 +57,7 @@ export class GaleraCluster {
                     reject({ message: "There is no pool that satisfies the parameters" })
                 }
 
-                bestPool.query(sql, values, (error, result: T, fields) => {
+                bestPool.query(sql, values, (error, result: T) => {
                     if (error) {
                         reject(error)
                     }
