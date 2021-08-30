@@ -10,7 +10,7 @@ export class GaleraCluster {
 
     constructor(userSettings: UserSettings ) {
         userSettings.hosts.forEach(poolSettings => {
-            GaleraCluster.mixPoolSettings(poolSettings, userSettings)
+            poolSettings = GaleraCluster.mixPoolSettings(poolSettings, userSettings)
 
             this.pools.push(
                 new Pool(poolSettings)
@@ -20,7 +20,7 @@ export class GaleraCluster {
         Logger("configuration finished")
     }
 
-    private static mixPoolSettings(poolSettings: PoolSettings, userSettings: UserSettings) {
+    private static mixPoolSettings(poolSettings: PoolSettings, userSettings: UserSettings) : PoolSettings {
         poolSettings = {
             user: userSettings.user,
             password: userSettings.password,
@@ -35,6 +35,8 @@ export class GaleraCluster {
         if (!poolSettings.port && userSettings.port) {
             poolSettings.port = userSettings.port
         }
+
+        return poolSettings;
     }
 
     public connect() {
