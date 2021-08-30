@@ -56,8 +56,35 @@ export class Pool {
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query {
-        return this._pool.query(sql, values, callback);
-    }
+        if (values) {
+            return this._pool.query(sql, values, (error, result: T, fields) => {
+                if (error) {
+                    Logger("Error in pool from host " + this.host.host + error.message)
+                    return this.queryAfterError(sql, values, callback);
+                }
 
-    // #TODO: repeat query after error
+                callback(error, result, fields)
+            })
+        } else {
+            return this._pool.query(sql, (error, result: T, fields) => {
+                if (error) {
+                    Logger("Error in pool from host " + this.host.host + error.message)
+                    return this.queryAfterError(sql, callback);
+                }
+
+                callback(error, result, fields)
+            })
+        }
+    }
+    private queryAfterError<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
+    private queryAfterError<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
+    private queryAfterError<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query {
+        Logger("retry query after error in pool from host " + this.host.host);
+
+        if (values) {
+            return this._pool.query(sql, values, callback)
+        } else {
+            return this._pool.query(sql, callback)
+        }
+    }
 }
