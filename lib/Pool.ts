@@ -116,7 +116,7 @@ export class Pool {
         if (values) {
             return this._pool.query(sql, values, (error, result: T, fields) => {
                 if (error) {
-                    Logger("Error in pool in host " + this.host + error.message)
+                    Logger("Error in pool in host " + this.host + " -> " + error.message)
                     return this.queryAfterError(sql, values, callback);
                 }
 
@@ -125,7 +125,7 @@ export class Pool {
         } else {
             return this._pool.query(sql, (error, result: T, fields) => {
                 if (error) {
-                    Logger("Error in pool in host " + this.host + error.message)
+                    Logger("Error in pool in host " + this.host + " -> " + error.message)
                     return this.queryAfterError(sql, callback);
                 }
 

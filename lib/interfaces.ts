@@ -14,12 +14,7 @@ export interface UserSettings {
     password: string,
     database: string,
     connectionLimit?: number,
-    port?: string,
-
-    canRetry?: boolean,
-    defaultSelector?: string,
-    restoreNodeTimeout?: number,
-    removeNodeErrorCount?: number
+    port?: string
 }
 
 export interface PoolStatus {
