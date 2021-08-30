@@ -1,32 +1,32 @@
 import { UserSettings } from "./interfaces";
 import { Logger } from "./Logger"
 
-import {Host} from "./Host";
 import {FieldPacket, OkPacket, Query, QueryError, ResultSetHeader, RowDataPacket} from "mysql2/typings/mysql";
 import {Utils} from "./Utils";
+import {Pool} from "./Pool";
 
 export class GaleraCluster {
-    private galeraHosts: Host[] = []
+    private pools: Pool[] = []
 
     constructor(userSettings?: UserSettings ) {
-        userSettings.hosts.forEach(hostSettings => {
-            hostSettings = {
+        userSettings.hosts.forEach(poolSettings => {
+            poolSettings = {
                 user: userSettings.user,
                 password: userSettings.password,
                 database: userSettings.database,
-                ...hostSettings
+                ...poolSettings
             }
 
-            if (!hostSettings.connectionLimit && userSettings.connectionLimit) {
-                hostSettings.connectionLimit = userSettings.connectionLimit
+            if (!poolSettings.connectionLimit && userSettings.connectionLimit) {
+                poolSettings.connectionLimit = userSettings.connectionLimit
             }
 
-            if (!hostSettings.port && userSettings.port) {
-                hostSettings.port = userSettings.port
+            if (!poolSettings.port && userSettings.port) {
+                poolSettings.port = userSettings.port
             }
 
-            this.galeraHosts.push(
-                new Host(hostSettings)
+            this.pools.push(
+                new Pool(poolSettings)
             )
         })
 
@@ -34,25 +34,41 @@ export class GaleraCluster {
     }
 
     public connect() {
-        Logger("connecting all hosts")
-        this.galeraHosts.forEach((host) => {
-            host.connect();
+        Logger("connecting all pools")
+        this.pools.forEach((pool) => {
+            pool.connect();
         })
     }
 
     public disconnect() {
-        Logger("disconnecting all hosts")
-        this.galeraHosts.forEach((host) => {
-            host.disconnect();
+        Logger("disconnecting all pools")
+        this.pools.forEach((pool) => {
+            pool.disconnect();
         })
     }
 
-    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
-    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
-    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query {
-        const activeHosts: Host[] = this.galeraHosts.filter(host => host.checkStatus())
-        const bestHost: Host = activeHosts[Utils.getRandomIntInRange(0, activeHosts.length - 1)]
+    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Promise<T>;
+    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Promise<T>;
+    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Promise<T> {
+        return new Promise((resolve, reject) => {
+            try {
+                const activePools: Pool[] = this.pools.filter(pool => pool.status.active)
+                const bestPool: Pool = activePools[Utils.getRandomIntInRange(0, activePools.length - 1)]
 
-        return bestHost.pool.query(sql, values, callback);
+                if (!bestPool) {
+                    reject({ message: "There is no pool that satisfies the parameters" })
+                }
+
+                bestPool.query(sql, values, (error, result: T, fields) => {
+                    if (error) {
+                        reject(error)
+                    }
+
+                    resolve(result);
+                });
+            } catch (e) {
+                reject(e)
+            }
+        })
     }
 }

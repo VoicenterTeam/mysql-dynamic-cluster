@@ -1,68 +1,122 @@
 import { Pool as MySQLPool } from "mysql2/typings/mysql"
 import {OkPacket, ResultSetHeader, RowDataPacket, QueryError, FieldPacket, Query} from "mysql2/typings/mysql";
 import { createPool } from "mysql2";
-import { Host } from "./Host";
 import {Logger} from "./Logger";
+import {PoolSettings, PoolStatus} from "./interfaces";
+import globalSettings from "./config";
 
+// TODO: create filtering
 export class Pool {
-    private _active: boolean = false;
-    get active(): boolean {
-        return  this._active;
+    private _status: PoolStatus;
+    public get status(): PoolStatus {
+        return this._status;
+    }
+    private set status(val: PoolStatus) {
+        this._status = val;
     }
 
-    private _pool: MySQLPool
+    public readonly id: string;
+    public readonly host: string;
+    public readonly connectionLimit: number;
 
-    private readonly host: Host
-    private readonly connectionLimit: number
+    private readonly port: string;
+    private readonly user: string;
+    private readonly password: string;
+    private readonly database: string;
 
-    constructor(host: Host, connectionLimit?: number) {
-        this.host = host
-        this.connectionLimit = connectionLimit ? connectionLimit : host.connectionLimit
-        Logger("configuration finished for pool from host: " + this.host.host)
+
+    private _timer: NodeJS.Timer;
+    private _nextCheckTime: number = 10000;
+
+    private _pool: MySQLPool;
+
+    constructor(settings: PoolSettings) {
+        this.host = settings.host;
+        this.port = settings.port ? settings.port : globalSettings.port;
+        this.id = settings.id ? settings.id.toString() : this.host + ":" + this.port
+        Logger("configure pool in host " + this.host)
+
+        this.user = settings.user;
+        this.password = settings.password;
+        this.database = settings.database;
+
+        this.connectionLimit = settings.connectionLimit ? settings.connectionLimit : globalSettings.connectionLimit;
+
+        this.status = {
+            active: false
+        }
+
+        Logger("configuration pool finished in host: " + this.host)
     }
 
-    public create(user: string, password: string, database: string) {
-        Logger("Creating pool from host: " + this.host.host)
+    private startTimerCheck() {
+        this._timer = setInterval(this.checkStatus.bind(this), this._nextCheckTime)
+    }
+
+    private stopTimerCheck() {
+        clearInterval(this._timer)
+    }
+
+    public checkStatus() {
+        Logger("checking pool status")
+        this.isReady((error, result) => {
+            if (error) {
+                Logger("Error while checking status in host " + this.host  + " -> " + error.message)
+                return
+            }
+            this.status.active = result;
+        })
+    }
+
+    public connect() {
+        Logger("Creating pool in host: " + this.host)
         this._pool = createPool({
             connectionLimit: this.connectionLimit,
-            host: this.host.host,
-            user,
-            password,
-            database
+            host: this.host,
+            user: this.user,
+            password: this.password,
+            database: this.database
         })
 
-        this._active = true;
+        this.status.active = true;
+        this.startTimerCheck();
     }
 
-    public close(callback: (err: NodeJS.ErrnoException) => void) {
-        Logger("closing pool from host: " + this.host.host)
-        this._pool.end(callback);
+    public disconnect() {
+        Logger("closing pool in host: " + this.host)
+        this._pool.end((error) => {
+            if (error) {
+                Logger(error.message)
+            }
+        });
+        this.stopTimerCheck();
     }
 
     public isReady(callback: (error: QueryError | null, result: boolean) => void) {
         Logger("Checking if node is active")
-        this._pool.query(`SHOW GLOBAL STATUS LIKE 'wsrep_ready'`, (error, res) => {
+        this.query(`SHOW GLOBAL STATUS LIKE 'wsrep_ready'`, (error, res) => {
             if (error) {
                 Logger(error.message)
-                this._active = false;
+                this.status.active = false;
                 callback(error, false)
                 return;
             }
 
-            Logger('Is node in host ' + this.host.host + ' ready? -> ' + res[0].Value)
+            Logger('Is pool in host ' + this.host + ' ready? -> ' + res[0].Value)
 
-            this._active = res[0].Value === 'ON';
-            callback(null, this._active)
+            this.status.active = res[0].Value === 'ON';
+            callback(null, this.status.active)
         })
     }
 
+    // TODO: wrap with promise
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query {
         if (values) {
             return this._pool.query(sql, values, (error, result: T, fields) => {
                 if (error) {
-                    Logger("Error in pool from host " + this.host.host + error.message)
+                    Logger("Error in pool in host " + this.host + error.message)
                     return this.queryAfterError(sql, values, callback);
                 }
 
@@ -71,7 +125,7 @@ export class Pool {
         } else {
             return this._pool.query(sql, (error, result: T, fields) => {
                 if (error) {
-                    Logger("Error in pool from host " + this.host.host + error.message)
+                    Logger("Error in pool in host " + this.host + error.message)
                     return this.queryAfterError(sql, callback);
                 }
 
@@ -79,10 +133,11 @@ export class Pool {
             })
         }
     }
+
     private queryAfterError<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
     private queryAfterError<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
     private queryAfterError<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query {
-        Logger("retry query after error in pool from host " + this.host.host);
+        Logger("retry query after error in pool in host " + this.host);
 
         if (values) {
             return this._pool.query(sql, values, callback)

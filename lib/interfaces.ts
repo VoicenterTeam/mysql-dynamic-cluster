@@ -1,4 +1,4 @@
-export interface GaleraHostSettings {
+export interface PoolSettings {
     id?: number,
     host: string,
     port?: string,
@@ -9,7 +9,7 @@ export interface GaleraHostSettings {
 }
 
 export interface UserSettings {
-    hosts: GaleraHostSettings[],
+    hosts: PoolSettings[],
     user: string,
     password: string,
     database: string,
@@ -22,6 +22,6 @@ export interface UserSettings {
     removeNodeErrorCount?: number
 }
 
-export interface HostStatus {
+export interface PoolStatus {
     active: boolean
 }
