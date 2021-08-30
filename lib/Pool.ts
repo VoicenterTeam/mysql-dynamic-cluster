@@ -39,17 +39,20 @@ export class Pool {
         this._pool.end(callback);
     }
 
-    private checkReady() {
+    public isReady(callback: (error: QueryError | null, result: boolean) => void) {
         Logger("Checking if node is active")
-        this._pool.query(`SHOW GLOBAL STATUS LIKE 'wsrep_ready'`, (err, res) => {
-            if (err) {
-                Logger(err.message)
-                return
+        this._pool.query(`SHOW GLOBAL STATUS LIKE 'wsrep_ready'`, (error, res) => {
+            if (error) {
+                Logger(error.message)
+                this._active = false;
+                callback(error, false)
+                return;
             }
 
             Logger('Is node in host ' + this.host.host + ' ready? -> ' + res[0].Value)
 
             this._active = res[0].Value === 'ON';
+            callback(null, this._active)
         })
     }
 

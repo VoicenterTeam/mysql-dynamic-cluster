@@ -21,3 +21,7 @@ export interface UserSettings {
     restoreNodeTimeout?: number,
     removeNodeErrorCount?: number
 }
+
+export interface HostStatus {
+    active: boolean
+}
