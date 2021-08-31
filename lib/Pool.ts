@@ -1,8 +1,8 @@
 import { Pool as MySQLPool } from "mysql2/typings/mysql"
-import {OkPacket, ResultSetHeader, RowDataPacket, QueryError, FieldPacket, Query} from "mysql2/typings/mysql";
+import { OkPacket, ResultSetHeader, RowDataPacket, QueryError } from "mysql2/typings/mysql";
 import { createPool } from "mysql2";
-import {Logger} from "./Logger";
-import {PoolSettings, PoolStatus} from "./interfaces";
+import { Logger } from "./Logger";
+import { PoolSettings, PoolStatus } from "./interfaces";
 import globalSettings from "./config";
 
 // TODO: create filtering
@@ -110,39 +110,36 @@ export class Pool {
     }
 
     // TODO: wrap with promise
-    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
-    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
-    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query {
-        if (values) {
-            return this._pool.query(sql, values, (error, result: T, fields) => {
-                if (error) {
-                    Logger("Error in pool in host " + this.host + " -> " + error.message)
-                    return this.queryAfterError(sql, values, callback);
-                }
-
-                callback(error, result, fields)
-            })
-        } else {
-            return this._pool.query(sql, (error, result: T, fields) => {
-                if (error) {
-                    Logger("Error in pool in host " + this.host + " -> " + error.message)
-                    return this.queryAfterError(sql, callback);
-                }
-
-                callback(error, result, fields)
-            })
-        }
+    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }): Promise<T> {
+        return new Promise((resolve, reject) => {
+            if (values) {
+                this._pool.query(sql, values, (error, result: T) => {
+                    if (error) reject(error)
+                    resolve(result);
+                })
+            } else {
+                return this._pool.query(sql, (error, result: T) => {
+                    if (error) reject(error)
+                    resolve(result);
+                })
+            }
+        })
     }
 
-    private queryAfterError<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
-    private queryAfterError<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query;
-    private queryAfterError<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }, callback?: (err: QueryError | null, result: T, fields: FieldPacket[]) => any): Query {
-        Logger("retry query after error in pool in host " + this.host);
-
-        if (values) {
-            return this._pool.query(sql, values, callback)
-        } else {
-            return this._pool.query(sql, callback)
-        }
-    }
+    // TODO: move this to GaleraCluster
+    // private queryAfterError<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }): Promise<T> {
+    //     Logger("retry query after error in pool in host " + this.host);
+    //
+    //     return new Promise((resolve, reject) => {
+    //         if (values) {
+    //             return this._pool.query(sql, values, (error, result) => {
+    //                 if (error) {
+    //
+    //                 }
+    //             })
+    //         } else {
+    //             return this._pool.query(sql, callback)
+    //         }
+    //     })
+    // }
 }

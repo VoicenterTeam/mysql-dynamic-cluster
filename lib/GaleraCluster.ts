@@ -63,13 +63,9 @@ export class GaleraCluster {
                     reject({ message: "There is no pool that satisfies the parameters" })
                 }
 
-                bestPool.query(sql, values, (error, result: T) => {
-                    if (error) {
-                        reject(error)
-                    }
-
-                    resolve(result);
-                });
+                bestPool.query(sql, values)
+                    .then(res => resolve(res as T))
+                    .catch(error => reject(error))
             } catch (e) {
                 reject(e)
             }

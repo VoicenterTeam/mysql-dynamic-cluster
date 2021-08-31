@@ -19,12 +19,8 @@ cluster.connect()
 
 async function test() {
     cluster.query(`SELECT * from officering_api_doc.MethodType`)
-        .then(result => {
-            console.log("Query1 -> ", result[0])
-        })
-        .catch(error => {
-            console.log(error.message)
-        })
+        .then(result => console.log("Query1 -> ", result[0]))
+        .catch(error => console.log(error.message))
 
     console.log("Test")
 
@@ -34,9 +30,7 @@ async function test() {
 
             cluster.disconnect()
         })
-        .catch(error => {
-            console.log(error.message)
-        })
+        .catch(error => console.log(error.message))
 }
 
 test()
