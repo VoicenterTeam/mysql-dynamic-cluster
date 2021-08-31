@@ -54,7 +54,7 @@ export class GaleraCluster {
     }
 
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }): Promise<T> {
-        return new Promise((resolve, reject) => {
+        return new Promise<T>((resolve, reject) => {
             try {
                 this.getBestPool()
                     .catch(error => {

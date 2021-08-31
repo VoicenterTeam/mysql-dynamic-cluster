@@ -94,23 +94,22 @@ export class Pool {
 
     public isReady(callback: (error: QueryError | null, result: boolean) => void) {
         Logger("Checking if node is active")
-        this.query(`SHOW GLOBAL STATUS LIKE 'wsrep_ready'`, (error, res) => {
-            if (error) {
+        this.query(`SHOW GLOBAL STATUS LIKE 'wsrep_ready'`)
+            .then(res => {
+                Logger('Is pool in host ' + this.host + ' ready? -> ' + res[0].Value)
+                this.status.active = res[0].Value === 'ON';
+                callback(null, this.status.active)
+            })
+            .catch(error => {
                 Logger(error.message)
                 this.status.active = false;
                 callback(error, false)
                 return;
-            }
-
-            Logger('Is pool in host ' + this.host + ' ready? -> ' + res[0].Value)
-
-            this.status.active = res[0].Value === 'ON';
-            callback(null, this.status.active)
-        })
+            })
     }
 
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }): Promise<T> {
-        return new Promise((resolve, reject) => {
+        return new Promise<T>((resolve, reject) => {
             if (values) {
                 this._pool.query(sql, values, (error, result: T) => {
                     if (error) reject(error)
