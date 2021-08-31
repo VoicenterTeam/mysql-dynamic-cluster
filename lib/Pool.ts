@@ -109,7 +109,6 @@ export class Pool {
         })
     }
 
-    // TODO: wrap with promise
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }): Promise<T> {
         return new Promise((resolve, reject) => {
             if (values) {
@@ -125,21 +124,4 @@ export class Pool {
             }
         })
     }
-
-    // TODO: move this to GaleraCluster
-    // private queryAfterError<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }): Promise<T> {
-    //     Logger("retry query after error in pool in host " + this.host);
-    //
-    //     return new Promise((resolve, reject) => {
-    //         if (values) {
-    //             return this._pool.query(sql, values, (error, result) => {
-    //                 if (error) {
-    //
-    //                 }
-    //             })
-    //         } else {
-    //             return this._pool.query(sql, callback)
-    //         }
-    //     })
-    // }
 }

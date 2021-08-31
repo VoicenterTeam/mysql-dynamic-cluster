@@ -56,19 +56,39 @@ export class GaleraCluster {
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }): Promise<T> {
         return new Promise((resolve, reject) => {
             try {
-                const activePools: Pool[] = this.pools.filter(pool => pool.status.active)
-                const bestPool: Pool = activePools[Utils.getRandomIntInRange(0, activePools.length - 1)]
+                this.getBestPool()
+                    .catch(error => {
+                        reject(error)
+                    })
+                    .then(bestPool => {
+                        bestPool = bestPool as Pool;
+                        bestPool?.query(sql, values)
+                            .then(res => resolve(res as T))
+                            .catch(err => {
+                                Logger("QUERY: retry query after error. Error message: " + err.message);
 
-                if (!bestPool) {
-                    reject({ message: "There is no pool that satisfies the parameters" })
-                }
+                                this.query(sql, values)
+                                    .catch(error => reject(error))
+                                    .then(result => resolve(result as T))
+                            })
+                    })
 
-                bestPool.query(sql, values)
-                    .then(res => resolve(res as T))
-                    .catch(error => reject(error))
             } catch (e) {
                 reject(e)
             }
+        })
+    }
+
+    private getBestPool() : Promise<Pool> {
+        return new Promise<Pool>((resolve, reject) => {
+            const activePools: Pool[] = this.pools.filter(pool => pool.status.active)
+            const bestPool: Pool = activePools[Utils.getRandomIntInRange(0, activePools.length - 1)]
+
+            if (!bestPool) {
+                reject({ message: "There is no pool that satisfies the parameters" })
+            }
+
+            resolve(bestPool);
         })
     }
 }
