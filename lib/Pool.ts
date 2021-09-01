@@ -43,29 +43,12 @@ export class Pool {
         this.connectionLimit = settings.connectionLimit ? settings.connectionLimit : globalSettings.connectionLimit;
 
         this.status = {
-            active: false
+            active: false,
+            synced: false,
+            availableConnectionCount: this.connectionLimit
         }
 
         Logger("configuration pool finished in host: " + this.host)
-    }
-
-    private startTimerCheck() {
-        this._timer = setInterval(this.checkStatus.bind(this), this._nextCheckTime)
-    }
-
-    private stopTimerCheck() {
-        clearInterval(this._timer)
-    }
-
-    public checkStatus() {
-        Logger("checking pool status")
-        this.isReady((error, result) => {
-            if (error) {
-                Logger("Error while checking status in host " + this.host  + " -> " + error.message)
-                return
-            }
-            this.status.active = result;
-        })
     }
 
     public connect() {
@@ -92,17 +75,56 @@ export class Pool {
         this.stopTimerCheck();
     }
 
-    public isReady(callback: (error: QueryError | null, result: boolean) => void) {
+    private startTimerCheck() {
+        this._timer = setInterval(this.checkStatus.bind(this), this._nextCheckTime)
+        this.checkStatus()
+    }
+
+    private stopTimerCheck() {
+        clearInterval(this._timer)
+    }
+
+    public checkStatus() {
+        Logger("checking pool status")
+        this.isReady((error, result) => {
+            if (error) {
+                Logger("Error while checking ready status in host " + this.host  + " -> " + error.message)
+                return
+            }
+            this.status.active = result;
+        })
+        this.isSynced((error, result) => {
+            if (error) {
+                Logger("Error while checking synced status in host " + this.host  + " -> " + error.message)
+                return
+            }
+            this.status.synced = result;
+        })
+    }
+
+    private isReady(callback: (error: QueryError | null, result: boolean) => void) {
         Logger("Checking if node is active")
         this.query(`SHOW GLOBAL STATUS LIKE 'wsrep_ready'`)
             .then(res => {
                 Logger('Is pool in host ' + this.host + ' ready? -> ' + res[0].Value)
-                this.status.active = res[0].Value === 'ON';
-                callback(null, this.status.active)
+                callback(null, res[0].Value === 'ON')
             })
             .catch(error => {
                 Logger(error.message)
-                this.status.active = false;
+                callback(error, false)
+                return;
+            })
+    }
+
+    private isSynced(callback: (error: QueryError | null, result: boolean) => void) {
+        Logger("Checking if node is synced")
+        this.query(`SHOW GLOBAL STATUS LIKE 'wsrep_local_state_comment';`)
+            .then(res => {
+                Logger('Is pool in host ' + this.host + ' synced? -> ' + res[0].Value)
+                callback(null, res[0].Value === 'Synced')
+            })
+            .catch(error => {
+                Logger(error.message)
                 callback(error, false)
                 return;
             })
@@ -110,13 +132,16 @@ export class Pool {
 
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }): Promise<T> {
         return new Promise<T>((resolve, reject) => {
+            this.status.availableConnectionCount--;
             if (values) {
                 this._pool.query(sql, values, (error, result: T) => {
+                    this.status.availableConnectionCount++;
                     if (error) reject(error)
                     resolve(result);
                 })
             } else {
                 return this._pool.query(sql, (error, result: T) => {
+                    this.status.availableConnectionCount++;
                     if (error) reject(error)
                     resolve(result);
                 })

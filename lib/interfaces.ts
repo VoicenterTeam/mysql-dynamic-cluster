@@ -18,5 +18,7 @@ export interface UserSettings {
 }
 
 export interface PoolStatus {
-    active: boolean
+    active: boolean,
+    synced: boolean,
+    availableConnectionCount: number
 }
