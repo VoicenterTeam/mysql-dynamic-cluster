@@ -5,7 +5,6 @@ import { Logger } from "./Logger";
 import { PoolSettings, PoolStatus } from "./interfaces";
 import globalSettings from "./config";
 
-// TODO: create filtering
 export class Pool {
     private _status: PoolStatus;
     public get status(): PoolStatus {
