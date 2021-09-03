@@ -32,7 +32,8 @@
   "scripts": {
     "build": "tsc --build",
     "prepublish": "npm run build",
-    "start": "npm run build && node demo/index.js"
+    "start": "npm run build && node demo/index.js",
+    "test":  "jest"
   },
   "dependencies": {
     "mysql2": "^2.3.0",
