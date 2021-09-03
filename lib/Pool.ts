@@ -1,17 +1,23 @@
 import { Pool as MySQLPool } from "mysql2/typings/mysql"
-import { OkPacket, ResultSetHeader, RowDataPacket, QueryError } from "mysql2/typings/mysql";
+import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import { createPool } from "mysql2";
 import { Logger } from "./Logger";
-import { PoolSettings, PoolStatus } from "./interfaces";
+import { LoadFactor, PoolSettings, PoolStatus, Validator } from "./interfaces";
 import globalSettings from "./config";
 
 export class Pool {
-    private _status: PoolStatus;
+    private readonly _status: PoolStatus;
     public get status(): PoolStatus {
         return this._status;
     }
-    private set status(val: PoolStatus) {
-        this._status = val;
+
+    private _isValid: boolean = false;
+    public get isValid() {
+        return this._isValid;
+    }
+    private _loadScore: number = 0;
+    public get loadScore() {
+        return this._loadScore;
     }
 
     public readonly id: string;
@@ -23,13 +29,15 @@ export class Pool {
     private readonly password: string;
     private readonly database: string;
 
-
     private _timer: NodeJS.Timer;
     private _nextCheckTime: number = 10000;
 
+    private _validators: Validator[];
+    private _loadFactors: LoadFactor[];
+
     private _pool: MySQLPool;
 
-    constructor(settings: PoolSettings) {
+    constructor(settings: PoolSettings, validators?: Validator[], loadFactors?: LoadFactor[]) {
         this.host = settings.host;
         this.port = settings.port ? settings.port : globalSettings.port;
         this.id = settings.id ? settings.id.toString() : this.host + ":" + this.port
@@ -41,11 +49,17 @@ export class Pool {
 
         this.connectionLimit = settings.connectionLimit ? settings.connectionLimit : globalSettings.connectionLimit;
 
-        this.status = {
+        this._status = {
             active: false,
             synced: false,
             availableConnectionCount: this.connectionLimit
         }
+
+        this._isValid = false;
+        this._loadScore = 0;
+
+        this._validators = validators ? validators : globalSettings.validators;
+        this._loadFactors = loadFactors ? loadFactors : globalSettings.loadFactors;
 
         Logger("configuration pool finished in host: " + this.host)
     }
@@ -83,50 +97,54 @@ export class Pool {
         clearInterval(this._timer)
     }
 
-    public checkStatus() {
-        Logger("checking pool status")
-        this.isReady((error, result) => {
-            if (error) {
-                Logger("Error while checking ready status in host " + this.host  + " -> " + error.message)
-                return
-            }
-            this.status.active = result;
-        })
-        this.isSynced((error, result) => {
-            if (error) {
-                Logger("Error while checking synced status in host " + this.host  + " -> " + error.message)
-                return
-            }
-            this.status.synced = result;
-        })
+    public async checkStatus() {
+        try {
+            Logger("checking pool status")
+
+            const result = await this.query(`SHOW GLOBAL STATUS;`) as { Variable_name: string, Value: string }[];
+
+            let validateCount: number = 0;
+            this._validators.forEach(validator => {
+                const value = result.find(res => res.Variable_name === validator.key).Value;
+                if (Pool.checkValueIsValid(value, validator)) validateCount++;
+            })
+
+            this._isValid = validateCount === this._validators.length;
+        } catch (err) {
+            Logger("Something wrong while checking status in pool in host: " + this.host + ".\n Message: " + err.message);
+        }
     }
 
-    private isReady(callback: (error: QueryError | null, result: boolean) => void) {
-        Logger("Checking if node is active")
-        this.query(`SHOW GLOBAL STATUS LIKE 'wsrep_ready'`)
-            .then(res => {
-                Logger('Is pool in host ' + this.host + ' ready? -> ' + res[0].Value)
-                callback(null, res[0].Value === 'ON')
-            })
-            .catch(error => {
-                Logger(error.message)
-                callback(error, false)
-                return;
-            })
-    }
+    private static checkValueIsValid(value: string, validator: Validator): boolean {
+        if (isNaN(+value)) {
+            const val = value as string;
+            const validatorVal = validator.value as string;
 
-    private isSynced(callback: (error: QueryError | null, result: boolean) => void) {
-        Logger("Checking if node is synced")
-        this.query(`SHOW GLOBAL STATUS LIKE 'wsrep_local_state_comment';`)
-            .then(res => {
-                Logger('Is pool in host ' + this.host + ' synced? -> ' + res[0].Value)
-                callback(null, res[0].Value === 'Synced')
-            })
-            .catch(error => {
-                Logger(error.message)
-                callback(error, false)
-                return;
-            })
+            if (validator.operator === '=') {
+                if (val === validatorVal) {
+                    return true;
+                }
+            } else {
+                Logger('Error: Operator ' + validator.operator + ' doesn\'t support for another type except number')
+            }
+        } else {
+            const val = +value;
+            const validatorVal = +validator.value;
+
+            switch (validator.operator) {
+                case "<":
+                    if (val < validatorVal) return true;
+                    break;
+                case "=":
+                    if (val === validatorVal) return true;
+                    break;
+                case ">":
+                    if (val > validatorVal) return true;
+                    break;
+            }
+        }
+
+        return false;
     }
 
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }): Promise<T> {

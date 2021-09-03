@@ -12,6 +12,7 @@ export class GaleraCluster {
         userSettings.hosts.forEach(poolSettings => {
             poolSettings = GaleraCluster.mixPoolSettings(poolSettings, userSettings)
 
+            // #TODO: connect to Pool mixed userSettings with globalSettings for validators and loadFactors
             this.pools.push(
                 new Pool(poolSettings)
             )
