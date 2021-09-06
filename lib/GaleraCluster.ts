@@ -1,5 +1,6 @@
 import { UserSettings, PoolSettings } from "./interfaces";
-import { Logger } from "./Logger"
+import { Logger } from "./Logger";
+import globalSettings from "./config";
 
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import { Utils } from "./Utils";
@@ -8,7 +9,7 @@ import { Pool } from "./Pool";
 export class GaleraCluster {
     private pools: Pool[] = []
 
-    constructor(userSettings: UserSettings ) {
+    constructor(userSettings: UserSettings) {
         userSettings.hosts.forEach(poolSettings => {
             poolSettings = GaleraCluster.mixPoolSettings(poolSettings, userSettings)
 
@@ -35,6 +36,18 @@ export class GaleraCluster {
 
         if (!poolSettings.port && userSettings.port) {
             poolSettings.port = userSettings.port
+        }
+
+        if (!poolSettings.validators && userSettings.validators) {
+            poolSettings.validators = userSettings.validators
+        } else if (!poolSettings.validators && !userSettings.validators) {
+            poolSettings.validators = globalSettings.validators
+        }
+
+        if (!poolSettings.loadFactors && userSettings.loadFactors) {
+            poolSettings.loadFactors = userSettings.loadFactors
+        } else if (!poolSettings.loadFactors && !userSettings.loadFactors) {
+            poolSettings.loadFactors = globalSettings.loadFactors
         }
 
         return poolSettings;

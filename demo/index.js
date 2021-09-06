@@ -30,7 +30,7 @@ async function test() {
         .then(result => console.log("Query1 -> ", result[0]))
         .catch(error => console.log(error.message))
 
-    console.log("Test")
+    console.log("Async test")
 
     cluster.query(`SELECT * from officering_api_doc.MethodType`)
         .then(result => {

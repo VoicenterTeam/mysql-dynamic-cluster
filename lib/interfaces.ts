@@ -7,8 +7,8 @@ export interface UserSettings {
     database: string,
     connectionLimit?: number,
     port?: string,
-    validators: Validator[],
-    loadFactors: LoadFactor[]
+    validators?: Validator[],
+    loadFactors?: LoadFactor[]
 }
 
 export interface GlobalSettings {
@@ -28,6 +28,8 @@ export interface PoolSettings {
     user?: string,
     password?: string,
     database?: string,
+    validators?: Validator[],
+    loadFactors?: LoadFactor[]
 }
 
 export interface PoolStatus {

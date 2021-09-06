@@ -2,7 +2,7 @@ import { Pool as MySQLPool } from "mysql2/typings/mysql"
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import { createPool } from "mysql2";
 import { Logger } from "./Logger";
-import { LoadFactor, PoolSettings, PoolStatus, Validator } from "./interfaces";
+import { LoadFactor, PoolSettings, PoolStatus, Validator} from "./interfaces";
 import globalSettings from "./config";
 
 export class Pool {
@@ -37,7 +37,7 @@ export class Pool {
 
     private _pool: MySQLPool;
 
-    constructor(settings: PoolSettings, validators?: Validator[], loadFactors?: LoadFactor[]) {
+    constructor(settings: PoolSettings) {
         this.host = settings.host;
         this.port = settings.port ? settings.port : globalSettings.port;
         this.id = settings.id ? settings.id.toString() : this.host + ":" + this.port
@@ -58,8 +58,8 @@ export class Pool {
         this._isValid = false;
         this._loadScore = 0;
 
-        this._validators = validators ? validators : globalSettings.validators;
-        this._loadFactors = loadFactors ? loadFactors : globalSettings.loadFactors;
+        this._validators = settings.validators;
+        this._loadFactors = settings.loadFactors;
 
         Logger("configuration pool finished in host: " + this.host)
     }
@@ -99,7 +99,7 @@ export class Pool {
 
     public async checkStatus() {
         try {
-            Logger("checking pool status")
+            Logger("checking pool status in host: " + this.host)
 
             const result = await this.query(`SHOW GLOBAL STATUS;`) as { Variable_name: string, Value: string }[];
 
@@ -110,6 +110,7 @@ export class Pool {
             })
 
             this._isValid = validateCount === this._validators.length;
+            Logger("Is status ok in pool in host " + this.host + "? -> " + this._isValid.toString())
         } catch (err) {
             Logger("Something wrong while checking status in pool in host: " + this.host + ".\n Message: " + err.message);
         }
