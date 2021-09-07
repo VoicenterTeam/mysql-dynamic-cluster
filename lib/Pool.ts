@@ -12,11 +12,11 @@ export class Pool {
     }
 
     private _isValid: boolean = false;
-    public get isValid() {
+    public get isValid(): boolean {
         return this._isValid;
     }
     private _loadScore: number = 0;
-    public get loadScore() {
+    public get loadScore(): number {
         return this._loadScore;
     }
 
@@ -110,9 +110,22 @@ export class Pool {
             })
 
             this._isValid = validateCount === this._validators.length;
-            Logger("Is status ok in pool in host " + this.host + "? -> " + this._isValid.toString())
+            Logger("Is status ok in host " + this.host + "? -> " + this._isValid.toString())
+
+            let score = 0;
+            this._loadFactors.forEach(loadFactor => {
+                const value = result.find(res => res.Variable_name === loadFactor.key).Value;
+                if (isNaN(+value) || !value) {
+                    Logger("Error: value from db isn't number. Check if you set right key. Current key: " + loadFactor.key)
+                } else {
+                    score += +value * loadFactor.multiplier;
+                }
+            })
+
+            this._loadScore = score;
+            Logger("Load score by checking status in host " + this.host + " is " + this._loadScore);
         } catch (err) {
-            Logger("Something wrong while checking status in pool in host: " + this.host + ".\n Message: " + err.message);
+            Logger("Something wrong while checking status in host: " + this.host + ".\n Message: " + err.message);
         }
     }
 
