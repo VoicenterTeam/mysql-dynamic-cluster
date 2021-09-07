@@ -36,7 +36,7 @@ export interface PoolStatus {
     active: boolean,
     synced: boolean,
     availableConnectionCount: number,
-    queryTime: number
+    queryTime: number // time in seconds
 }
 
 export interface Validator {

@@ -102,7 +102,11 @@ export class Pool {
         try {
             Logger("checking pool status in host: " + this.host)
 
+            const timeBefore = new Date().getTime();
             const result = await this.query(`SHOW GLOBAL STATUS;`) as { Variable_name: string, Value: string }[];
+            const timeAfter = new Date().getTime();
+
+            this.status.queryTime = Math.abs(timeAfter - timeBefore) / 1000;
 
             let validateCount: number = 0;
             this._validators.forEach(validator => {
