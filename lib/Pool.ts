@@ -52,7 +52,8 @@ export class Pool {
         this._status = {
             active: false,
             synced: false,
-            availableConnectionCount: this.connectionLimit
+            availableConnectionCount: this.connectionLimit,
+            queryTime: 0
         }
 
         this._isValid = false;
@@ -105,7 +106,18 @@ export class Pool {
 
             let validateCount: number = 0;
             this._validators.forEach(validator => {
-                const value = result.find(res => res.Variable_name === validator.key).Value;
+                let value: string;
+                switch (validator.key) {
+                    case 'available_connection_count':
+                        value = this.status.availableConnectionCount.toString();
+                        break;
+                    case 'query_time':
+                        value = this.status.queryTime.toString();
+                        break;
+                    default:
+                        value = result.find(res => res.Variable_name === validator.key).Value;
+                }
+
                 if (Pool.checkValueIsValid(value, validator)) validateCount++;
             })
 
@@ -125,7 +137,7 @@ export class Pool {
             this._loadScore = score;
             Logger("Load score by checking status in host " + this.host + " is " + this._loadScore);
         } catch (err) {
-            Logger("Something wrong while checking status in host: " + this.host + ".\n Message: " + err.message);
+            Logger("Error: Something wrong while checking status in host: " + this.host + ".\n Message: " + err.message);
         }
     }
 
@@ -142,8 +154,13 @@ export class Pool {
                 Logger('Error: Operator ' + validator.operator + ' doesn\'t support for another type except number')
             }
         } else {
-            const val = +value;
-            const validatorVal = +validator.value;
+            const val = +value as number;
+            const validatorVal = +validator.value as number;
+
+            if (isNaN(validatorVal)) {
+                Logger('Error: validator value isn\'t a type number like value from database. Check if you write correct data');
+                return false;
+            }
 
             switch (validator.operator) {
                 case "<":

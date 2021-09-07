@@ -15,7 +15,8 @@ const cluster = galeraCluster.createPoolCluster({
     database: process.env.DB_DATABASE,
     validators: [
         { key: 'wsrep_ready', operator: '=', value: 'ON' },
-        { key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' }
+        { key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' },
+        { key: 'available_connection_count', operator: '>', value: 50 }
     ],
     loadFactors: [
         { key: 'Connections', multiplier: 2 },
