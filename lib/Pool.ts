@@ -29,7 +29,7 @@ export class Pool {
     private readonly password: string;
     private readonly database: string;
 
-    private _timer: NodeJS.Timer;
+    private _timer: NodeJS.Timeout;
     private _nextCheckTime: number = 10000;
 
     private _validators: Validator[];
@@ -86,16 +86,17 @@ export class Pool {
                 Logger(error.message)
             }
         });
+        this.status.active = false;
         this.stopTimerCheck();
     }
 
     private startTimerCheck() {
-        this._timer = setInterval(this.checkStatus.bind(this), this._nextCheckTime)
+        this._timer = setTimeout(this.checkStatus.bind(this), this._nextCheckTime)
         this.checkStatus()
     }
 
     private stopTimerCheck() {
-        clearInterval(this._timer)
+        clearTimeout(this._timer)
     }
 
     public async checkStatus() {
@@ -140,8 +141,16 @@ export class Pool {
 
             this._loadScore = score;
             Logger("Load score by checking status in host " + this.host + " is " + this._loadScore);
+
+            if (!this.status.active) return;
+            this._nextCheckTime *= 1.5;
+            this._timer = setTimeout(this.checkStatus.bind(this), this._nextCheckTime);
         } catch (err) {
             Logger("Error: Something wrong while checking status in host: " + this.host + ".\n Message: " + err.message);
+
+            if (!this.status.active) return;
+            this._nextCheckTime /= 2;
+            this._timer = setTimeout(this.checkStatus.bind(this), this._nextCheckTime);
         }
     }
 
