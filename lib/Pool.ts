@@ -119,6 +119,9 @@ export class Pool {
                     case 'query_time':
                         value = this.status.queryTime.toString();
                         break;
+                    case 'active':
+                        value = this.status.active.toString();
+                        break;
                     default:
                         value = result.find(res => res.Variable_name === validator.key).Value;
                 }
