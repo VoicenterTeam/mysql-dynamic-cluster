@@ -1,4 +1,5 @@
 type Operator = '>' | '<' | '=';
+export type GlobalStatusResult = { Variable_name: string, Value: string }
 
 export interface UserSettings {
     hosts: PoolSettings[],

@@ -2,7 +2,7 @@ import { Pool as MySQLPool } from "mysql2/typings/mysql"
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import { createPool } from "mysql2";
 import { Logger } from "./Logger";
-import { LoadFactor, PoolSettings, PoolStatus, Validator} from "./interfaces";
+import { LoadFactor, PoolSettings, PoolStatus, Validator, GlobalStatusResult } from "./interfaces";
 import globalSettings from "./config";
 
 export class Pool {
@@ -101,49 +101,16 @@ export class Pool {
 
     public async checkStatus() {
         try {
-            Logger("checking pool status in host: " + this.host)
-
+            Logger("checking pool status in host: " + this.host);
             const timeBefore = new Date().getTime();
-            const result = await this.query(`SHOW GLOBAL STATUS;`) as { Variable_name: string, Value: string }[];
-            const timeAfter = new Date().getTime();
 
+            const result = await this.query(`SHOW GLOBAL STATUS;`) as GlobalStatusResult[];
+
+            const timeAfter = new Date().getTime();
             this.status.queryTime = Math.abs(timeAfter - timeBefore) / 1000;
 
-            let validateCount: number = 0;
-            this._validators.forEach(validator => {
-                let value: string;
-                switch (validator.key) {
-                    case 'available_connection_count':
-                        value = this.status.availableConnectionCount.toString();
-                        break;
-                    case 'query_time':
-                        value = this.status.queryTime.toString();
-                        break;
-                    case 'active':
-                        value = this.status.active.toString();
-                        break;
-                    default:
-                        value = result.find(res => res.Variable_name === validator.key).Value;
-                }
-
-                if (Pool.checkValueIsValid(value, validator)) validateCount++;
-            })
-
-            this._isValid = validateCount === this._validators.length;
-            Logger("Is status ok in host " + this.host + "? -> " + this._isValid.toString())
-
-            let score = 0;
-            this._loadFactors.forEach(loadFactor => {
-                const value = result.find(res => res.Variable_name === loadFactor.key).Value;
-                if (isNaN(+value) || !value) {
-                    Logger("Error: value from db isn't number. Check if you set right key. Current key: " + loadFactor.key)
-                } else {
-                    score += +value * loadFactor.multiplier;
-                }
-            })
-
-            this._loadScore = score;
-            Logger("Load score by checking status in host " + this.host + " is " + this._loadScore);
+            this.validatorsCheck(result);
+            this.loadFactorsCheck(result);
 
             if (!this.status.active) return;
             this._nextCheckTime *= 1.5;
@@ -155,6 +122,46 @@ export class Pool {
             this._nextCheckTime /= 2;
             this._timer = setTimeout(this.checkStatus.bind(this), this._nextCheckTime);
         }
+    }
+
+    private validatorsCheck(result: GlobalStatusResult[]): void {
+        let validateCount: number = 0;
+        this._validators.forEach(validator => {
+            let value: string;
+            switch (validator.key) {
+                case 'available_connection_count':
+                    value = this.status.availableConnectionCount.toString();
+                    break;
+                case 'query_time':
+                    value = this.status.queryTime.toString();
+                    break;
+                case 'active':
+                    value = this.status.active.toString();
+                    break;
+                default:
+                    value = result.find(res => res.Variable_name === validator.key).Value;
+            }
+
+            if (Pool.checkValueIsValid(value, validator)) validateCount++;
+        })
+
+        this._isValid = validateCount === this._validators.length;
+        Logger("Is status ok in host " + this.host + "? -> " + this._isValid.toString())
+    }
+
+    private loadFactorsCheck(result: GlobalStatusResult[]) {
+        let score = 0;
+        this._loadFactors.forEach(loadFactor => {
+            const value = result.find(res => res.Variable_name === loadFactor.key).Value;
+            if (isNaN(+value) || !value) {
+                Logger("Error: value from db isn't number. Check if you set right key. Current key: " + loadFactor.key)
+            } else {
+                score += +value * loadFactor.multiplier;
+            }
+        })
+
+        this._loadScore = score;
+        Logger("Load score by checking status in host " + this.host + " is " + this._loadScore);
     }
 
     private static checkValueIsValid(value: string, validator: Validator): boolean {
