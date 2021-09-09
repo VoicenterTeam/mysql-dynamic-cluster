@@ -1,4 +1,4 @@
-import { UserSettings, PoolSettings } from "./interfaces";
+import { UserSettings, PoolSettings, QueryOptions } from "./interfaces";
 import { Logger } from "./Logger";
 import globalSettings from "./config";
 
@@ -61,6 +61,16 @@ export class GaleraCluster {
             poolSettings.timerCheckMultiplier = globalSettings.timerCheckMultiplier
         }
 
+        console.warn(!poolSettings.queryTimeout)
+        console.warn(Boolean(userSettings.queryTimeout))
+
+        if (!poolSettings.queryTimeout && userSettings.queryTimeout) {
+            poolSettings.queryTimeout = userSettings.queryTimeout
+            console.log("Get timeout from user settings. Value: " + poolSettings.queryTimeout);
+        } else if (!poolSettings.queryTimeout && !userSettings.queryTimeout) {
+            poolSettings.queryTimeout = globalSettings.queryTimeout
+        }
+
         return poolSettings;
     }
 
@@ -78,7 +88,7 @@ export class GaleraCluster {
         })
     }
 
-    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }): Promise<T> {
+    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, queryOptions?: QueryOptions): Promise<T> {
         return new Promise<T>((resolve, reject) => {
             try {
                 this.getBestPool()
@@ -87,15 +97,9 @@ export class GaleraCluster {
                     })
                     .then(bestPool => {
                         bestPool = bestPool as Pool;
-                        bestPool?.query(sql, values)
+                        bestPool?.query(sql, queryOptions?.values, queryOptions?.timeout)
                             .then(res => resolve(res as T))
-                            .catch(err => {
-                                Logger("QUERY: retry query after error. Error message: " + err.message);
-
-                                this.query(sql, values)
-                                    .catch(error => reject(error))
-                                    .then(result => resolve(result as T))
-                            })
+                            .catch(err => reject(err))
                     })
 
             } catch (e) {

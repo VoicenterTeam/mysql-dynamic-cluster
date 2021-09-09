@@ -11,7 +11,8 @@ export interface UserSettings {
     validators?: Validator[],
     loadFactors?: LoadFactor[],
     timerCheckRange?: [number, number] // time in seconds
-    timerCheckMultiplier?: number
+    timerCheckMultiplier?: number,
+    queryTimeout?: number
 }
 
 export interface GlobalSettings {
@@ -22,7 +23,9 @@ export interface GlobalSettings {
     validators: Validator[],
     loadFactors: LoadFactor[],
     timerCheckRange: [number, number] // time in seconds
-    timerCheckMultiplier: number
+    timerCheckMultiplier: number,
+    errorRetryCount: number,
+    queryTimeout: number // time in ms
 }
 
 export interface PoolSettings {
@@ -36,7 +39,8 @@ export interface PoolSettings {
     validators?: Validator[],
     loadFactors?: LoadFactor[],
     timerCheckRange?: [number, number] // time in seconds
-    timerCheckMultiplier?: number
+    timerCheckMultiplier?: number,
+    queryTimeout?: number
 }
 
 export interface PoolStatus {
@@ -55,4 +59,9 @@ export interface Validator {
 export interface LoadFactor {
     key: string,
     multiplier: number
+}
+
+export interface QueryOptions {
+    values?: any | any[] | { [param: string]: any },
+    timeout?: number
 }

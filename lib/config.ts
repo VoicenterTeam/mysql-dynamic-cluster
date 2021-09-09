@@ -14,7 +14,9 @@ const GlobalSettings: GlobalSettings = {
     { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
   ],
   timerCheckRange: [5, 15], // time in seconds
-  timerCheckMultiplier: 1.3
+  timerCheckMultiplier: 1.3,
+  errorRetryCount: 2,
+  queryTimeout: 2 * 60 * 1000 // time in ms
 }
 
 export default GlobalSettings;
