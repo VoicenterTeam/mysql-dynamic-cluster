@@ -12,7 +12,9 @@ const GlobalSettings: GlobalSettings = {
   loadFactors: [
     { key: 'Connections', multiplier: 2 },
     { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
-  ]
+  ],
+  timerCheckRange: [5, 15], // time in seconds
+  timerCheckMultiplier: 1.3
 }
 
 export default GlobalSettings;

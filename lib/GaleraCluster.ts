@@ -50,6 +50,18 @@ export class GaleraCluster {
             poolSettings.loadFactors = globalSettings.loadFactors
         }
 
+        if (!poolSettings.timerCheckRange && userSettings.timerCheckRange) {
+            poolSettings.timerCheckRange = userSettings.timerCheckRange
+        } else if (!poolSettings.timerCheckRange && !userSettings.timerCheckRange) {
+            poolSettings.timerCheckRange = globalSettings.timerCheckRange
+        }
+
+        if (!poolSettings.timerCheckMultiplier && userSettings.timerCheckMultiplier) {
+            poolSettings.timerCheckMultiplier = userSettings.timerCheckMultiplier
+        } else if (!poolSettings.timerCheckMultiplier && !userSettings.timerCheckMultiplier) {
+            poolSettings.timerCheckMultiplier = globalSettings.timerCheckMultiplier
+        }
+
         return poolSettings;
     }
 

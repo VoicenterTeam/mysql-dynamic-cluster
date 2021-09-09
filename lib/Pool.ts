@@ -4,6 +4,7 @@ import { createPool } from "mysql2";
 import { Logger } from "./Logger";
 import { LoadFactor, PoolSettings, PoolStatus, Validator, GlobalStatusResult } from "./interfaces";
 import globalSettings from "./config";
+import { Utils } from "./Utils";
 
 export class Pool {
     private readonly _status: PoolStatus;
@@ -28,6 +29,8 @@ export class Pool {
     private readonly user: string;
     private readonly password: string;
     private readonly database: string;
+    private readonly timerCheckRange: [number, number];
+    private readonly timerCheckMultiplier: number;
 
     private _timer: NodeJS.Timeout;
     private _nextCheckTime: number = 10000;
@@ -46,6 +49,8 @@ export class Pool {
         this.user = settings.user;
         this.password = settings.password;
         this.database = settings.database;
+        this.timerCheckRange = settings.timerCheckRange;
+        this.timerCheckMultiplier = settings.timerCheckMultiplier;
 
         this.connectionLimit = settings.connectionLimit ? settings.connectionLimit : globalSettings.connectionLimit;
 
@@ -88,6 +93,8 @@ export class Pool {
         });
         this.status.active = false;
         this.stopTimerCheck();
+
+        Logger("Pool in host " + this.host + " closed");
     }
 
     private startTimerCheck() {
@@ -101,6 +108,8 @@ export class Pool {
 
     public async checkStatus() {
         try {
+            if (!this.status.active) return;
+
             Logger("checking pool status in host: " + this.host);
             const timeBefore = new Date().getTime();
 
@@ -112,16 +121,22 @@ export class Pool {
             this.validatorsCheck(result);
             this.loadFactorsCheck(result);
 
-            if (!this.status.active) return;
-            this._nextCheckTime *= 1.5;
-            this._timer = setTimeout(this.checkStatus.bind(this), this._nextCheckTime);
+            this.nextCheckStatus()
         } catch (err) {
             Logger("Error: Something wrong while checking status in host: " + this.host + ".\n Message: " + err.message);
-
-            if (!this.status.active) return;
-            this._nextCheckTime /= 2;
-            this._timer = setTimeout(this.checkStatus.bind(this), this._nextCheckTime);
+            this.nextCheckStatus(true)
         }
+    }
+
+    private nextCheckStatus(downgrade: boolean = false) {
+        if (downgrade) {
+            this._nextCheckTime /= this.timerCheckMultiplier;
+        } else {
+            this._nextCheckTime *= this.timerCheckMultiplier;
+        }
+        this._nextCheckTime = Utils.clamp(this._nextCheckTime, this.timerCheckRange[0], this.timerCheckRange[1])
+
+        this._timer = setTimeout(this.checkStatus.bind(this), this._nextCheckTime);
     }
 
     private validatorsCheck(result: GlobalStatusResult[]): void {

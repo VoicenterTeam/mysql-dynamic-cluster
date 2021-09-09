@@ -9,7 +9,9 @@ export interface UserSettings {
     connectionLimit?: number,
     port?: string,
     validators?: Validator[],
-    loadFactors?: LoadFactor[]
+    loadFactors?: LoadFactor[],
+    timerCheckRange?: [number, number] // time in seconds
+    timerCheckMultiplier?: number
 }
 
 export interface GlobalSettings {
@@ -18,7 +20,9 @@ export interface GlobalSettings {
     retryCount: number,
     connectionTimeout: number,
     validators: Validator[],
-    loadFactors: LoadFactor[]
+    loadFactors: LoadFactor[],
+    timerCheckRange: [number, number] // time in seconds
+    timerCheckMultiplier: number
 }
 
 export interface PoolSettings {
@@ -30,7 +34,9 @@ export interface PoolSettings {
     password?: string,
     database?: string,
     validators?: Validator[],
-    loadFactors?: LoadFactor[]
+    loadFactors?: LoadFactor[],
+    timerCheckRange?: [number, number] // time in seconds
+    timerCheckMultiplier?: number
 }
 
 export interface PoolStatus {
