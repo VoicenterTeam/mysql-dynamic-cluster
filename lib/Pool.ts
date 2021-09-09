@@ -173,6 +173,10 @@ export class Pool {
                 if (val === validatorVal) {
                     return true;
                 }
+            } else if (validator.operator === 'Like') {
+                if (val.indexOf(validatorVal) >= 0) {
+                    return true;
+                }
             } else {
                 Logger('Error: Operator ' + validator.operator + ' doesn\'t support for another type except number')
             }

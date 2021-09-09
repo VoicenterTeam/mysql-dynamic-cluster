@@ -1,4 +1,4 @@
-type Operator = '>' | '<' | '=';
+type Operator = '>' | '<' | '=' | 'Like';
 export type GlobalStatusResult = { Variable_name: string, Value: string }
 
 export interface UserSettings {
