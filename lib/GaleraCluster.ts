@@ -61,9 +61,6 @@ export class GaleraCluster {
             poolSettings.timerCheckMultiplier = globalSettings.timerCheckMultiplier
         }
 
-        console.warn(!poolSettings.queryTimeout)
-        console.warn(Boolean(userSettings.queryTimeout))
-
         if (!poolSettings.queryTimeout && userSettings.queryTimeout) {
             poolSettings.queryTimeout = userSettings.queryTimeout
             console.log("Get timeout from user settings. Value: " + poolSettings.queryTimeout);
@@ -89,27 +86,20 @@ export class GaleraCluster {
     }
 
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, queryOptions?: QueryOptions): Promise<T> {
-        return new Promise<T>((resolve, reject) => {
+        return new Promise<T>(async (resolve, reject) => {
             try {
-                this.getBestPool()
-                    .catch(error => {
-                        reject(error)
-                    })
-                    .then(bestPool => {
-                        bestPool = bestPool as Pool;
-                        bestPool?.query(sql, queryOptions?.values, queryOptions?.timeout)
-                            .then(res => resolve(res as T))
-                            .catch(err => reject(err))
-                    })
-
+                const activePools = await this.getActivePools();
+                activePools[0].query(sql, queryOptions?.values, queryOptions?.timeout)
+                    .then(res => resolve(res as T))
+                    .catch(err => reject(err))
             } catch (e) {
                 reject(e)
             }
         })
     }
 
-    private getBestPool() : Promise<Pool> {
-        return new Promise<Pool>((resolve, reject) => {
+    private getActivePools() : Promise<Pool[]> {
+        return new Promise<Pool[]>((resolve, reject) => {
             const activePools: Pool[] = this.pools.filter(pool => pool.isValid)
             activePools.sort((a, b) => a.loadScore - b.loadScore)
 
@@ -117,9 +107,7 @@ export class GaleraCluster {
                 reject({ message: "There is no pool that satisfies the parameters" })
             }
 
-            const bestPool: Pool = activePools[0];
-
-            resolve(bestPool);
+            resolve(activePools);
         })
     }
 }

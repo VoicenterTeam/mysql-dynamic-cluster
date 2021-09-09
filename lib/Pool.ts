@@ -225,20 +225,11 @@ export class Pool {
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: any | any[] | { [param: string]: any }, timeout: number = this.queryTimeout): Promise<T> {
         return new Promise<T>((resolve, reject) => {
             this.status.availableConnectionCount--;
-            console.log(timeout)
-            if (values) {
-                this._pool.query({ sql, values, timeout }, (error, result: T) => {
-                    this.status.availableConnectionCount++;
-                    if (error) reject(error)
-                    resolve(result);
-                })
-            } else {
-                return this._pool.query({ sql, timeout }, (error, result: T) => {
-                    this.status.availableConnectionCount++;
-                    if (error) reject(error)
-                    resolve(result);
-                })
-            }
+            this._pool.query({ sql, values, timeout }, (error, result: T) => {
+                this.status.availableConnectionCount++;
+                if (error) reject(error)
+                resolve(result);
+            })
         })
     }
 }

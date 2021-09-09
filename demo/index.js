@@ -28,7 +28,7 @@ const cluster = galeraCluster.createPoolCluster({
 async function test() {
     cluster.connect()
 
-    cluster.query(`SELECT * from officering_api_doc.MethodType`, { timeout: 2 })
+    cluster.query(`SELECT * from officering_api_doc.MethodType`)
         .then(result => console.log("Query1 -> ", result[0]))
         .catch(error => console.log(error.message))
 
