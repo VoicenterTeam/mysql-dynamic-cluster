@@ -63,8 +63,8 @@ export class Pool {
             queryTime: 0
         }
 
-        this._isValid = true;
-        this._loadScore = 0;
+        this._isValid = false;
+        this._loadScore = 100000;
 
         this._validators = settings.validators;
         this._loadFactors = settings.loadFactors;
@@ -72,7 +72,7 @@ export class Pool {
         Logger("configuration pool finished in host: " + this.host)
     }
 
-    public connect() {
+    public async connect(callback: () => void) {
         Logger("Creating pool in host: " + this.host)
         this._pool = createPool({
             connectionLimit: this.connectionLimit,
@@ -83,7 +83,11 @@ export class Pool {
         })
 
         this.status.active = true;
-        this.startTimerCheck();
+        await this.checkStatus();
+
+        if (this._isValid) {
+            callback();
+        }
     }
 
     public disconnect() {
@@ -97,11 +101,6 @@ export class Pool {
         this.stopTimerCheck();
 
         Logger("Pool in host " + this.host + " closed");
-    }
-
-    private startTimerCheck() {
-        this._timer = setTimeout(this.checkStatus.bind(this), this._nextCheckTime)
-        this.checkStatus()
     }
 
     private stopTimerCheck() {
@@ -136,7 +135,7 @@ export class Pool {
         } else {
             this._nextCheckTime *= this.timerCheckMultiplier;
         }
-        this._nextCheckTime = Utils.clamp(this._nextCheckTime, this.timerCheckRange[0], this.timerCheckRange[1])
+        this._nextCheckTime = Utils.clamp(this._nextCheckTime, this.timerCheckRange[0] * 1000, this.timerCheckRange[1] * 1000)
 
         this._timer = setTimeout(this.checkStatus.bind(this), this._nextCheckTime);
     }
