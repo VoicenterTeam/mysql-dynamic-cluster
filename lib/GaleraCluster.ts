@@ -3,7 +3,6 @@ import { Logger } from "./Logger";
 import globalSettings from "./config";
 
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
-import { Utils } from "./Utils";
 import { Pool } from "./Pool";
 
 export class GaleraCluster {
@@ -107,12 +106,14 @@ export class GaleraCluster {
 
     private getBestPool() : Promise<Pool> {
         return new Promise<Pool>((resolve, reject) => {
-            const activePools: Pool[] = this.pools.filter(pool => pool.status.active)
-            const bestPool: Pool = activePools[Utils.getRandomIntInRange(0, activePools.length - 1)]
+            const activePools: Pool[] = this.pools.filter(pool => pool.isValid)
+            activePools.sort((a, b) => a.loadScore - b.loadScore)
 
-            if (!bestPool) {
+            if (activePools.length < 1) {
                 reject({ message: "There is no pool that satisfies the parameters" })
             }
+
+            const bestPool: Pool = activePools[0];
 
             resolve(bestPool);
         })

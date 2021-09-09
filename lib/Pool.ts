@@ -61,7 +61,7 @@ export class Pool {
             queryTime: 0
         }
 
-        this._isValid = false;
+        this._isValid = true;
         this._loadScore = 0;
 
         this._validators = settings.validators;
