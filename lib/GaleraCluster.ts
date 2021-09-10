@@ -115,8 +115,8 @@ export class GaleraCluster {
             }
         }
 
-        const count = Math.min(this.errorRetryCount, activePools.length);
-        for (let i = 0; i < count; i++) {
+        const retryCount = Math.min(this.errorRetryCount, activePools.length);
+        for (let i = 0; i < retryCount; i++) {
             try {
                 return await activePools[i].query(sql, queryOptions?.timeout) as T;
             } catch (e) {

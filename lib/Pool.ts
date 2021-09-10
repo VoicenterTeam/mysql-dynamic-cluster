@@ -5,6 +5,7 @@ import { Logger } from "./Logger";
 import { LoadFactor, PoolSettings, PoolStatus, Validator, GlobalStatusResult } from "./interfaces";
 import globalSettings from "./config";
 import { Utils } from "./Utils";
+import { Timer } from "./Timer";
 
 export class Pool {
     private readonly _status: PoolStatus;
@@ -33,7 +34,7 @@ export class Pool {
     private readonly timerCheckMultiplier: number;
     private readonly queryTimeout: number;
 
-    private _timer: NodeJS.Timeout;
+    private _timer: Timer;
     private _nextCheckTime: number = 10000;
 
     private _validators: Validator[];
@@ -68,6 +69,8 @@ export class Pool {
 
         this._validators = settings.validators;
         this._loadFactors = settings.loadFactors;
+
+        this._timer = new Timer(this.checkStatus.bind(this))
 
         Logger("configuration pool finished in host: " + this.host)
     }
@@ -104,7 +107,7 @@ export class Pool {
     }
 
     private stopTimerCheck() {
-        clearTimeout(this._timer)
+        this._timer.dispose();
     }
 
     public async checkStatus() {
@@ -137,7 +140,7 @@ export class Pool {
         }
         this._nextCheckTime = Utils.clamp(this._nextCheckTime, this.timerCheckRange[0] * 1000, this.timerCheckRange[1] * 1000)
 
-        this._timer = setTimeout(this.checkStatus.bind(this), this._nextCheckTime);
+        this._timer.start(this._nextCheckTime);
     }
 
     private validatorsCheck(result: GlobalStatusResult[]): void {
