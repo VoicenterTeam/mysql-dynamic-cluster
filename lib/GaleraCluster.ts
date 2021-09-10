@@ -1,16 +1,19 @@
-import { UserSettings, PoolSettings, QueryOptions } from "./interfaces";
-import { Logger } from "./Logger";
+import {PoolSettings, QueryOptions, UserSettings} from "./interfaces";
+import {Logger} from "./Logger";
 import globalSettings from "./config";
 
-import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
-import { Pool } from "./Pool";
+import {OkPacket, ResultSetHeader, RowDataPacket} from "mysql2/typings/mysql";
+import {Pool} from "./Pool";
 
 export class GaleraCluster {
     private pools: Pool[] = []
+    private errorRetryCount: number;
 
     constructor(userSettings: UserSettings) {
         userSettings.hosts.forEach(poolSettings => {
             poolSettings = GaleraCluster.mixPoolSettings(poolSettings, userSettings)
+
+            this.errorRetryCount = userSettings.errorRetryCount ? userSettings.errorRetryCount : globalSettings.errorRetryCount;
 
             this.pools.push(
                 new Pool(poolSettings)
@@ -89,17 +92,28 @@ export class GaleraCluster {
         })
     }
 
-    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, queryOptions?: QueryOptions): Promise<T> {
-        return new Promise<T>(async (resolve, reject) => {
-            try {
-                const activePools = await this.getActivePools();
-                activePools[0].query(sql, queryOptions?.values, queryOptions?.timeout)
-                    .then(res => resolve(res as T))
-                    .catch(err => reject(err))
-            } catch (e) {
-                reject(e)
+    public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, queryOptions?: QueryOptions): Promise<T> {
+        let activePools: Pool[];
+        try {
+            activePools = await this.getActivePools();
+            if (this.errorRetryCount > activePools.length) {
+                Logger("Active pools less than error retry");
             }
-        })
+        } catch (e) {
+            throw new Error(e);
+        }
+
+        const count = Math.min(this.errorRetryCount, activePools.length);
+        for (let i = 0; i < count; i++) {
+            try {
+                return await activePools[i].query(sql, queryOptions?.values, queryOptions?.timeout) as T;
+            } catch (e) {
+                Logger("Query error: " + e.message + ". Retrying query...");
+            }
+        }
+
+        throw new Error("All pools have a error");
+
     }
 
     private getActivePools() : Promise<Pool[]> {

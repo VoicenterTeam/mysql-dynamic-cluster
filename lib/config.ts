@@ -3,7 +3,6 @@ import { GlobalSettings } from "./interfaces";
 const GlobalSettings: GlobalSettings = {
   port: "3306",
   connectionLimit: 100,
-  retryCount: 3,
   connectionTimeout: 1000,
   validators: [
     { key: 'wsrep_ready', operator: '=', value: 'ON' },

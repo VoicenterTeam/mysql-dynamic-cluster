@@ -12,13 +12,13 @@ export interface UserSettings {
     loadFactors?: LoadFactor[],
     timerCheckRange?: [number, number] // time in seconds
     timerCheckMultiplier?: number,
-    queryTimeout?: number
+    queryTimeout?: number,
+    errorRetryCount: number
 }
 
 export interface GlobalSettings {
     port: string,
     connectionLimit: number,
-    retryCount: number,
     connectionTimeout: number,
     validators: Validator[],
     loadFactors: LoadFactor[],

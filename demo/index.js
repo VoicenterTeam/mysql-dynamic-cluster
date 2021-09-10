@@ -28,19 +28,24 @@ const cluster = galeraCluster.createPoolCluster({
 async function test() {
     await cluster.connect()
 
-    cluster.query(`SELECT * from officering_api_doc.MethodType`)
-        .then(result => console.log("Query1 -> ", result[0]))
-        .catch(error => console.log(error.message))
+    try {
+        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`);
+        console.log(res[0]);
+    } catch (e){
+        console.log(e);
+    }
 
     console.log("Async test")
 
-    cluster.query(`SELECT * from officering_api_doc.MethodType`)
-        .then(result => {
-            console.log("Query2 -> ", result[0].MethodTypeName)
+    try {
+        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`);
+        console.log(res[0].MethodTypeName)
 
-            cluster.disconnect()
-        })
-        .catch(error => console.log(error.message))
+        cluster.disconnect()
+
+    } catch (e){
+        console.log(e)
+    }
 }
 
 test()
