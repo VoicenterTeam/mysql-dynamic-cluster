@@ -62,6 +62,6 @@ export interface LoadFactor {
 }
 
 export interface QueryOptions {
-    values?: any | any[] | { [param: string]: any },
+    values?: any[] | { [param: string]: any },
     timeout?: number
 }

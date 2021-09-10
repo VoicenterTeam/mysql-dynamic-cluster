@@ -1,9 +1,10 @@
-import {PoolSettings, QueryOptions, UserSettings} from "./interfaces";
-import {Logger} from "./Logger";
+import { PoolSettings, QueryOptions, UserSettings } from "./interfaces";
+import { Logger } from "./Logger";
 import globalSettings from "./config";
 
-import {OkPacket, ResultSetHeader, RowDataPacket} from "mysql2/typings/mysql";
-import {Pool} from "./Pool";
+import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
+import { format as MySQLFormat } from 'mysql2';
+import { Pool } from "./Pool";
 
 export class GaleraCluster {
     private pools: Pool[] = []
@@ -103,10 +104,21 @@ export class GaleraCluster {
             throw new Error(e);
         }
 
+        if (queryOptions?.values) {
+            const values = queryOptions.values;
+            if (typeof values === 'object') {
+                sql = sql.replace(/:(\w+)/g, (txt, key) => {
+                    return values.hasOwnProperty(key) ? values[key] : txt
+                })
+            } else {
+                sql = MySQLFormat(sql, values)
+            }
+        }
+
         const count = Math.min(this.errorRetryCount, activePools.length);
         for (let i = 0; i < count; i++) {
             try {
-                return await activePools[i].query(sql, queryOptions?.values, queryOptions?.timeout) as T;
+                return await activePools[i].query(sql, queryOptions?.timeout) as T;
             } catch (e) {
                 Logger("Query error: " + e.message + ". Retrying query...");
             }
