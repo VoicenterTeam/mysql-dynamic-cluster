@@ -1,7 +1,7 @@
 import { GlobalStatusResult, LoadFactor, Validator } from "../types/PoolInterfaces";
 import { PoolSettings } from "../types/SettingsInterfaces";
 import { Logger } from "../utils/Logger";
-import { MathUtils } from "../utils/MathUtils";
+import { Utils } from "../utils/Utils";
 import { Timer } from "../utils/Timer";
 import { Pool } from "./Pool";
 
@@ -79,7 +79,7 @@ export class PoolStatus {
         } else {
             this._nextCheckTime *= this.timerCheckMultiplier;
         }
-        this._nextCheckTime = MathUtils.clamp(this._nextCheckTime, this.timerCheckRange[0] * 1000, this.timerCheckRange[1] * 1000)
+        this._nextCheckTime = Utils.clamp(this._nextCheckTime, this.timerCheckRange[0] * 1000, this.timerCheckRange[1] * 1000)
 
         this._timer.start(this._nextCheckTime);
     }

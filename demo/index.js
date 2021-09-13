@@ -27,24 +27,32 @@ const cluster = galeraCluster.createPoolCluster({
 
 async function test() {
     await cluster.connect()
+    //
+    // try {
+    //     const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`);
+    //     console.log(res[0]);
+    // } catch (e){
+    //     console.log(e.message);
+    // }
+    //
+    // console.log("Async test")
+    //
+    // try {
+    //     const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`);
+    //     console.log(res[0].MethodTypeName)
+    //
+    //     cluster.disconnect()
+    //
+    // } catch (e){
+    //     console.log(e.message)
+    // }
 
-    try {
-        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`);
-        console.log(res[0]);
-    } catch (e){
-        console.log(e.message);
-    }
-
-    console.log("Async test")
-
-    try {
-        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`);
-        console.log(res[0].MethodTypeName)
-
-        cluster.disconnect()
-
-    } catch (e){
-        console.log(e.message)
+    for (let i = 0; i < 100; i++) {
+        try {
+            cluster.query(`select sleep(100);`);
+        } catch (e){
+            console.log(e.message);
+        }
     }
 }
 
