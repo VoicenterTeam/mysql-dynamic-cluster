@@ -5,11 +5,12 @@ const GlobalSettings: GlobalSettings = {
   connectionLimit: 100,
   validators: [
     { key: 'wsrep_ready', operator: '=', value: 'ON' },
-    { key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' }
+    { key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' },
+    { key: 'Threads_running', operator: '<', value: 50 }
   ],
   loadFactors: [
     { key: 'Connections', multiplier: 2 },
-    { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
+    { key: 'Threads_running', multiplier: 100 }
   ],
   timerCheckRange: [5, 15], // time in seconds
   timerCheckMultiplier: 1.3,

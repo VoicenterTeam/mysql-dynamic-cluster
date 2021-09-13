@@ -65,6 +65,7 @@ export class GaleraCluster {
             }
         }
 
+        Logger("Query use host: " + activePools[0].host)
         const retryCount = Math.min(this.errorRetryCount, activePools.length);
         for (let i = 0; i < retryCount; i++) {
             try {

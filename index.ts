@@ -5,6 +5,6 @@ function createPoolCluster(userSettings: UserSettings): GaleraCluster {
     return new GaleraCluster(userSettings);
 }
 
-export {
+export default {
     createPoolCluster
 };

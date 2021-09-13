@@ -5,5 +5,21 @@ module.exports = {
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   moduleDirectories: [
     "node_modules"
-  ]
+  ],
+  testTimeout: 300000,
+  collectCoverageFrom: [
+    "**/*.{ts}",
+    "**/tests/**",
+    "!**/node_modules/**",
+    "!**/dist/**",
+    "!**/tests/loads/**"
+  ],
+  coverageThreshold: {
+    global: {
+      branches: 10,
+      functions: 10,
+      lines: 10,
+      statements: 10
+    }
+  }
 };
