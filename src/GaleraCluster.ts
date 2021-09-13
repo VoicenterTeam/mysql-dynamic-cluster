@@ -1,13 +1,14 @@
-import { PoolSettings, QueryOptions, UserSettings } from "./interfaces";
-import { Logger } from "./Logger";
-import globalSettings from "./config";
+import { PoolSettings, UserSettings } from "./types/SettingsInterfaces";
+import { QueryOptions } from './types/PoolInterfaces'
+import { Logger } from "./Utils/Logger";
+import globalSettings from "./configs/config";
 
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import { format as MySQLFormat } from 'mysql2';
 import { Pool } from "./Pool";
 
 export class GaleraCluster {
-    private pools: Pool[] = []
+    private pools: Pool[] = [];
     private errorRetryCount: number;
 
     constructor(userSettings: UserSettings) {

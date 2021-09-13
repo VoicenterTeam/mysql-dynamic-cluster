@@ -1,9 +1,8 @@
-import { GlobalSettings } from "./interfaces";
+import { GlobalSettings } from "../types/SettingsInterfaces";
 
 const GlobalSettings: GlobalSettings = {
   port: "3306",
   connectionLimit: 100,
-  connectionTimeout: 1000,
   validators: [
     { key: 'wsrep_ready', operator: '=', value: 'ON' },
     { key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' }

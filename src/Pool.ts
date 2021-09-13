@@ -1,10 +1,11 @@
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import mysql from "mysql2";
-import { Logger } from "./Logger";
-import { LoadFactor, PoolSettings, PoolStatus, Validator, GlobalStatusResult } from "./interfaces";
-import globalSettings from "./config";
-import { Utils } from "./Utils";
-import { Timer } from "./Timer";
+import { Logger } from "./Utils/Logger";
+import { PoolSettings } from "./types/SettingsInterfaces";
+import { LoadFactor, PoolStatus, Validator, GlobalStatusResult } from './types/PoolInterfaces'
+import globalSettings from "./configs/config";
+import { MathUtils } from "./Utils/MathUtils";
+import { Timer } from "./Utils/Timer";
 
 export class Pool {
     private readonly _status: PoolStatus;
@@ -139,7 +140,7 @@ export class Pool {
         } else {
             this._nextCheckTime *= this.timerCheckMultiplier;
         }
-        this._nextCheckTime = Utils.clamp(this._nextCheckTime, this.timerCheckRange[0] * 1000, this.timerCheckRange[1] * 1000)
+        this._nextCheckTime = MathUtils.clamp(this._nextCheckTime, this.timerCheckRange[0] * 1000, this.timerCheckRange[1] * 1000)
 
         this._timer.start(this._nextCheckTime);
     }
