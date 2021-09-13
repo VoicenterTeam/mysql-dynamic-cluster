@@ -2,7 +2,7 @@ import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import mysql from "mysql2";
 import { Logger } from "../utils/Logger";
 import { PoolSettings } from "../types/SettingsInterfaces";
-import globalSettings from "../configs/config";
+import globalSettings from "../configs/GlobalSettings";
 import { PoolStatus } from './PoolStatus'
 
 export class Pool {

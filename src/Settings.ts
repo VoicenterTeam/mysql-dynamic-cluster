@@ -1,5 +1,5 @@
 import { PoolSettings, UserSettings } from "./types/SettingsInterfaces";
-import globalSettings from "./configs/config";
+import globalSettings from "./configs/GlobalSettings";
 
 export class Settings {
     public static mixPoolSettings(poolSettings: PoolSettings, userSettings: UserSettings) : PoolSettings {

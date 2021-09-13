@@ -1,7 +1,7 @@
 import { UserSettings } from "./types/SettingsInterfaces";
 import { QueryOptions } from './types/PoolInterfaces'
 import { Logger } from "./utils/Logger";
-import globalSettings from "./configs/config";
+import globalSettings from "./configs/GlobalSettings";
 
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import { format as MySQLFormat } from 'mysql2';
