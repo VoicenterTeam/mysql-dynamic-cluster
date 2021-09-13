@@ -1,8 +1,8 @@
 import { GlobalStatusResult, LoadFactor, Validator } from "../types/PoolInterfaces";
 import { PoolSettings } from "../types/SettingsInterfaces";
-import { Logger } from "../Utils/Logger";
-import { MathUtils } from "../Utils/MathUtils";
-import { Timer } from "../Utils/Timer";
+import { Logger } from "../utils/Logger";
+import { MathUtils } from "../utils/MathUtils";
+import { Timer } from "../utils/Timer";
 import { Pool } from "./Pool";
 
 export class PoolStatus {

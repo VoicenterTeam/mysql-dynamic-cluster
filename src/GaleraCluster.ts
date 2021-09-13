@@ -1,11 +1,11 @@
 import { UserSettings } from "./types/SettingsInterfaces";
 import { QueryOptions } from './types/PoolInterfaces'
-import { Logger } from "./Utils/Logger";
+import { Logger } from "./utils/Logger";
 import globalSettings from "./configs/config";
 
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import { format as MySQLFormat } from 'mysql2';
-import { Pool } from "./Pool/Pool";
+import { Pool } from "./pool/Pool";
 import { Settings } from "./Settings";
 
 export class GaleraCluster {

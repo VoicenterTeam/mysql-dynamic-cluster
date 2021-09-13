@@ -1,6 +1,6 @@
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import mysql from "mysql2";
-import { Logger } from "../Utils/Logger";
+import { Logger } from "../utils/Logger";
 import { PoolSettings } from "../types/SettingsInterfaces";
 import globalSettings from "../configs/config";
 import { PoolStatus } from './PoolStatus'
@@ -57,7 +57,7 @@ export class Pool {
         if (this.status.isValid) {
             callback(null);
         } else {
-            callback(new Error("Pool in host " + this.host + " is not valid"));
+            callback(new Error("pool in host " + this.host + " is not valid"));
         }
     }
 
@@ -71,7 +71,7 @@ export class Pool {
         this.status.active = false;
         this.status.stopTimerCheck();
 
-        Logger("Pool in host " + this.host + " closed");
+        Logger("pool in host " + this.host + " closed");
     }
 
     public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, timeout: number = this.queryTimeout): Promise<T> {
