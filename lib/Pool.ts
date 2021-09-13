@@ -1,6 +1,5 @@
-import { Pool as MySQLPool } from "mysql2/typings/mysql"
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
-import { createPool } from "mysql2";
+import mysql from "mysql2";
 import { Logger } from "./Logger";
 import { LoadFactor, PoolSettings, PoolStatus, Validator, GlobalStatusResult } from "./interfaces";
 import globalSettings from "./config";
@@ -40,7 +39,7 @@ export class Pool {
     private _validators: Validator[];
     private _loadFactors: LoadFactor[];
 
-    private _pool: MySQLPool;
+    private _pool: mysql.Pool;
 
     constructor(settings: PoolSettings) {
         this.host = settings.host;
@@ -77,7 +76,7 @@ export class Pool {
 
     public async connect(callback: () => void) {
         Logger("Creating pool in host: " + this.host)
-        this._pool = createPool({
+        this._pool = mysql.createPool({
             connectionLimit: this.connectionLimit,
             host: this.host,
             user: this.user,
@@ -227,10 +226,16 @@ export class Pool {
     public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, timeout: number = this.queryTimeout): Promise<T> {
         return new Promise<T>((resolve, reject) => {
             this.status.availableConnectionCount--;
-            this._pool.query({ sql, timeout }, (error, result: T) => {
-                this.status.availableConnectionCount++;
-                if (error) reject(error)
-                resolve(result);
+
+            this._pool.getConnection((err, conn) => {
+                if (err) reject(err);
+
+                conn?.query({ sql, timeout }, (error, result: T) => {
+                    this.status.availableConnectionCount++;
+                    conn.release();
+                    if (error) reject(error);
+                    resolve(result);
+                });
             })
         })
     }
