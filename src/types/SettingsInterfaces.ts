@@ -1,10 +1,10 @@
-import { Validator, LoadFactor } from './PoolInterfaces'
+import { ValidatorParams, LoadFactorParams } from './PoolInterfaces'
 
 export interface Settings {
     connectionLimit?: number,
     port?: string,
-    validators?: Validator[],
-    loadFactors?: LoadFactor[],
+    validators?: ValidatorParams[],
+    loadFactors?: LoadFactorParams[],
     timerCheckRange?: [number, number] // time in seconds
     timerCheckMultiplier?: number,
     queryTimeout?: number, // time in ms

@@ -1,13 +1,13 @@
 type Operator = '>' | '<' | '=' | 'Like';
 export type GlobalStatusResult = { Variable_name: string, Value: string }
 
-export interface Validator {
+export interface ValidatorParams {
     key: string,
     operator: Operator,
     value: string | number
 }
 
-export interface LoadFactor {
+export interface LoadFactorParams {
     key: string,
     multiplier: number
 }

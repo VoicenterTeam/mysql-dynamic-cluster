@@ -1,9 +1,11 @@
-import { GlobalStatusResult, LoadFactor, Validator } from "../types/PoolInterfaces";
+import { GlobalStatusResult } from "../types/PoolInterfaces";
 import { PoolSettings } from "../types/SettingsInterfaces";
 import { Logger } from "../utils/Logger";
 import { Utils } from "../utils/Utils";
 import { Timer } from "../utils/Timer";
 import { Pool } from "./Pool";
+import { Validator } from "./Validator";
+import { LoadFactor } from "./LoadFactor";
 
 export class PoolStatus {
     public active: boolean;
@@ -20,9 +22,8 @@ export class PoolStatus {
     public get loadScore(): number {
         return this._loadScore;
     }
-
-    private _validators: Validator[];
-    private _loadFactors: LoadFactor[];
+    private _validator: Validator;
+    private _loadFactor: LoadFactor;
 
     private _timer: Timer;
     private _nextCheckTime: number = 10000;
@@ -39,8 +40,8 @@ export class PoolStatus {
         this._isValid = false;
         this._loadScore = 100000;
 
-        this._validators = settings.validators;
-        this._loadFactors = settings.loadFactors;
+        this._validator = new Validator(this, settings.validators);
+        this._loadFactor = new LoadFactor(settings.loadFactors);
 
         this.timerCheckRange = settings.timerCheckRange;
         this.timerCheckMultiplier = settings.timerCheckMultiplier;
@@ -63,8 +64,10 @@ export class PoolStatus {
             const timeAfter = new Date().getTime();
             this.queryTime = Math.abs(timeAfter - timeBefore) / 1000;
 
-            this.validatorsCheck(result);
-            this.loadFactorsCheck(result);
+            this._isValid = this._validator.check(result);
+            Logger("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())
+            this._loadScore = this._loadFactor.check(result);
+            Logger("Load score by checking status in host " + this._pool.host + " is " + this._loadScore);
 
             this.nextCheckStatus()
         } catch (err) {
@@ -82,86 +85,5 @@ export class PoolStatus {
         this._nextCheckTime = Utils.clamp(this._nextCheckTime, this.timerCheckRange[0] * 1000, this.timerCheckRange[1] * 1000)
 
         this._timer.start(this._nextCheckTime);
-    }
-
-    private validatorsCheck(result: GlobalStatusResult[]): void {
-        let validateCount: number = 0;
-        this._validators.forEach(validator => {
-            let value: string;
-            switch (validator.key) {
-                case 'available_connection_count':
-                    value = this.availableConnectionCount.toString();
-                    break;
-                case 'query_time':
-                    value = this.queryTime.toString();
-                    break;
-                case 'active':
-                    value = this.active.toString();
-                    break;
-                default:
-                    value = result.find(res => res.Variable_name === validator.key).Value;
-            }
-
-            if (PoolStatus.checkValueIsValid(value, validator)) validateCount++;
-        })
-
-        this._isValid = validateCount === this._validators.length;
-        Logger("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())
-    }
-
-    private loadFactorsCheck(result: GlobalStatusResult[]) {
-        let score = 0;
-        this._loadFactors.forEach(loadFactor => {
-            const value = result.find(res => res.Variable_name === loadFactor.key).Value;
-            if (isNaN(+value) || !value) {
-                Logger("Error: value from db isn't number. Check if you set right key. Current key: " + loadFactor.key)
-            } else {
-                score += +value * loadFactor.multiplier;
-            }
-        })
-
-        this._loadScore = score;
-        Logger("Load score by checking status in host " + this._pool.host + " is " + this._loadScore);
-    }
-
-    private static checkValueIsValid(value: string, validator: Validator): boolean {
-        if (isNaN(+value)) {
-            const val = value as string;
-            const validatorVal = validator.value as string;
-
-            if (validator.operator === '=') {
-                if (val === validatorVal) {
-                    return true;
-                }
-            } else if (validator.operator === 'Like') {
-                if (val.indexOf(validatorVal) >= 0) {
-                    return true;
-                }
-            } else {
-                Logger('Error: Operator ' + validator.operator + ' doesn\'t support for another type except number')
-            }
-        } else {
-            const val = +value as number;
-            const validatorVal = +validator.value as number;
-
-            if (isNaN(validatorVal)) {
-                Logger('Error: validator value isn\'t a type number like value from database. Check if you write correct data');
-                return false;
-            }
-
-            switch (validator.operator) {
-                case "<":
-                    if (val < validatorVal) return true;
-                    break;
-                case "=":
-                    if (val === validatorVal) return true;
-                    break;
-                case ">":
-                    if (val > validatorVal) return true;
-                    break;
-            }
-        }
-
-        return false;
     }
 }
