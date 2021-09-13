@@ -75,12 +75,12 @@ export class GaleraCluster {
     }
 
     public connect(): Promise<void> {
-        return new Promise<void>(resolve => {
+        return new Promise(resolve => {
             Logger("connecting all pools")
             this.pools.forEach((pool) => {
-                pool.connect(() => {
-                    clearTimeout();
-                    resolve();
+                pool.connect((err) => {
+                    if (err) Logger(err.message)
+                    else resolve()
                 });
             })
         })
@@ -98,7 +98,7 @@ export class GaleraCluster {
         try {
             activePools = await this.getActivePools();
             if (this.errorRetryCount > activePools.length) {
-                Logger("Active pools less than error retry");
+                Logger("Active pools less than error retry count");
             }
         } catch (e) {
             throw new Error(e);
@@ -128,16 +128,14 @@ export class GaleraCluster {
 
     }
 
-    private getActivePools() : Promise<Pool[]> {
-        return new Promise<Pool[]>((resolve, reject) => {
-            const activePools: Pool[] = this.pools.filter(pool => pool.isValid)
-            activePools.sort((a, b) => a.loadScore - b.loadScore)
+    private async getActivePools() : Promise<Pool[]> {
+        const activePools: Pool[] = this.pools.filter(pool => pool.isValid)
+        activePools.sort((a, b) => a.loadScore - b.loadScore)
 
-            if (activePools.length < 1) {
-                reject({ message: "There is no pool that satisfies the parameters" })
-            }
+        if (activePools.length < 1) {
+            throw new Error("There is no pool that satisfies the parameters")
+        }
 
-            resolve(activePools);
-        })
+        return activePools;
     }
 }

@@ -74,7 +74,7 @@ export class Pool {
         Logger("configuration pool finished in host: " + this.host)
     }
 
-    public async connect(callback: () => void) {
+    public async connect(callback: (err: Error) => void) {
         Logger("Creating pool in host: " + this.host)
         this._pool = mysql.createPool({
             connectionLimit: this.connectionLimit,
@@ -88,7 +88,9 @@ export class Pool {
         await this.checkStatus();
 
         if (this._isValid) {
-            callback();
+            callback(null);
+        } else {
+            callback(new Error("Pool in host " + this.host + " is not valid"))
         }
     }
 
@@ -223,8 +225,8 @@ export class Pool {
         return false;
     }
 
-    public query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, timeout: number = this.queryTimeout): Promise<T> {
-        return new Promise<T>((resolve, reject) => {
+    public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, timeout: number = this.queryTimeout): Promise<T> {
+        return new Promise((resolve, reject) => {
             this.status.availableConnectionCount--;
 
             this._pool.getConnection((err, conn) => {

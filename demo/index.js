@@ -32,7 +32,7 @@ async function test() {
         const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`);
         console.log(res[0]);
     } catch (e){
-        console.log(e);
+        console.log(e.message);
     }
 
     console.log("Async test")
@@ -44,7 +44,7 @@ async function test() {
         cluster.disconnect()
 
     } catch (e){
-        console.log(e)
+        console.log(e.message)
     }
 }
 
