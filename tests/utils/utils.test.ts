@@ -10,6 +10,7 @@ test("Timer async", async () => {
     })
     timer.start(30);
     await new Utils().sleep(35 * 4);
+    timer.dispose();
 
     await expect(count).toBe(3);
 })
