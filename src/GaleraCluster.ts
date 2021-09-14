@@ -7,10 +7,15 @@ import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import { format as MySQLFormat } from 'mysql2';
 import { Pool } from "./pool/Pool";
 import { Settings } from "./Settings";
+import {ClusterAshync} from "./ClusterAshync";
 
 export class GaleraCluster {
     private _pools: Pool[] = [];
+    public get pools(): Pool[] {
+        return this._pools;
+    }
     private _poolIds: number[] =[];
+    private _clusterAshync: ClusterAshync;
     private readonly errorRetryCount: number;
 
     constructor(userSettings: UserSettings) {
@@ -28,12 +33,12 @@ export class GaleraCluster {
                 this._poolIds.push(poolSettings.id);
             }
 
-            console.log("Pool id " + poolSettings.id);
-
             this._pools.push(
                 new Pool(poolSettings)
             )
         })
+
+        this._clusterAshync = new ClusterAshync(this);
 
         Logger("configuration finished")
     }
@@ -44,7 +49,10 @@ export class GaleraCluster {
             this._pools.forEach((pool) => {
                 pool.connect((err) => {
                     if (err) Logger(err.message)
-                    else resolve()
+                    else {
+                        this._clusterAshync.connect();
+                        resolve();
+                    }
                 });
             })
         })
@@ -52,6 +60,7 @@ export class GaleraCluster {
 
     public disconnect() {
         Logger("disconnecting all pools")
+        this._clusterAshync.stop();
         this._pools.forEach((pool) => {
             pool.disconnect();
         })
@@ -83,7 +92,7 @@ export class GaleraCluster {
         const retryCount = Math.min(this.errorRetryCount, activePools.length);
         for (let i = 0; i < retryCount; i++) {
             try {
-                return await activePools[i].query(sql, queryOptions?.timeout) as T;
+                return await activePools[i].query(sql, queryOptions?.timeout, queryOptions?.database) as T;
             } catch (e) {
                 Logger("Query error: " + e.message + ". Retrying query...");
             }

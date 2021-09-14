@@ -74,13 +74,16 @@ export class Pool {
         Logger("pool in host " + this.host + " closed");
     }
 
-    public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, timeout: number = this.queryTimeout): Promise<T> {
+    public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, timeout: number = this.queryTimeout, database: string = this.database): Promise<T> {
         return new Promise((resolve, reject) => {
             this.status.availableConnectionCount--;
 
             this._pool.getConnection((err, conn) => {
                 if (err) reject(err);
 
+                conn?.changeUser({ database }, (error) => {
+                    if (error) reject(error)
+                })
                 conn?.query({ sql, timeout }, (error, result: T) => {
                     this.status.availableConnectionCount++;
                     conn.release();

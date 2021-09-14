@@ -14,5 +14,6 @@ export interface LoadFactorParams {
 
 export interface QueryOptions {
     values?: any[] | { [param: string]: any },
-    timeout?: number
+    timeout?: number,
+    database?: string
 }
