@@ -9,14 +9,28 @@ import { Pool } from "./pool/Pool";
 import { Settings } from "./Settings";
 
 export class GaleraCluster {
-    private pools: Pool[] = [];
+    private _pools: Pool[] = [];
+    private _poolIds: number[] =[];
     private readonly errorRetryCount: number;
 
     constructor(userSettings: UserSettings) {
         this.errorRetryCount = userSettings.errorRetryCount ? userSettings.errorRetryCount : globalSettings.errorRetryCount;
+        userSettings.hosts.forEach(host => {
+            if (host.id) this._poolIds.push(host.id);
+        })
+        this._poolIds.sort((a, b) => a - b);
+
         userSettings.hosts.forEach(poolSettings => {
-            poolSettings = Settings.mixPoolSettings(poolSettings, userSettings)
-            this.pools.push(
+            poolSettings = Settings.mixPoolSettings(poolSettings, userSettings);
+
+            if (!poolSettings.id) {
+                poolSettings.id = this._poolIds.length <= 0 ? 0 : this._poolIds[this._poolIds.length - 1] + 1;
+                this._poolIds.push(poolSettings.id);
+            }
+
+            console.log("Pool id " + poolSettings.id);
+
+            this._pools.push(
                 new Pool(poolSettings)
             )
         })
@@ -27,7 +41,7 @@ export class GaleraCluster {
     public connect(): Promise<void> {
         return new Promise(resolve => {
             Logger("connecting all pools")
-            this.pools.forEach((pool) => {
+            this._pools.forEach((pool) => {
                 pool.connect((err) => {
                     if (err) Logger(err.message)
                     else resolve()
@@ -38,7 +52,7 @@ export class GaleraCluster {
 
     public disconnect() {
         Logger("disconnecting all pools")
-        this.pools.forEach((pool) => {
+        this._pools.forEach((pool) => {
             pool.disconnect();
         })
     }
@@ -80,7 +94,7 @@ export class GaleraCluster {
     }
 
     private async getActivePools() : Promise<Pool[]> {
-        const activePools: Pool[] = this.pools.filter(pool => pool.status.isValid)
+        const activePools: Pool[] = this._pools.filter(pool => pool.status.isValid)
         activePools.sort((a, b) => a.status.loadScore - b.status.loadScore)
 
         if (activePools.length < 1) {

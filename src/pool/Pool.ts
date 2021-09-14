@@ -11,7 +11,7 @@ export class Pool {
         return this._status;
     }
 
-    public readonly id: string;
+    public readonly id: number;
     public readonly host: string;
     public readonly connectionLimit: number;
 
@@ -26,7 +26,7 @@ export class Pool {
     constructor(settings: PoolSettings) {
         this.host = settings.host;
         this.port = settings.port ? settings.port : globalSettings.port;
-        this.id = settings.id ? settings.id.toString() : this.host + ":" + this.port;
+        this.id = settings.id;
         Logger("configure pool in host " + this.host);
 
         this.user = settings.user;
