@@ -26,6 +26,7 @@ export interface GlobalSettings extends Settings {
 export interface PoolSettings extends Settings {
     id?: number,
     host: string,
+    name?: string,
     user?: string,
     password?: string,
     database?: string

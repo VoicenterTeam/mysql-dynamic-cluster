@@ -12,10 +12,11 @@ export class Pool {
     }
 
     public readonly id: number;
+    public readonly name: string;
     public readonly host: string;
+    public readonly port: string;
     public readonly connectionLimit: number;
 
-    private readonly port: string;
     private readonly user: string;
     private readonly password: string;
     private readonly database: string;
@@ -24,9 +25,10 @@ export class Pool {
     private _pool: mysql.Pool;
 
     constructor(settings: PoolSettings) {
+        this.id = settings.id;
         this.host = settings.host;
         this.port = settings.port ? settings.port : globalSettings.port;
-        this.id = settings.id;
+        this.name = settings.name ? settings.name : `${this.host}:${this.port}`
         Logger("configure pool in host " + this.host);
 
         this.user = settings.user;

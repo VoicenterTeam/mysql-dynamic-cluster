@@ -79,16 +79,16 @@ export class GaleraCluster {
 
         if (queryOptions?.values) {
             const values = queryOptions.values;
-            if (typeof values === 'object') {
+            if (Array.isArray(values)) {
+                sql = MySQLFormat(sql, values);
+            } else {
                 sql = sql.replace(/:(\w+)/g, (txt, key) => {
                     return values.hasOwnProperty(key) ? values[key] : txt
                 })
-            } else {
-                sql = MySQLFormat(sql, values)
             }
         }
 
-        Logger("Query use host: " + activePools[0].host)
+        Logger("Query use host: " + activePools[0].host);
         const retryCount = Math.min(this.errorRetryCount, activePools.length);
         for (let i = 0; i < retryCount; i++) {
             try {

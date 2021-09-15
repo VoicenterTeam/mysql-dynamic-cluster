@@ -17,3 +17,7 @@ export interface QueryOptions {
     timeout?: number,
     database?: string
 }
+
+export interface ServiceNodeMap {
+    [param: string]: number
+}
