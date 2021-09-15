@@ -1,9 +1,9 @@
 import { GaleraCluster } from "./GaleraCluster";
 import { Logger } from "./utils/Logger";
 import { Timer } from "./utils/Timer";
-import {ServiceNodeMap} from "./types/PoolInterfaces";
+import { ServiceNodeMap } from "./types/PoolInterfaces";
 
-export class ClusterAshync {
+export class ClusterHashing {
     private _cluster: GaleraCluster;
     private _timer: Timer;
 
@@ -21,13 +21,13 @@ export class ClusterAshync {
             this._database = database;
         }
 
-        this._timer = new Timer(this.checkAshync.bind(this));
+        this._timer = new Timer(this.checkHashing.bind(this));
     }
 
     public async connect() {
         try {
             this._createDB();
-            this.checkAshync();
+            this.checkHashing();
         } catch (err) {
             Logger(err.message);
         }
@@ -36,9 +36,8 @@ export class ClusterAshync {
     private async _createDB() {
         this._cluster.pools.forEach(pool => {
             try {
-                this._cluster.query('CALL SP_NodeInsert( ? , ? , ? , ? );',
+                this._cluster.query('CALL SP_NodeInsert( ? , ? , ? , ? );', [pool.id, pool.name, pool.host, pool.port],
                 {
-                    values: [pool.id, pool.name, pool.host, pool.port],
                     database: this._database
                 });
             } catch (e) {
@@ -47,23 +46,23 @@ export class ClusterAshync {
         });
     }
 
-    public async checkAshync() {
+    public async checkHashing() {
         try {
             Logger("checking async status in cluster");
-            const result = await this._cluster.query(`SELECT FN_GetServiceNodeMapping();`,
+            const result = await this._cluster.query(`SELECT FN_GetServiceNodeMapping();`, null,
             {
                 database: this._database
             });
             this.serviceNodeMap = result[0]["FN_GetServiceNodeMapping()"] as ServiceNodeMap;
 
-            this._nextCheckAshync()
+            this._nextCheckHashing()
         } catch (err) {
-            Logger("Error: Something wrong while checking ashync status in cluster.\n Message: " + err.message);
-            this._nextCheckAshync()
+            Logger("Error: Something wrong while checking hashing status in cluster.\n Message: " + err.message);
+            this._nextCheckHashing()
         }
     }
 
-    private _nextCheckAshync() {
+    private _nextCheckHashing() {
         this._timer.start(this._nextCheckTime);
     }
 
@@ -72,9 +71,7 @@ export class ClusterAshync {
     }
 
     public updateServiceForNode(serviceId: number, nodeId: number) {
-        this._cluster.query('CALL SP_NodeServiceUpdate(?, ?);',
-        {
-            values: [nodeId, serviceId],
+        this._cluster.query('CALL SP_NodeServiceUpdate(?, ?);', [nodeId, serviceId], {
             database: this._database
         });
     }

@@ -1,5 +1,6 @@
 type Operator = '>' | '<' | '=' | 'Like';
 export type GlobalStatusResult = { Variable_name: string, Value: string }
+export type QueryValues = string | any[] | { [param: string]: any }
 
 export interface ValidatorParams {
     key: string,
@@ -13,9 +14,10 @@ export interface LoadFactorParams {
 }
 
 export interface QueryOptions {
-    values?: any[] | { [param: string]: any },
     timeout?: number,
-    database?: string
+    database?: string,
+    serviceId?: number,
+    maxRetry?: number
 }
 
 export interface ServiceNodeMap {

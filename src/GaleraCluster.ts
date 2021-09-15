@@ -1,5 +1,5 @@
 import { UserSettings } from "./types/SettingsInterfaces";
-import { QueryOptions } from './types/PoolInterfaces'
+import {QueryOptions, QueryValues} from './types/PoolInterfaces'
 import { Logger } from "./utils/Logger";
 import globalSettings from "./configs/GlobalSettings";
 
@@ -7,7 +7,7 @@ import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import { format as MySQLFormat } from 'mysql2';
 import { Pool } from "./pool/Pool";
 import { Settings } from "./Settings";
-import {ClusterAshync} from "./ClusterAshync";
+import {ClusterHashing} from "./ClusterHashing";
 
 export class GaleraCluster {
     private _pools: Pool[] = [];
@@ -15,7 +15,7 @@ export class GaleraCluster {
         return this._pools;
     }
     private _poolIds: number[] =[];
-    private _clusterAshync: ClusterAshync;
+    private _clusterHashing: ClusterHashing;
     private readonly errorRetryCount: number;
 
     constructor(userSettings: UserSettings) {
@@ -38,7 +38,7 @@ export class GaleraCluster {
             )
         })
 
-        this._clusterAshync = new ClusterAshync(this);
+        this._clusterHashing = new ClusterHashing(this);
 
         Logger("configuration finished")
     }
@@ -50,7 +50,7 @@ export class GaleraCluster {
                 pool.connect((err) => {
                     if (err) Logger(err.message)
                     else {
-                        this._clusterAshync.connect();
+                        this._clusterHashing.connect();
                         resolve();
                     }
                 });
@@ -60,16 +60,17 @@ export class GaleraCluster {
 
     public disconnect() {
         Logger("disconnecting all pools")
-        this._clusterAshync.stop();
+        this._clusterHashing.stop();
         this._pools.forEach((pool) => {
             pool.disconnect();
         })
     }
 
-    public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, queryOptions?: QueryOptions): Promise<T> {
+    public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: QueryValues, queryOptions?: QueryOptions): Promise<T> {
         let activePools: Pool[];
         try {
             activePools = await this.getActivePools();
+            // #TODO: use max retry - QueryOption value
             if (this.errorRetryCount > activePools.length) {
                 Logger("Active pools less than error retry count");
             }
@@ -77,10 +78,11 @@ export class GaleraCluster {
             throw new Error(e);
         }
 
-        if (queryOptions?.values) {
-            const values = queryOptions.values;
+        if (values) {
             if (Array.isArray(values)) {
                 sql = MySQLFormat(sql, values);
+            } else if (typeof values === 'string') {
+                sql = MySQLFormat(sql, [values]);
             } else {
                 sql = sql.replace(/:(\w+)/g, (txt, key) => {
                     return values.hasOwnProperty(key) ? values[key] : txt
@@ -88,12 +90,20 @@ export class GaleraCluster {
             }
         }
 
+
         Logger("Query use host: " + activePools[0].host);
         const retryCount = Math.min(this.errorRetryCount, activePools.length);
         for (let i = 0; i < retryCount; i++) {
             try {
-                return await activePools[i].query(sql, queryOptions?.timeout, queryOptions?.database) as T;
+                const result = await activePools[i].query(sql, queryOptions?.timeout, queryOptions?.database) as T;
+                if (queryOptions?.serviceId) {
+                    this._clusterHashing.updateServiceForNode(queryOptions.serviceId, activePools[i].id);
+                }
+                return result;
             } catch (e) {
+                if (queryOptions?.serviceId) {
+                    this._clusterHashing.updateServiceForNode(queryOptions.serviceId, activePools[i].id);
+                }
                 Logger("Query error: " + e.message + ". Retrying query...");
             }
         }
