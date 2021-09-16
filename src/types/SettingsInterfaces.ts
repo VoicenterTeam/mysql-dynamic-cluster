@@ -1,3 +1,7 @@
+/**
+ * Created by Bohdan on Sep, 2021
+ */
+
 import { ValidatorParams, LoadFactorParams } from './PoolInterfaces'
 
 export interface Settings {
@@ -5,12 +9,15 @@ export interface Settings {
     port?: string,
     validators?: ValidatorParams[],
     loadFactors?: LoadFactorParams[],
-    timerCheckRange?: [number, number] // time in seconds
+    // Time in ms
+    timerCheckRange?: [number, number],
     timerCheckMultiplier?: number,
-    queryTimeout?: number, // time in ms
+    // Time in ms
+    queryTimeout?: number,
     errorRetryCount?: number
 }
 
+// Global user settings
 export interface UserSettings extends Settings {
     hosts: PoolSettings[],
     user: string,

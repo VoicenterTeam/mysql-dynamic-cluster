@@ -1,3 +1,7 @@
+/**
+ * Created by Bohdan on Sep, 2021
+ */
+
 const galeraCluster = require('../dist/index')
 require('dotenv').config()
 

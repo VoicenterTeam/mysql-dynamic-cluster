@@ -1,3 +1,7 @@
+/**
+ * Created by Bohdan on Sep, 2021
+ */
+
 import galeraCluster from '../../index'
 import { Utils } from "../../src/utils/Utils";
 import dotenv from "dotenv";

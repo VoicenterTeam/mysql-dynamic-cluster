@@ -1,3 +1,10 @@
+/**
+ * Created by Bohdan on Sep, 2021
+ */
+
+/**
+ * Helper math utils
+ */
 export class Utils {
     public static clamp (num, min, max): number {
         return Math.min(Math.max(num, min), max);

@@ -1,3 +1,7 @@
+/**
+ * Created by Bohdan on Sep, 2021
+ */
+
 import { GlobalSettings } from "../types/SettingsInterfaces";
 
 const GlobalSettings: GlobalSettings = {
@@ -12,7 +16,7 @@ const GlobalSettings: GlobalSettings = {
     { key: 'Connections', multiplier: 2 },
     { key: 'Threads_running', multiplier: 100 }
   ],
-  timerCheckRange: [5, 15], // time in seconds
+  timerCheckRange: [5000, 15000],
   timerCheckMultiplier: 1.3,
   errorRetryCount: 2,
   queryTimeout: 2 * 60 * 1000 // time in ms

@@ -1,5 +1,12 @@
+/**
+ * Created by Bohdan on Sep, 2021
+ */
+
+// Validator operator
 type Operator = '>' | '<' | '=' | 'Like';
+// Database global status result
 export type GlobalStatusResult = { Variable_name: string, Value: string }
+// Values for mysql query
 export type QueryValues = string | any[] | { [param: string]: any }
 
 export interface ValidatorParams {

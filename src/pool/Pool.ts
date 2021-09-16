@@ -1,3 +1,7 @@
+/**
+ * Created by Bohdan on Sep, 2021
+ */
+
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import mysql from "mysql2";
 import { Logger } from "../utils/Logger";
@@ -5,6 +9,7 @@ import { PoolSettings } from "../types/SettingsInterfaces";
 import globalSettings from "../configs/GlobalSettings";
 import { PoolStatus } from './PoolStatus'
 
+// AKA galera node
 export class Pool {
     private readonly _status: PoolStatus;
     public get status(): PoolStatus {
@@ -15,6 +20,7 @@ export class Pool {
     public readonly name: string;
     public readonly host: string;
     public readonly port: string;
+    // max connection count in pool
     public readonly connectionLimit: number;
 
     private readonly user: string;
@@ -24,6 +30,9 @@ export class Pool {
 
     private _pool: mysql.Pool;
 
+    /**
+     * @param settings pool settings
+     */
     constructor(settings: PoolSettings) {
         this.id = settings.id;
         this.host = settings.host;
@@ -43,6 +52,9 @@ export class Pool {
         Logger("configuration pool finished in host: " + this.host);
     }
 
+    /** create pool connection
+     * @param callback error callback
+     */
     public async connect(callback: (err: Error) => void) {
         Logger("Creating pool in host: " + this.host);
         this._pool = mysql.createPool({
@@ -63,6 +75,9 @@ export class Pool {
         }
     }
 
+    /**
+     * close pool connection
+     */
     public disconnect() {
         Logger("closing pool in host: " + this.host);
         this._pool.end((error) => {
@@ -76,6 +91,11 @@ export class Pool {
         Logger("pool in host " + this.host + " closed");
     }
 
+    /**
+     * @param sql mysql query
+     * @param timeout query timeout
+     * @param database change database for this query
+     */
     public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, timeout: number = this.queryTimeout, database: string = this.database): Promise<T> {
         return new Promise((resolve, reject) => {
             this.status.availableConnectionCount--;

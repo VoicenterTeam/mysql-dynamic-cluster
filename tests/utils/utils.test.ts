@@ -1,3 +1,7 @@
+/**
+ * Created by Bohdan on Sep, 2021
+ */
+
 import { Timer } from "../../src/utils/Timer";
 import { Utils } from "../../src/utils/Utils";
 

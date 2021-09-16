@@ -1,7 +1,16 @@
+/**
+ * Created by Bohdan on Sep, 2021
+ */
+
 import { PoolSettings, UserSettings } from "./types/SettingsInterfaces";
 import globalSettings from "./configs/GlobalSettings";
 
 export class Settings {
+    /**
+     * mix pool settings with global and global user settings
+     * @param poolSettings pool settings
+     * @param userSettings global user settings
+     */
     public static mixPoolSettings(poolSettings: PoolSettings, userSettings: UserSettings) : PoolSettings {
         poolSettings = {
             user: userSettings.user,
