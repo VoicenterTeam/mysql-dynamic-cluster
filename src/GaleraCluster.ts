@@ -66,58 +66,83 @@ export class GaleraCluster {
         })
     }
 
+    // Cluster mysql query
+
     public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: QueryValues, queryOptions?: QueryOptions): Promise<T> {
         let activePools: Pool[];
         let retryCount;
         try {
-            activePools = await this.getActivePools();
-            if (this.errorRetryCount > activePools.length) {
-                Logger("Active pools less than error retry count");
-            }
-            retryCount = queryOptions?.maxRetry > 0 ? queryOptions.maxRetry : this.errorRetryCount;
-            retryCount = Math.min(retryCount, activePools.length);
+            activePools = await this.getActivePools(queryOptions?.serviceId);
+            retryCount = this._maxRetryCount(queryOptions?.maxRetry, activePools.length);
         } catch (e) {
             throw new Error(e);
         }
 
-        if (values) {
-            if (Array.isArray(values)) {
-                sql = MySQLFormat(sql, values);
-            } else if (typeof values === 'string') {
-                sql = MySQLFormat(sql, [values]);
-            } else {
-                sql = sql.replace(/:(\w+)/g, (txt, key) => {
-                    return values.hasOwnProperty(key) ? values[key] : txt
-                })
-            }
-        }
-
+        sql = this._formatSQL(sql, values);
 
         Logger("Query use host: " + activePools[0].host);
         for (let i = 0; i < retryCount; i++) {
             try {
-                const result = await activePools[i].query(sql, queryOptions?.timeout, queryOptions?.database) as T;
-                if (queryOptions?.serviceId) {
-                    this._clusterHashing.updateServiceForNode(queryOptions.serviceId, activePools[i].id);
-                }
-                return result;
+                return await this._queryRequest(sql, activePools[i], queryOptions);
             } catch (e) {
-                if (queryOptions?.serviceId) {
-                    this._clusterHashing.updateServiceForNode(queryOptions.serviceId, activePools[i].id);
-                }
-                Logger("Query error: " + e.message + ". Retrying query...");
+                Logger(e.message + ". Retrying query...");
             }
         }
 
         throw new Error("All pools have a error");
     }
 
-    private async getActivePools() : Promise<Pool[]> {
-        const activePools: Pool[] = this._pools.filter(pool => pool.status.isValid)
+    private async _queryRequest<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, pool: Pool, queryOptions: QueryOptions): Promise<T> {
+        try {
+            const result = await pool.query(sql, queryOptions?.timeout, queryOptions?.database) as T;
+            if (queryOptions?.serviceId) {
+                this._clusterHashing.updateServiceForNode(queryOptions.serviceId, pool.id);
+            }
+            return result;
+        } catch (e) {
+            if (queryOptions?.serviceId) {
+                this._clusterHashing.updateServiceForNode(queryOptions.serviceId, pool.id);
+            }
+            throw new Error("Query error: " + e.message);
+        }
+    }
+
+    private _maxRetryCount(maxRetry: number, activePoolsLength: number): number {
+        let retryCount = maxRetry && maxRetry > 0 ? maxRetry : this.errorRetryCount;
+        if (retryCount > activePoolsLength) {
+            Logger("Active pools less than error retry count");
+        }
+        retryCount = Math.min(retryCount, activePoolsLength);
+        return retryCount;
+    }
+
+    private _formatSQL(sql: string, values: QueryValues): string {
+        if (values) {
+            if (Array.isArray(values)) {
+                return MySQLFormat(sql, values);
+            } else if (typeof values === 'string') {
+                return MySQLFormat(sql, [values]);
+            } else {
+                return sql.replace(/:(\w+)/g, (txt, key) => {
+                    return values.hasOwnProperty(key) ? values[key] : txt
+                })
+            }
+        }
+
+        return sql;
+    }
+
+    private async getActivePools(serviceId: number) : Promise<Pool[]> {
+        const activePools: Pool[] = this._pools.filter(pool => {
+            if (serviceId && !pool.status.isValid) {
+                this._clusterHashing.updateServiceForNode(serviceId, pool.id);
+            }
+            return pool.status.isValid;
+        })
         activePools.sort((a, b) => a.status.loadScore - b.status.loadScore)
 
         if (activePools.length < 1) {
-            throw new Error("There is no pool that satisfies the parameters")
+            throw new Error("There is no pool that satisfies the parameters");
         }
 
         return activePools;
