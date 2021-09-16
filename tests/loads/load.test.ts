@@ -5,12 +5,14 @@
 import galeraCluster from '../../index'
 import { Utils } from "../../src/utils/Utils";
 import dotenv from "dotenv";
+import { GlobalStatusResult } from "../../src/types/PoolInterfaces";
 
 beforeAll(() => {
     dotenv.config({ path: './.env' });
 })
 
 it("choosing right server in many queries", async () => {
+    expect.assertions(2);
     const cluster = galeraCluster.createPoolCluster({
         hosts: [
             {
@@ -45,4 +47,11 @@ it("choosing right server in many queries", async () => {
             console.log(e.message);
         }
     }
+
+    const results: GlobalStatusResult[] = [];
+    results.push((await cluster.pools[0].query(`SHOW GLOBAL STATUS LIKE 'Threads_running';`))[0] as GlobalStatusResult);
+    results.push((await cluster.pools[1].query(`SHOW GLOBAL STATUS LIKE 'Threads_running';`))[0] as GlobalStatusResult);
+    cluster.disconnect();
+    await expect(+results[0].Value).toBeGreaterThanOrEqual(22);
+    await expect(+results[1].Value).toBeGreaterThanOrEqual(22);
 })
