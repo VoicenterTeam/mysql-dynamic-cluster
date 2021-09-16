@@ -68,12 +68,14 @@ export class GaleraCluster {
 
     public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: QueryValues, queryOptions?: QueryOptions): Promise<T> {
         let activePools: Pool[];
+        let retryCount;
         try {
             activePools = await this.getActivePools();
-            // #TODO: use max retry - QueryOption value
             if (this.errorRetryCount > activePools.length) {
                 Logger("Active pools less than error retry count");
             }
+            retryCount = queryOptions?.maxRetry > 0 ? queryOptions.maxRetry : this.errorRetryCount;
+            retryCount = Math.min(retryCount, activePools.length);
         } catch (e) {
             throw new Error(e);
         }
@@ -92,7 +94,6 @@ export class GaleraCluster {
 
 
         Logger("Query use host: " + activePools[0].host);
-        const retryCount = Math.min(this.errorRetryCount, activePools.length);
         for (let i = 0; i < retryCount; i++) {
             try {
                 const result = await activePools[i].query(sql, queryOptions?.timeout, queryOptions?.database) as T;
@@ -109,7 +110,6 @@ export class GaleraCluster {
         }
 
         throw new Error("All pools have a error");
-
     }
 
     private async getActivePools() : Promise<Pool[]> {
