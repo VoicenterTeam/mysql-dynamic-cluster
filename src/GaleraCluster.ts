@@ -157,7 +157,7 @@ export class GaleraCluster {
             if (Array.isArray(values)) {
                 return MySQLFormat(sql, values);
             } else if (typeof values === 'string') {
-                return MySQLFormat(sql, [values]);
+                return MySQLFormat(sql, values);
             } else {
                 return sql.replace(/:(\w+)/g, (txt, key) => {
                     return values.hasOwnProperty(key) ? values[key] : txt
