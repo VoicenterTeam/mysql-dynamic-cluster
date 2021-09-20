@@ -4,6 +4,7 @@
 
 import galeraCluster from "../../index";
 import dotenv from "dotenv";
+import { ServiceNodeMap } from "../../src/types/PoolInterfaces";
 
 describe("Cluster queries", () => {
     dotenv.config({path: './.env'});
@@ -63,5 +64,33 @@ describe("Cluster queries", () => {
         cluster.disconnect();
 
         await expect(result.MethodTypeName).toBe("get");
+    })
+
+    it("Query with timeout option", async () => {
+        await cluster.connect();
+        try {
+            await cluster.query(`SELECT * from officering_api_doc.MethodType`, null, {timeout: 5});
+        } catch (e) {
+            console.log(e.message);
+            await expect(e.message).toContain("Query inactivity timeout");
+        }
+        cluster.disconnect();
+    })
+
+    it("Query change database", async () => {
+        await cluster.connect();
+        // await cluster.query('CALL SP_NodeInsert( ? , ? , ? , ? );', [20, 'test', '192.168.0.1', 3306],
+        // {
+        //     database: 'mysql-dynamic-cluster'
+        // });
+
+        const result = (await cluster.query('SELECT FN_GetServiceNodeMapping();', null,
+        {
+            database: 'mysql-dynamic-cluster'
+        }))[0]["FN_GetServiceNodeMapping()"] as ServiceNodeMap;
+        cluster.disconnect();
+
+        console.log(result);
+        await expect(result[1]).toBe(1);
     })
 })

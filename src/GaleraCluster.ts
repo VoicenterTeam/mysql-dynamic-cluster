@@ -99,17 +99,19 @@ export class GaleraCluster {
         }
 
         sql = this._formatSQL(sql, values);
+        let error;
 
         for (let i = 0; i < retryCount; i++) {
             try {
                 Logger("Query use host: " + activePools[i].host);
                 return await this._queryRequest(sql, activePools[i], queryOptions);
             } catch (e) {
+                error = e;
                 Logger(e.message + ". Retrying query...");
             }
         }
 
-        throw new Error("All pools have a error");
+        throw new Error("All pools have a error. Error message: " + error.message);
     }
 
     /** query request to pool
