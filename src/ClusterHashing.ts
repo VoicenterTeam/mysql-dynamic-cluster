@@ -7,7 +7,6 @@ import Logger from "./utils/Logger";
 import { Timer } from "./utils/Timer";
 import { ServiceNodeMap } from "./types/PoolInterfaces";
 
-// #FIXME: don't want close after closing all pools
 export class ClusterHashing {
     private _cluster: GaleraCluster;
     private _timer: Timer;
@@ -69,6 +68,8 @@ export class ClusterHashing {
      */
     public async checkHashing() {
         try {
+            if (!this._timer.active) return;
+
             Logger.debug("checking async status in cluster");
             const result = await this._cluster.query(`SELECT FN_GetServiceNodeMapping();`, null,
             {

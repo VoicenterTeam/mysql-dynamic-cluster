@@ -6,6 +6,9 @@ export class Timer {
     private _timer: NodeJS.Timeout;
     private readonly _callback: () => void;
     private _active: boolean = false;
+    public get active(): boolean {
+        return this._active;
+    }
 
     /**
      * @param callback callback what called when time is out
