@@ -4,7 +4,7 @@
 
 import { ValidatorParams, LoadFactorParams } from './PoolInterfaces'
 
-export enum DEBUG {
+export enum LOGLEVEL {
     QUIET,
     REGULAR,
     FULL
@@ -21,7 +21,7 @@ export interface Settings {
     // Time in ms
     queryTimeout?: number,
     errorRetryCount?: number,
-    debug?: DEBUG
+    logLevel?: LOGLEVEL
 }
 
 // Global user settings
@@ -44,8 +44,4 @@ export interface PoolSettings extends Settings {
     user?: string,
     password?: string,
     database?: string
-}
-
-export interface GlobalSettings {
-    debug: DEBUG
 }

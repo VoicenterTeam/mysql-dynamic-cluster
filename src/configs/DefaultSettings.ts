@@ -2,7 +2,7 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { DefaultSettings } from "../types/SettingsInterfaces";
+import { DefaultSettings, LOGLEVEL } from "../types/SettingsInterfaces";
 
 const DefaultSettings: DefaultSettings = {
   port: "3306",
@@ -20,6 +20,7 @@ const DefaultSettings: DefaultSettings = {
   timerCheckMultiplier: 1.3,
   errorRetryCount: 2,
   queryTimeout: 2 * 60 * 1000, // time in ms
+  logLevel: LOGLEVEL.FULL
 }
 
 export default DefaultSettings;

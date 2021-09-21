@@ -3,7 +3,7 @@
  */
 
 const galeraCluster = require('../dist/index')
-const { DEBUG } = require("../dist/src/types/SettingsInterfaces");
+const { LOGLEVEL } = require("../dist/src/types/SettingsInterfaces");
 require('dotenv').config()
 
 const cluster = galeraCluster.default.createPoolCluster({
@@ -28,7 +28,7 @@ const cluster = galeraCluster.default.createPoolCluster({
         { key: 'Connections', multiplier: 2 },
         { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
     ],
-    debug: DEBUG.FULL
+    logLevel: LOGLEVEL.FULL
 })
 
 

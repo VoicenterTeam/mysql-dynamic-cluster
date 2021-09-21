@@ -78,7 +78,7 @@ export class ClusterHashing {
 
             this._nextCheckHashing()
         } catch (err) {
-            Logger.error("Error: Something wrong while checking hashing status in cluster.\n Message: " + err.message);
+            Logger.error("Something wrong while checking hashing status in cluster.\n Message: " + err.message);
             this._nextCheckHashing()
         }
     }

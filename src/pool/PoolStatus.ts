@@ -94,7 +94,7 @@ export class PoolStatus {
 
             this.nextCheckStatus()
         } catch (err) {
-            Logger.error("Error: Something wrong while checking status in host: " + this._pool.host + ".\n Message: " + err.message);
+            Logger.error("Something wrong while checking status in host: " + this._pool.host + ".\n Message: " + err.message);
             this.nextCheckStatus(true)
         }
     }

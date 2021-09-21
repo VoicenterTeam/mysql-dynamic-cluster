@@ -1,6 +1,6 @@
 import { UserSettings } from "./src/types/SettingsInterfaces";
 import { GaleraCluster } from "./src/GaleraCluster";
-import globalSettings from './src/configs/GlobalSettings'
+import Logger from "./src/utils/Logger";
 
 function createPoolCluster(userSettings: UserSettings): GaleraCluster {
     init(userSettings);
@@ -8,8 +8,8 @@ function createPoolCluster(userSettings: UserSettings): GaleraCluster {
 }
 
 function init(userSettings: UserSettings): void {
-    if (userSettings.debug !== undefined) {
-        globalSettings.debug = userSettings.debug;
+    if (userSettings.logLevel !== undefined) {
+        Logger.setLogLevel(userSettings.logLevel);
     }
 }
 

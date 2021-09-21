@@ -2,24 +2,28 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import GlobalSettings from "../configs/GlobalSettings";
-import { DEBUG } from '../types/SettingsInterfaces'
+import { LOGLEVEL } from '../types/SettingsInterfaces'
+import defaultSettings from '../configs/DefaultSettings';
 
 const prefix: string = '[mysql galera]';
 
 const Logger = {
+    level: defaultSettings.logLevel ? defaultSettings.logLevel : LOGLEVEL.FULL,
     debug(...arg: any[]) {
-        if (GlobalSettings.debug === DEBUG.FULL) console.log("\x1b[0m", prefix, "\x1b[34m", ...arg, "\x1b[0m");
+        if (this.level === LOGLEVEL.FULL) console.log("\x1b[0m", prefix, "\x1b[34m", ...arg, "\x1b[0m");
     },
     error(...arg: any[]) {
-        console.log("\x1b[0m", prefix, "\x1b[31m", ...arg, "\x1b[0m");
+        console.log("\x1b[0m", prefix, "\x1b[31m", "[ERROR]", ...arg, "\x1b[0m");
     },
     info(...arg: any[]) {
-        if (GlobalSettings.debug !== DEBUG.QUIET) console.log("\x1b[0m", prefix, "\x1b[32m", ...arg, "\x1b[0m");
+        if (this.level !== LOGLEVEL.QUIET) console.log("\x1b[0m", prefix, "\x1b[32m", ...arg, "\x1b[0m");
     },
     warn(...arg: any[]) {
-        console.log("\x1b[0m", prefix, "\x1b[33m", ...arg, "\x1b[0m");
+        console.log("\x1b[0m", prefix, "\x1b[33m", "[WARNING]", ...arg, "\x1b[0m");
     },
+    setLogLevel(newLevel: LOGLEVEL) {
+        this.level = newLevel;
+    }
 }
 
 export default Logger;
