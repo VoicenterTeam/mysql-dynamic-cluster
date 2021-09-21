@@ -3,10 +3,11 @@
  */
 
 import { GaleraCluster } from "./GaleraCluster";
-import { Logger } from "./utils/Logger";
+import Logger from "./utils/Logger";
 import { Timer } from "./utils/Timer";
 import { ServiceNodeMap } from "./types/PoolInterfaces";
 
+// #FIXME: don't want close after closing all pools
 export class ClusterHashing {
     private _cluster: GaleraCluster;
     private _timer: Timer;
@@ -42,7 +43,7 @@ export class ClusterHashing {
             this._createDB();
             this.checkHashing();
         } catch (err) {
-            Logger(err.message);
+            Logger.error(err.message);
         }
     }
 
@@ -58,7 +59,7 @@ export class ClusterHashing {
                     database: this._database
                 });
             } catch (e) {
-                Logger(e.message);
+                Logger.error(e.message);
             }
         });
     }
@@ -68,7 +69,7 @@ export class ClusterHashing {
      */
     public async checkHashing() {
         try {
-            Logger("checking async status in cluster");
+            Logger.debug("checking async status in cluster");
             const result = await this._cluster.query(`SELECT FN_GetServiceNodeMapping();`, null,
             {
                 database: this._database
@@ -77,7 +78,7 @@ export class ClusterHashing {
 
             this._nextCheckHashing()
         } catch (err) {
-            Logger("Error: Something wrong while checking hashing status in cluster.\n Message: " + err.message);
+            Logger.error("Error: Something wrong while checking hashing status in cluster.\n Message: " + err.message);
             this._nextCheckHashing()
         }
     }

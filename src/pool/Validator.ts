@@ -3,7 +3,7 @@
  */
 
 import { GlobalStatusResult, ValidatorParams } from "../types/PoolInterfaces";
-import { Logger } from "../utils/Logger";
+import Logger from "../utils/Logger";
 import { PoolStatus } from "./PoolStatus";
 
 /**
@@ -70,7 +70,7 @@ export class Validator {
                     return true;
                 }
             } else {
-                Logger('Error: Operator ' + validator.operator + ' doesn\'t support for another type except number')
+                Logger.error('Error: Operator ' + validator.operator + ' doesn\'t support for another type except number')
             }
         } else {
             // check values if value from db is number
@@ -78,7 +78,7 @@ export class Validator {
             const validatorVal = +validator.value as number;
 
             if (isNaN(validatorVal)) {
-                Logger('Error: validator value isn\'t a type number like value from database. Check if you write correct data');
+                Logger.error('Error: validator value isn\'t a type number like value from database. Check if you write correct data');
                 return false;
             }
 

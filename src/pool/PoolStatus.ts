@@ -4,7 +4,7 @@
 
 import { GlobalStatusResult } from "../types/PoolInterfaces";
 import { PoolSettings } from "../types/SettingsInterfaces";
-import { Logger } from "../utils/Logger";
+import Logger from "../utils/Logger";
 import { Utils } from "../utils/Utils";
 import { Timer } from "../utils/Timer";
 import { Pool } from "./Pool";
@@ -79,7 +79,7 @@ export class PoolStatus {
         try {
             if (!this.active) return;
 
-            Logger("checking pool status in host: " + this._pool.host);
+            Logger.debug("checking pool status in host: " + this._pool.host);
             const timeBefore = new Date().getTime();
 
             const result = await this._pool.query(`SHOW GLOBAL STATUS;`) as GlobalStatusResult[];
@@ -88,13 +88,13 @@ export class PoolStatus {
             this.queryTime = Math.abs(timeAfter - timeBefore) / 1000;
 
             this._isValid = this._validator.check(result);
-            Logger("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())
+            Logger.debug("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())
             this._loadScore = this._loadFactor.check(result);
-            Logger("Load score by checking status in host " + this._pool.host + " is " + this._loadScore);
+            Logger.debug("Load score by checking status in host " + this._pool.host + " is " + this._loadScore);
 
             this.nextCheckStatus()
         } catch (err) {
-            Logger("Error: Something wrong while checking status in host: " + this._pool.host + ".\n Message: " + err.message);
+            Logger.error("Error: Something wrong while checking status in host: " + this._pool.host + ".\n Message: " + err.message);
             this.nextCheckStatus(true)
         }
     }

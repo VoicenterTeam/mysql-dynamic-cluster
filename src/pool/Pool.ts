@@ -4,7 +4,7 @@
 
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import mysql from "mysql2";
-import { Logger } from "../utils/Logger";
+import Logger from "../utils/Logger";
 import { PoolSettings } from "../types/SettingsInterfaces";
 import defaultSettings from "../configs/DefaultSettings";
 import { PoolStatus } from './PoolStatus'
@@ -38,7 +38,7 @@ export class Pool {
         this.host = settings.host;
         this.port = settings.port ? settings.port : defaultSettings.port;
         this.name = settings.name ? settings.name : `${this.host}:${this.port}`
-        Logger("configure pool in host " + this.host);
+        Logger.debug("configure pool in host " + this.host);
 
         this.user = settings.user;
         this.password = settings.password;
@@ -49,14 +49,14 @@ export class Pool {
 
         this._status = new PoolStatus(this, settings, false, this.connectionLimit, 10000);
 
-        Logger("configuration pool finished in host: " + this.host);
+        Logger.info("configuration pool finished in host: " + this.host);
     }
 
     /** create pool connection
      * @param callback error callback
      */
     public async connect(callback: (err: Error) => void) {
-        Logger("Creating pool in host: " + this.host);
+        Logger.debug("Creating pool in host: " + this.host);
         this._pool = mysql.createPool({
             connectionLimit: this.connectionLimit,
             host: this.host,
@@ -79,16 +79,16 @@ export class Pool {
      * close pool connection
      */
     public disconnect() {
-        Logger("closing pool in host: " + this.host);
+        Logger.debug("closing pool in host: " + this.host);
         this._pool.end((error) => {
             if (error) {
-                Logger(error.message);
+                Logger.error(error.message);
             }
         });
         this.status.active = false;
         this.status.stopTimerCheck();
 
-        Logger("pool in host " + this.host + " closed");
+        Logger.info("pool in host " + this.host + " closed");
     }
 
     /**
