@@ -4,6 +4,12 @@
 
 import { ValidatorParams, LoadFactorParams } from './PoolInterfaces'
 
+export enum DEBUG {
+    QUIET,
+    REGULAR,
+    FULL
+}
+
 export interface Settings {
     connectionLimit?: number,
     port?: string,
@@ -14,7 +20,8 @@ export interface Settings {
     timerCheckMultiplier?: number,
     // Time in ms
     queryTimeout?: number,
-    errorRetryCount?: number
+    errorRetryCount?: number,
+    debug?: DEBUG
 }
 
 // Global user settings
@@ -25,7 +32,7 @@ export interface UserSettings extends Settings {
     database: string
 }
 
-export interface GlobalSettings extends Settings {
+export interface DefaultSettings extends Settings {
     port: string,
     connectionLimit: number
 }
@@ -37,4 +44,8 @@ export interface PoolSettings extends Settings {
     user?: string,
     password?: string,
     database?: string
+}
+
+export interface GlobalSettings {
+    debug: DEBUG
 }

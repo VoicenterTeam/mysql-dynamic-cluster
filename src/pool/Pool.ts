@@ -6,7 +6,7 @@ import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import mysql from "mysql2";
 import { Logger } from "../utils/Logger";
 import { PoolSettings } from "../types/SettingsInterfaces";
-import globalSettings from "../configs/GlobalSettings";
+import defaultSettings from "../configs/DefaultSettings";
 import { PoolStatus } from './PoolStatus'
 
 // AKA galera node
@@ -36,7 +36,7 @@ export class Pool {
     constructor(settings: PoolSettings) {
         this.id = settings.id;
         this.host = settings.host;
-        this.port = settings.port ? settings.port : globalSettings.port;
+        this.port = settings.port ? settings.port : defaultSettings.port;
         this.name = settings.name ? settings.name : `${this.host}:${this.port}`
         Logger("configure pool in host " + this.host);
 
@@ -45,7 +45,7 @@ export class Pool {
         this.database = settings.database;
         this.queryTimeout = settings.queryTimeout;
 
-        this.connectionLimit = settings.connectionLimit ? settings.connectionLimit : globalSettings.connectionLimit;
+        this.connectionLimit = settings.connectionLimit ? settings.connectionLimit : defaultSettings.connectionLimit;
 
         this._status = new PoolStatus(this, settings, false, this.connectionLimit, 10000);
 
