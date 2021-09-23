@@ -33,7 +33,7 @@ const cluster = galeraCluster.default.createPoolCluster({
 
 
 async function test() {
-    await cluster.connect()
+    await cluster.connect();
 
     try {
         const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`);
@@ -42,16 +42,16 @@ async function test() {
         console.log(e.message);
     }
 
-    console.log("Async test")
+    console.log("Async test");
 
     try {
         const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`);
-        console.log(res[0].MethodTypeName)
+        console.log(res[0].MethodTypeName);
 
-        cluster.disconnect()
+        cluster.disconnect();
 
     } catch (e){
-        console.log(e.message)
+        console.log(e.message);
     }
 
     // for (let i = 0; i < 100; i++) {
