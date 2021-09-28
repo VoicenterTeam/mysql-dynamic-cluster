@@ -6,6 +6,10 @@ module.exports = {
   moduleDirectories: [
     "node_modules"
   ],
+  testPathIgnorePatterns: [
+      'dist',
+      'tests/loads'
+  ],
   testTimeout: 300000,
   collectCoverageFrom: [
     "**/*.{ts}",
