@@ -111,6 +111,7 @@ export class Pool {
                     reject(err);
                 }
 
+                // change database
                 conn?.changeUser({ database }, (error) => {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);

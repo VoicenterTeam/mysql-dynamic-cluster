@@ -4,10 +4,12 @@
 import { MetricType } from "../types/MetricsInterfaces";
 
 /**
- * Structure:
- * [group]: {
- *      [metric]: Metric
- *  }
+ * All metric names used in the program. Structure:
+ * {
+ *     (group): {
+ *          (metric): Metric
+ *      }
+ * }
  */
 const MetricNames = {
     cluster: {
