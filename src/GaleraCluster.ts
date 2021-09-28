@@ -12,6 +12,8 @@ import { format as MySQLFormat } from 'mysql2';
 import { Pool } from "./pool/Pool";
 import { Settings } from "./Settings";
 import { ClusterHashing } from "./ClusterHashing";
+import MetricNames from "./metrics/MetricNames";
+import Metrics from "./metrics/Metrics";
 
 export class GaleraCluster {
     private _pools: Pool[] = [];
@@ -19,6 +21,7 @@ export class GaleraCluster {
         return this._pools;
     }
     private _clusterHashing: ClusterHashing;
+    private _queryTime: number = 1000;
     private readonly errorRetryCount: number; // retry count after query error
 
     /**
@@ -61,7 +64,9 @@ export class GaleraCluster {
     // Connect cluster pools
     public connect(): Promise<void> {
         return new Promise(resolve => {
-            Logger.debug("connecting all pools")
+            Logger.debug("connecting all pools");
+            Metrics.activateMetrics(MetricNames.cluster);
+            Metrics.activateMetrics(MetricNames.services);
             this._pools.forEach((pool) => {
                 pool.connect((err) => {
                     if (err) Logger.error(err.message)
@@ -104,6 +109,7 @@ export class GaleraCluster {
         for (let i = 0; i < retryCount; i++) {
             try {
                 Logger.debug("Query use host: " + activePools[i].host);
+                Metrics.mark(MetricNames.cluster.queryPerSecond);
                 return await this._queryRequest(sql, activePools[i], queryOptions);
             } catch (e) {
                 error = e;
@@ -125,15 +131,30 @@ export class GaleraCluster {
      */
     private async _queryRequest<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, pool: Pool, queryOptions: QueryOptions): Promise<T> {
         try {
-            const result = await pool.query(sql, queryOptions?.timeout, queryOptions?.database) as T;
+            Metrics.inc(MetricNames.cluster.allQueries);
+            const timeBefore = new Date().getTime();
+
             if (queryOptions?.serviceId) {
+                Metrics.inc(MetricNames.services.allQueries);
+            }
+
+            const result = await pool.query(sql, queryOptions?.timeout, queryOptions?.database) as T;
+
+            const timeAfter = new Date().getTime();
+            this._queryTime = Math.abs(timeAfter - timeBefore) / 1000;
+            Metrics.set(MetricNames.cluster.queryTime, this._queryTime);
+            Metrics.inc(MetricNames.cluster.successfulQueries);
+            if (queryOptions?.serviceId) {
+                Metrics.inc(MetricNames.services.successfulQueries);
                 this._clusterHashing.updateServiceForNode(queryOptions.serviceId, pool.id);
             }
             return result;
         } catch (e) {
             if (queryOptions?.serviceId) {
+                Metrics.inc(MetricNames.services.errorQueries);
                 this._clusterHashing.updateServiceForNode(queryOptions.serviceId, pool.id);
             }
+            Metrics.inc(MetricNames.cluster.errorQueries);
             throw new Error("Query error: " + e.message);
         }
     }

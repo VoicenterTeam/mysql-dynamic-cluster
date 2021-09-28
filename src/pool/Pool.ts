@@ -8,6 +8,8 @@ import Logger from "../utils/Logger";
 import { PoolSettings } from "../types/SettingsInterfaces";
 import defaultSettings from "../configs/DefaultSettings";
 import { PoolStatus } from './PoolStatus'
+import Metrics from "../metrics/Metrics";
+import MetricNames from "../metrics/MetricNames";
 
 // AKA galera node
 export class Pool {
@@ -66,6 +68,7 @@ export class Pool {
         })
 
         this.status.active = true;
+        Metrics.activateMetrics(MetricNames.pools);
         await this.status.checkStatus();
 
         if (this.status.isValid) {
@@ -99,17 +102,29 @@ export class Pool {
     public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, timeout: number = this.queryTimeout, database: string = this.database): Promise<T> {
         return new Promise((resolve, reject) => {
             this.status.availableConnectionCount--;
+            Metrics.inc(MetricNames.pools.allQueries);
+            Metrics.mark(MetricNames.pools.queryPerSecond);
 
             this._pool.getConnection((err, conn) => {
-                if (err) reject(err);
+                if (err) {
+                    Metrics.inc(MetricNames.pools.errorQueries);
+                    reject(err);
+                }
 
                 conn?.changeUser({ database }, (error) => {
-                    if (error) reject(error)
+                    if (error) {
+                        Metrics.inc(MetricNames.pools.errorQueries);
+                        reject(error)
+                    }
                 })
                 conn?.query({ sql, timeout }, (error, result: T) => {
                     this.status.availableConnectionCount++;
                     conn.release();
-                    if (error) reject(error);
+                    if (error) {
+                        Metrics.inc(MetricNames.pools.errorQueries);
+                        reject(error);
+                    }
+                    Metrics.inc(MetricNames.pools.successfulQueries);
                     resolve(result);
                 });
             })
