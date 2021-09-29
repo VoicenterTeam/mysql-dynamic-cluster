@@ -38,10 +38,11 @@ export interface DefaultSettings extends Settings {
 }
 
 export interface PoolSettings extends Settings {
-    id?: number,
+    id: number,
     host: string,
     name?: string,
-    user?: string,
-    password?: string,
-    database?: string
+    user: string,
+    password: string,
+    database: string,
+    queryTimeout?: number
 }

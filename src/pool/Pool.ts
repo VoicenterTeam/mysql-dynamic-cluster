@@ -45,7 +45,7 @@ export class Pool {
         this.user = settings.user;
         this.password = settings.password;
         this.database = settings.database;
-        this.queryTimeout = settings.queryTimeout;
+        this.queryTimeout = settings.queryTimeout ? settings.queryTimeout : defaultSettings.queryTimeout;
 
         this.connectionLimit = settings.connectionLimit ? settings.connectionLimit : defaultSettings.connectionLimit;
 

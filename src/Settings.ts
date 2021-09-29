@@ -3,7 +3,6 @@
  */
 
 import { PoolSettings, UserSettings } from "./types/SettingsInterfaces";
-import defaultSettings from "./configs/DefaultSettings";
 
 export class Settings {
     /**
@@ -29,33 +28,22 @@ export class Settings {
 
         if (!poolSettings.validators && userSettings.validators) {
             poolSettings.validators = userSettings.validators
-        } else if (!poolSettings.validators && !userSettings.validators) {
-            poolSettings.validators = defaultSettings.validators
         }
 
         if (!poolSettings.loadFactors && userSettings.loadFactors) {
             poolSettings.loadFactors = userSettings.loadFactors
-        } else if (!poolSettings.loadFactors && !userSettings.loadFactors) {
-            poolSettings.loadFactors = defaultSettings.loadFactors
         }
 
         if (!poolSettings.timerCheckRange && userSettings.timerCheckRange) {
             poolSettings.timerCheckRange = userSettings.timerCheckRange
-        } else if (!poolSettings.timerCheckRange && !userSettings.timerCheckRange) {
-            poolSettings.timerCheckRange = defaultSettings.timerCheckRange
         }
 
         if (!poolSettings.timerCheckMultiplier && userSettings.timerCheckMultiplier) {
             poolSettings.timerCheckMultiplier = userSettings.timerCheckMultiplier
-        } else if (!poolSettings.timerCheckMultiplier && !userSettings.timerCheckMultiplier) {
-            poolSettings.timerCheckMultiplier = defaultSettings.timerCheckMultiplier
         }
 
         if (!poolSettings.queryTimeout && userSettings.queryTimeout) {
             poolSettings.queryTimeout = userSettings.queryTimeout
-            console.log("Get timeout from user settings. Value: " + poolSettings.queryTimeout);
-        } else if (!poolSettings.queryTimeout && !userSettings.queryTimeout) {
-            poolSettings.queryTimeout = defaultSettings.queryTimeout
         }
 
         return poolSettings;

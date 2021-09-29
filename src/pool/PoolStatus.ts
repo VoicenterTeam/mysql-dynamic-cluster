@@ -12,6 +12,7 @@ import { Validator } from "./Validator";
 import { LoadFactor } from "./LoadFactor";
 import Metrics from "../metrics/Metrics";
 import MetricNames from "../metrics/MetricNames";
+import defaultSettings from "../configs/DefaultSettings";
 
 export class PoolStatus {
     public active: boolean;
@@ -59,11 +60,11 @@ export class PoolStatus {
         this._isValid = false;
         this._loadScore = 100000;
 
-        this._validator = new Validator(this, settings.validators);
-        this._loadFactor = new LoadFactor(settings.loadFactors);
+        this._validator = new Validator(this, settings.validators ? settings.validators : defaultSettings.validators);
+        this._loadFactor = new LoadFactor(settings.loadFactors ? settings.loadFactors : defaultSettings.loadFactors);
 
-        this.timerCheckRange = settings.timerCheckRange;
-        this.timerCheckMultiplier = settings.timerCheckMultiplier;
+        this.timerCheckRange = settings.timerCheckRange ? settings.timerCheckRange : defaultSettings.timerCheckRange;
+        this.timerCheckMultiplier = settings.timerCheckMultiplier ? settings.timerCheckMultiplier : defaultSettings.timerCheckMultiplier;
         this._timer = new Timer(this.checkStatus.bind(this))
     }
 
