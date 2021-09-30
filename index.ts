@@ -1,5 +1,5 @@
 import { UserSettings } from "./src/types/SettingsInterfaces";
-import { GaleraCluster } from "./src/GaleraCluster";
+import { GaleraCluster } from "./src/cluster/GaleraCluster";
 import Logger from "./src/utils/Logger";
 
 function createPoolCluster(userSettings: UserSettings): GaleraCluster {

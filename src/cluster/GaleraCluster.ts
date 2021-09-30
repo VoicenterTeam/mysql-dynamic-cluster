@@ -2,18 +2,18 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { PoolSettings, UserSettings } from "./types/SettingsInterfaces";
-import { QueryOptions, QueryValues } from './types/PoolInterfaces'
-import Logger from "./utils/Logger";
-import defaultSettings from "./configs/DefaultSettings";
+import { PoolSettings, UserSettings } from "../types/SettingsInterfaces";
+import { QueryOptions, QueryValues } from '../types/PoolInterfaces'
+import Logger from "../utils/Logger";
+import defaultSettings from "../configs/DefaultSettings";
 
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import { format as MySQLFormat } from 'mysql2';
-import { Pool } from "./pool/Pool";
-import { Settings } from "./Settings";
+import { Pool } from "../pool/Pool";
+import { Settings } from "../utils/Settings";
 import { ClusterHashing } from "./ClusterHashing";
-import MetricNames from "./metrics/MetricNames";
-import Metrics from "./metrics/Metrics";
+import MetricNames from "../metrics/MetricNames";
+import Metrics from "../metrics/Metrics";
 
 export class GaleraCluster {
     private _pools: Pool[] = [];

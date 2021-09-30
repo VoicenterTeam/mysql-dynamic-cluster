@@ -4,7 +4,7 @@
 
 import dotenv from "dotenv";
 import galeraCluster from "../../index";
-import { ClusterHashing } from "../../src/ClusterHashing";
+import { ClusterHashing } from "../../src/cluster/ClusterHashing";
 import { ServiceNodeMap } from "../../src/types/PoolInterfaces";
 
 describe("Cluster hashing", () => {

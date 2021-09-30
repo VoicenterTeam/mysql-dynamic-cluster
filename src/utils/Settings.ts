@@ -2,7 +2,7 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { PoolSettings, UserSettings } from "./types/SettingsInterfaces";
+import { PoolSettings, UserSettings } from "../types/SettingsInterfaces";
 
 export class Settings {
     /**

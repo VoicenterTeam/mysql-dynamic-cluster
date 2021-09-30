@@ -2,7 +2,7 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { Settings } from "../../src/Settings";
+import { Settings } from "../../src/utils/Settings";
 import { PoolSettings, UserSettings } from "../../src/types/SettingsInterfaces";
 
 describe("Mix settings", () => {

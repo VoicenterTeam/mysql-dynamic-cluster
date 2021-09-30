@@ -3,9 +3,11 @@
  */
 
 import { GaleraCluster } from "./GaleraCluster";
-import Logger from "./utils/Logger";
-import { Timer } from "./utils/Timer";
-import { ServiceNodeMap } from "./types/PoolInterfaces";
+import Logger from "../utils/Logger";
+import { Timer } from "../utils/Timer";
+import { ServiceNodeMap } from "../types/PoolInterfaces";
+import { readFileSync }  from 'fs'
+import { join } from "path";
 
 export class ClusterHashing {
     private _cluster: GaleraCluster;
@@ -39,10 +41,25 @@ export class ClusterHashing {
      */
     public async connect() {
         try {
-            this._createDB();
+            await this._createDB();
+            await this._insertNodes();
             this.checkHashing();
         } catch (err) {
             Logger.error(err.message);
+        }
+    }
+
+    private async _createDB() {
+        try {
+            await this._cluster.query('CREATE SCHEMA `' + this._database + '` COLLATE utf8_general_ci;',
+                null,
+                { maxRetry: 1 }
+            );
+
+            const dataSQL = readFileSync(join(__dirname, '../sql/create_table_node.sql'),).toString();
+            this._cluster.query(dataSQL, null, { maxRetry: 1 });
+        } catch (e) {
+            Logger.error(e.message);
         }
     }
 
@@ -50,7 +67,7 @@ export class ClusterHashing {
      * create helper db
      * @private
      */
-    private async _createDB() {
+    private async _insertNodes() {
         this._cluster.pools.forEach(pool => {
             try {
                 this._cluster.query('CALL SP_NodeInsert( ? , ? , ? , ? );', [pool.id, pool.name, pool.host, pool.port],
