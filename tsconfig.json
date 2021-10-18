@@ -6,10 +6,10 @@
     "target": "es6",
     "moduleResolution": "node",
     "sourceMap": true,
-    "outDir": "dist",
+    "outDir": "./dist",
     "declaration": true
   },
   "lib": ["es2015"],
-  "exclude": ["node_modules", "**/*.spec.ts"],
-  "include": ["src/**/*", "index.ts", "tests/**/*"]
+  "exclude": ["node_modules", "**/*.spec.ts", "tests"],
+  "include": ["src/**/*", "index.ts"]
 }
