@@ -6,7 +6,7 @@ import { GaleraCluster } from "./GaleraCluster";
 import Logger from "../utils/Logger";
 import { Timer } from "../utils/Timer";
 import { ServiceNodeMap } from "../types/PoolInterfaces";
-import { readFileSync }  from 'fs'
+import { readFileSync, readdirSync }  from 'fs'
 import { join } from "path";
 
 export class ClusterHashing {
@@ -15,7 +15,7 @@ export class ClusterHashing {
 
     // Next time for hashing check
     private readonly _nextCheckTime: number = 5000;
-    private readonly _database: string = "mysql-dynamic-cluster";
+    private readonly _database: string = "mysql_dynamic_cluster";
 
     public serviceNodeMap: ServiceNodeMap;
 
@@ -26,12 +26,8 @@ export class ClusterHashing {
      */
     constructor(cluster: GaleraCluster, timeCheck?: number, database?: string) {
         this._cluster = cluster;
-        if (timeCheck) {
-            this._nextCheckTime = timeCheck;
-        }
-        if (database) {
-            this._database = database;
-        }
+        if (timeCheck) this._nextCheckTime = timeCheck;
+        if (database) this._database = database;
 
         this._timer = new Timer(this.checkHashing.bind(this));
     }
@@ -51,16 +47,33 @@ export class ClusterHashing {
 
     private async _createDB() {
         try {
-            await this._cluster.query('CREATE SCHEMA `' + this._database + '` COLLATE utf8_general_ci;',
-                null,
-                { maxRetry: 1 }
-            );
+            const res: any[] = await this._cluster.pools[0].query(`show databases like '${this._database}';`);
+            if (res.length) {
+                Logger.debug(`Database ${this._database} has created for hashing`);
+                return;
+            }
 
-            const dataSQL = readFileSync(join(__dirname, '../sql/create_table_node.sql'),).toString();
-            this._cluster.query(dataSQL, null, { maxRetry: 1 });
+            Logger.debug(`Creating database ${this._database} and procedures for hashing`);
+            await this._cluster.pools[0].query(`CREATE SCHEMA IF NOT EXISTS \`${this._database}\` COLLATE utf8_general_ci;`);
+
+            for ( const sql of this._readFilesInDir( join(__dirname, '../../assets/sql/create_hashing_database/tables/') ) ) {
+                await this._cluster.pools[0].query(sql, { database: this._database });
+            }
+            for ( const sql of this._readFilesInDir( join(__dirname, '../../assets/sql/create_hashing_database/routines/') ) ) {
+                await this._cluster.pools[0].query(sql, { database: this._database });
+            }
         } catch (e) {
             Logger.error(e.message);
         }
+    }
+
+    private _readFilesInDir(dirname: string): string[] {
+        const fileNames: string[] = readdirSync(dirname);
+        const fileContents: string[] = [];
+        fileNames.forEach(filename => {
+            fileContents.push(readFileSync(dirname + filename).toString());
+        })
+        return fileContents;
     }
 
     /**
