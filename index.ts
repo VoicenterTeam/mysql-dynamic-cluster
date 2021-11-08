@@ -1,5 +1,6 @@
 import { UserSettings } from "./src/types/SettingsInterfaces";
 import { GaleraCluster } from "./src/cluster/GaleraCluster";
+import { LOGLEVEL } from './src/types/SettingsInterfaces';
 import Logger from "./src/utils/Logger";
 
 function createPoolCluster(userSettings: UserSettings): GaleraCluster {
@@ -14,5 +15,6 @@ function init(userSettings: UserSettings): void {
 }
 
 export default {
-    createPoolCluster
+    createPoolCluster,
+    LOGLEVEL
 };
