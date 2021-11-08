@@ -20,7 +20,7 @@ export class GaleraCluster {
     public get pools(): Pool[] {
         return this._pools;
     }
-    private _clusterHashing: ClusterHashing;
+    private readonly _clusterHashing: ClusterHashing;
     private _queryTime: number = 1000;
     private readonly errorRetryCount: number; // retry count after query error
 
@@ -70,19 +70,20 @@ export class GaleraCluster {
             this._pools.forEach((pool) => {
                 pool.connect((err) => {
                     if (err) Logger.error(err.message)
-                    else {
-                        this._clusterHashing.connect();
-                        resolve();
-                    }
+                    else resolve();
                 });
             })
         })
     }
 
+    public async enableHashing() {
+        await this._clusterHashing.connect();
+    }
+
     // disconnect all cluster pools
     public async disconnect() {
         Logger.debug("disconnecting all pools");
-        this._clusterHashing.stop();
+        this._clusterHashing?.stop();
         this._pools.forEach((pool) => {
             pool.disconnect();
         })
@@ -138,7 +139,7 @@ export class GaleraCluster {
                 Metrics.inc(MetricNames.services.allQueries);
             }
 
-            const result = await pool.query(sql, queryOptions?.timeout, queryOptions?.database) as T;
+            const result = await pool.query(sql, queryOptions) as T;
 
             const timeAfter = new Date().getTime();
             this._queryTime = Math.abs(timeAfter - timeBefore) / 1000;
@@ -146,13 +147,13 @@ export class GaleraCluster {
             Metrics.inc(MetricNames.cluster.successfulQueries);
             if (queryOptions?.serviceId) {
                 Metrics.inc(MetricNames.services.successfulQueries);
-                this._clusterHashing.updateServiceForNode(queryOptions.serviceId, pool.id);
+                this._clusterHashing?.updateServiceForNode(queryOptions.serviceId, pool.id);
             }
             return result;
         } catch (e) {
             if (queryOptions?.serviceId) {
                 Metrics.inc(MetricNames.services.errorQueries);
-                this._clusterHashing.updateServiceForNode(queryOptions.serviceId, pool.id);
+                this._clusterHashing?.updateServiceForNode(queryOptions.serviceId, pool.id);
             }
             Metrics.inc(MetricNames.cluster.errorQueries);
             throw new Error("Query error: " + e.message);
@@ -201,7 +202,7 @@ export class GaleraCluster {
     private async getActivePools(serviceId?: number) : Promise<Pool[]> {
         const activePools: Pool[] = this._pools.filter(pool => {
             if (serviceId && !pool.status.isValid) {
-                this._clusterHashing.updateServiceForNode(serviceId, pool.id);
+                this._clusterHashing?.updateServiceForNode(serviceId, pool.id);
             }
             return pool.status.isValid;
         })

@@ -10,6 +10,7 @@ import defaultSettings from "../configs/DefaultSettings";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
 import MetricNames from "../metrics/MetricNames";
+import { QueryOptions } from "../types/PoolInterfaces";
 
 // AKA galera node
 export class Pool {
@@ -96,10 +97,9 @@ export class Pool {
 
     /**
      * @param sql mysql query
-     * @param timeout query timeout
-     * @param database change database for this query
+     * @param queryOptions query options like timeout, database, multipleStatements etc
      */
-    public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, timeout: number = this.queryTimeout, database: string = this.database): Promise<T> {
+    public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, queryOptions: QueryOptions = { timeout: this.queryTimeout, database: this.database }): Promise<T | T[]> {
         return new Promise((resolve, reject) => {
             this.status.availableConnectionCount--;
             Metrics.inc(MetricNames.pools.allQueries);
@@ -112,13 +112,14 @@ export class Pool {
                 }
 
                 // change database
-                conn?.changeUser({ database }, (error) => {
+                conn.changeUser({ database: queryOptions.database }, (error) => {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
                         reject(error)
                     }
                 })
-                conn?.query({ sql, timeout }, (error, result: T) => {
+
+                conn.query({ sql, timeout: queryOptions.timeout }, (error, result: T) => {
                     this.status.availableConnectionCount++;
                     conn.release();
                     if (error) {

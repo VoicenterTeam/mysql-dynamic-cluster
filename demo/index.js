@@ -34,6 +34,7 @@ const cluster = galeraCluster.default.createPoolCluster({
 
 async function test() {
     await cluster.connect();
+    cluster.enableHashing();
 
     try {
         const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`);
