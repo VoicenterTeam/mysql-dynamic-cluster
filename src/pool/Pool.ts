@@ -82,6 +82,7 @@ export class Pool {
     /**
      * close pool connection
      */
+    // #TODO: disconnect only if all queries is finished
     public disconnect() {
         Logger.debug("closing pool in host: " + this.host);
         this._pool.end((error) => {
@@ -107,8 +108,6 @@ export class Pool {
             this._pool.getConnection((err, conn) => {
                 if (err) {
                     Metrics.inc(MetricNames.pools.errorQueries);
-                    conn.release();
-                    this.status.availableConnectionCount++;
                     reject(err);
                 }
                 this.status.availableConnectionCount--;
@@ -153,8 +152,6 @@ export class Pool {
             this._pool.getConnection((err, conn) => {
                 if (err) {
                     Metrics.inc(MetricNames.pools.errorQueries);
-                    conn.release();
-                    this.status.availableConnectionCount++;
                     reject(err);
                 }
                 this.status.availableConnectionCount--;

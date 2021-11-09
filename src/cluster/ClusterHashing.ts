@@ -7,7 +7,7 @@ import Logger from "../utils/Logger";
 import { Timer } from "../utils/Timer";
 import { ServiceNodeMap } from "../types/PoolInterfaces";
 import { readFileSync, readdirSync }  from 'fs'
-import { join } from "path";
+import { join, parse } from "path";
 
 export class ClusterHashing {
     private _cluster: GaleraCluster;
@@ -47,31 +47,59 @@ export class ClusterHashing {
 
     private async _createDB() {
         try {
-            const res: any[] = await this._cluster.pools[0].query(`show databases like '${this._database}';`);
-            if (res.length) {
-                Logger.debug(`Database ${this._database} has created for hashing`);
+            // const extraPath = '';
+            const extraPath = '../';
+            const sqlLocations: string[] = [
+                extraPath + '../../assets/sql/create_hashing_database/tables/',
+                extraPath + '../../assets/sql/create_hashing_database/routines/'
+            ];
+
+            if (await this._isDatabaseCompletelyCreated(sqlLocations)) {
+                Logger.info(`Database ${this._database} has created for hashing`);
                 return;
             }
 
-            Logger.debug(`Creating database ${this._database} and procedures for hashing`);
-            const sqlLocations: string[] = [
-                '../../assets/sql/create_hashing_database/tables/',
-                '../../assets/sql/create_hashing_database/routines/'
-            ];
-            const sqls: string[] = [];
-
+            Logger.info(`Creating database ${this._database} and procedures for hashing`);
             await this._cluster.pools[0].query(`CREATE SCHEMA IF NOT EXISTS \`${this._database}\` COLLATE utf8_general_ci;`);
 
+            // #TODO: change sql code to create routines only when don't exist
+            const sqls: string[] = [];
             for (const path of sqlLocations) {
                 for ( const sql of this._readFilesInDir( join(__dirname, path) ) ) {
                     sqls.push(sql);
                 }
             }
+            await this._cluster.pools[0].multiStatementQuery(sqls, { database: this._database });
 
-            await this._cluster.pools[0].multiStatementQuery(sqls, { database: this._database })
+            Logger.info(`Database ${this._database} completely created for hashing`);
         } catch (e) {
             Logger.error(e.message);
         }
+    }
+
+    private async _isDatabaseCompletelyCreated(pathToSqls: string[]): Promise<boolean> {
+        const res: any[] = await this._cluster.pools[0].query(`show databases where \`Database\` = '${this._database}';`);
+        if (res.length) {
+            const sqlFileNames: string[] = [];
+            let countCorrectlyCreated: number = 0;
+
+            pathToSqls.forEach(path => {
+                readdirSync(join(__dirname, path)).forEach(filename => {
+                    sqlFileNames.push(parse(filename).name);
+                });
+            })
+
+            const resultTable: any[] = await this._cluster.pools[0].query(`show table status from \`${this._database}\`;`);
+            const resultFunc: any[] = await this._cluster.pools[0].query(`show function status WHERE Db like '${this._database}';`);
+            const resultProc: any[] = await this._cluster.pools[0].query(`show procedure status WHERE Db like '${this._database}';`);
+            [...resultTable, ...resultFunc, ...resultProc].forEach(elem => {
+                if (sqlFileNames.includes(elem.Name)) countCorrectlyCreated++;
+            })
+
+            if (countCorrectlyCreated === sqlFileNames.length) return true;
+        }
+
+        return false;
     }
 
     private _readFilesInDir(dirname: string): string[] {
@@ -141,8 +169,8 @@ export class ClusterHashing {
      * @param serviceId service what need to hashing
      * @param nodeId pool which hashing data
      */
-    public updateServiceForNode(serviceId: number, nodeId: number) {
-        this._cluster.query('CALL SP_NodeServiceUpdate(?, ?);', [nodeId, serviceId], {
+    public async updateServiceForNode(serviceId: number, nodeId: number) {
+        await this._cluster.query('CALL SP_NodeServiceUpdate(?, ?);', [nodeId, serviceId], {
             database: this._database
         });
     }
