@@ -101,34 +101,110 @@ export class Pool {
      */
     public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, queryOptions: QueryOptions = { timeout: this.queryTimeout, database: this.database }): Promise<T | T[]> {
         return new Promise((resolve, reject) => {
-            this.status.availableConnectionCount--;
             Metrics.inc(MetricNames.pools.allQueries);
             Metrics.mark(MetricNames.pools.queryPerSecond);
 
             this._pool.getConnection((err, conn) => {
                 if (err) {
                     Metrics.inc(MetricNames.pools.errorQueries);
+                    conn.release();
+                    this.status.availableConnectionCount++;
                     reject(err);
                 }
+                this.status.availableConnectionCount--;
 
                 // change database
                 conn.changeUser({ database: queryOptions.database }, (error) => {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
-                        reject(error)
+                        conn.release();
+                        this.status.availableConnectionCount++;
+                        reject(error);
                     }
                 })
 
                 conn.query({ sql, timeout: queryOptions.timeout }, (error, result: T) => {
-                    this.status.availableConnectionCount++;
-                    conn.release();
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
+                        conn.release();
+                        this.status.availableConnectionCount++;
                         reject(error);
                     }
+                    conn.release();
+                    this.status.availableConnectionCount++;
                     Metrics.inc(MetricNames.pools.successfulQueries);
                     resolve(result);
                 });
+            })
+        })
+    }
+
+    /**
+     * Pool query by mysql transaction
+     * @param sqls array of sql queries
+     * @param queryOptions query options like timeout, database etc.
+     */
+    public async multiStatementQuery<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sqls: string[], queryOptions: QueryOptions = { timeout: this.queryTimeout, database: this.database }): Promise<T[]> {
+        return new Promise((resolve, reject) => {
+            Metrics.inc(MetricNames.pools.allQueries);
+            Metrics.mark(MetricNames.pools.queryPerSecond);
+            const results: T[] = [];
+
+            this._pool.getConnection((err, conn) => {
+                if (err) {
+                    Metrics.inc(MetricNames.pools.errorQueries);
+                    conn.release();
+                    this.status.availableConnectionCount++;
+                    reject(err);
+                }
+                this.status.availableConnectionCount--;
+
+                // change database
+                conn.changeUser({ database: queryOptions.database }, (error) => {
+                    if (error) {
+                        Metrics.inc(MetricNames.pools.errorQueries);
+                        conn.release();
+                        this.status.availableConnectionCount++;
+                        reject(error);
+                    }
+                })
+
+                conn.beginTransaction(error => {
+                    if (error) {
+                        Metrics.inc(MetricNames.pools.errorQueries);
+                        conn.release();
+                        this.status.availableConnectionCount++;
+                        reject(error);
+                    }
+
+                    sqls.forEach(sql => {
+                        conn.query({ sql, timeout: queryOptions.timeout }, (errorQ, result: T) => {
+                            if (errorQ) {
+                                conn.rollback(() => 0);
+                                Metrics.inc(MetricNames.pools.errorQueries);
+                                conn.release();
+                                this.status.availableConnectionCount++;
+                                reject(errorQ);
+                            }
+                            results.push(result);
+                            Metrics.inc(MetricNames.pools.successfulQueries);
+                        });
+                    })
+
+                    conn.commit(errorC => {
+                        if (errorC) {
+                            conn.rollback(() => 0);
+                            Metrics.inc(MetricNames.pools.errorQueries);
+                            conn.release();
+                            this.status.availableConnectionCount++;
+                            reject(errorC);
+                        }
+                    });
+
+                    conn.release();
+                    this.status.availableConnectionCount++;
+                    resolve(results);
+                })
             })
         })
     }

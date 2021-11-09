@@ -54,14 +54,21 @@ export class ClusterHashing {
             }
 
             Logger.debug(`Creating database ${this._database} and procedures for hashing`);
+            const sqlLocations: string[] = [
+                '../../assets/sql/create_hashing_database/tables/',
+                '../../assets/sql/create_hashing_database/routines/'
+            ];
+            const sqls: string[] = [];
+
             await this._cluster.pools[0].query(`CREATE SCHEMA IF NOT EXISTS \`${this._database}\` COLLATE utf8_general_ci;`);
 
-            for ( const sql of this._readFilesInDir( join(__dirname, '../../assets/sql/create_hashing_database/tables/') ) ) {
-                await this._cluster.pools[0].query(sql, { database: this._database });
+            for (const path of sqlLocations) {
+                for ( const sql of this._readFilesInDir( join(__dirname, path) ) ) {
+                    sqls.push(sql);
+                }
             }
-            for ( const sql of this._readFilesInDir( join(__dirname, '../../assets/sql/create_hashing_database/routines/') ) ) {
-                await this._cluster.pools[0].query(sql, { database: this._database });
-            }
+
+            await this._cluster.pools[0].multiStatementQuery(sqls, { database: this._database })
         } catch (e) {
             Logger.error(e.message);
         }
