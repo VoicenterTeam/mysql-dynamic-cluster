@@ -36,7 +36,7 @@ describe("Pool queries", () => {
     it("Query with timeout option", async () => {
         await pool.connect(err => console.log(err));
         try {
-            await pool.query(`SELECT * from officering_api_doc.MethodType`, 5 );
+            await pool.query(`SELECT * from officering_api_doc.MethodType`, { timeout: 5 });
         } catch (e) {
             console.log(e.message);
             await expect(e.message).toContain("Query inactivity timeout");

@@ -6,6 +6,8 @@ import dotenv from "dotenv";
 import galeraCluster from "../../index";
 import { ClusterHashing } from "../../src/cluster/ClusterHashing";
 import { ServiceNodeMap } from "../../src/types/PoolInterfaces";
+import { readdirSync } from "fs";
+import { join, parse } from "path";
 
 describe("Cluster hashing", () => {
     dotenv.config({path: './.env'});
@@ -34,27 +36,34 @@ describe("Cluster hashing", () => {
 
     it("check creating database for hashing", async () => {
         const database = 'test_hashing';
-        const functionNames: string[] = ["FN_GetServiceNodeMapping"];
-        const proceduresNames: string[] = ["SP_NodeInsert", "SP_NodeServiceUpdate", "SP_RemoveNode", "SP_RemoveService"];
-        let correctProcFunc: number = 0;
-        await cluster.connect();
+        const sqlLocations: string[] = [
+            '../../assets/sql/create_hashing_database/tables/',
+            '../../assets/sql/create_hashing_database/routines/'
+        ];
+        const sqlFileNames: string[] = [];
+        let countCorrectlyCreated: number = 0;
 
+        sqlLocations.forEach(path => {
+            readdirSync(join(__dirname, path)).forEach(filename => {
+                sqlFileNames.push(parse(filename).name);
+            });
+        })
+
+        await cluster.connect();
         const clusterHashing = new ClusterHashing(cluster, null, database);
         await clusterHashing.connect();
 
+        const resultTable: any[] = await cluster.query(`show table status from \`${database}\`;`);
         const resultFunc: any[] = await cluster.query(`show function status WHERE Db like '${database}';`);
         const resultProc: any[] = await cluster.query(`show procedure status WHERE Db like '${database}';`);
-        resultFunc.forEach(elem => {
-            if (functionNames.includes(elem.Name)) correctProcFunc++;
-        })
-        resultProc.forEach(elem => {
-            if (proceduresNames.includes(elem.Name)) correctProcFunc++;
+        [...resultTable, ...resultFunc, ...resultProc].forEach(elem => {
+            if (sqlFileNames.includes(elem.Name)) countCorrectlyCreated++;
         })
         await cluster.query(`DROP SCHEMA IF EXISTS \`${database}\`;`);
 
         clusterHashing.stop();
         cluster.disconnect();
-        await expect(correctProcFunc).toBe(functionNames.length + proceduresNames.length);
+        await expect(countCorrectlyCreated).toBe(sqlFileNames.length);
     })
 
     it("check value from hashing", async () => {
