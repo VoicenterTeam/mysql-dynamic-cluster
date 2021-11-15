@@ -110,10 +110,16 @@ export class Pool {
                     Metrics.inc(MetricNames.pools.errorQueries);
                     reject(err);
                 }
+
+                if (!conn) {
+                    Metrics.inc(MetricNames.pools.errorQueries);
+                    reject(new Error("Can't find connection. Maybe it was unexpectedly closed."));
+                }
+
                 this.status.availableConnectionCount--;
 
                 // change database
-                conn.changeUser({ database: queryOptions.database }, (error) => {
+                conn?.changeUser({ database: queryOptions.database }, (error) => {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
                         conn.release();
@@ -122,7 +128,7 @@ export class Pool {
                     }
                 })
 
-                conn.query({ sql, timeout: queryOptions.timeout }, (error, result: T) => {
+                conn?.query({ sql, timeout: queryOptions.timeout }, (error, result: T) => {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
                         conn.release();
@@ -154,10 +160,16 @@ export class Pool {
                     Metrics.inc(MetricNames.pools.errorQueries);
                     reject(err);
                 }
+
+                if (!conn) {
+                    Metrics.inc(MetricNames.pools.errorQueries);
+                    reject(new Error("Can't find connection. Maybe it was unexpectedly closed."));
+                }
+
                 this.status.availableConnectionCount--;
 
                 // change database
-                conn.changeUser({ database: queryOptions.database }, (error) => {
+                conn?.changeUser({ database: queryOptions.database }, (error) => {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
                         conn.release();
@@ -166,7 +178,7 @@ export class Pool {
                     }
                 })
 
-                conn.beginTransaction(error => {
+                conn?.beginTransaction(error => {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
                         conn.release();
