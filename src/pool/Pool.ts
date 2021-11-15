@@ -70,6 +70,7 @@ export class Pool {
 
         this.status.active = true;
         Metrics.activateMetrics(MetricNames.pools);
+        this._connectEvents();
         await this.status.checkStatus();
 
         if (this.status.isValid) {
@@ -77,6 +78,16 @@ export class Pool {
         } else {
             callback(new Error("pool in host " + this.host + " is not valid"));
         }
+    }
+
+    private _connectEvents() {
+        this._pool.on("connection", () => {
+            this.status.availableConnectionCount--;
+        })
+
+        this._pool.on("release", () => {
+            this.status.availableConnectionCount++;
+        })
     }
 
     /**
@@ -116,14 +127,11 @@ export class Pool {
                     reject(new Error("Can't find connection. Maybe it was unexpectedly closed."));
                 }
 
-                this.status.availableConnectionCount--;
-
                 // change database
                 conn?.changeUser({ database: queryOptions.database }, (error) => {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
                         conn.release();
-                        this.status.availableConnectionCount++;
                         reject(error);
                     }
                 })
@@ -132,11 +140,9 @@ export class Pool {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
                         conn.release();
-                        this.status.availableConnectionCount++;
                         reject(error);
                     }
                     conn.release();
-                    this.status.availableConnectionCount++;
                     Metrics.inc(MetricNames.pools.successfulQueries);
                     resolve(result);
                 });
@@ -166,14 +172,11 @@ export class Pool {
                     reject(new Error("Can't find connection. Maybe it was unexpectedly closed."));
                 }
 
-                this.status.availableConnectionCount--;
-
                 // change database
                 conn?.changeUser({ database: queryOptions.database }, (error) => {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
                         conn.release();
-                        this.status.availableConnectionCount++;
                         reject(error);
                     }
                 })
@@ -182,7 +185,6 @@ export class Pool {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
                         conn.release();
-                        this.status.availableConnectionCount++;
                         reject(error);
                     }
 
@@ -192,7 +194,6 @@ export class Pool {
                                 conn.rollback(() => 0);
                                 Metrics.inc(MetricNames.pools.errorQueries);
                                 conn.release();
-                                this.status.availableConnectionCount++;
                                 reject(errorQ);
                             }
                             results.push(result);
@@ -205,13 +206,11 @@ export class Pool {
                             conn.rollback(() => 0);
                             Metrics.inc(MetricNames.pools.errorQueries);
                             conn.release();
-                            this.status.availableConnectionCount++;
                             reject(errorC);
                         }
                     });
 
                     conn.release();
-                    this.status.availableConnectionCount++;
                     resolve(results);
                 })
             })
