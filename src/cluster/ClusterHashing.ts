@@ -62,13 +62,22 @@ export class ClusterHashing {
             Logger.info(`Creating database ${this._database} and procedures for hashing`);
             await this._cluster.pools[0].query(`CREATE SCHEMA IF NOT EXISTS \`${this._database}\` COLLATE utf8_general_ci;`);
 
-            // #TODO: change sql code to create routines only when don't exist
             const sqls: string[] = [];
             for (const path of sqlLocations) {
                 for ( const sql of this._readFilesInDir( join(__dirname, path) ) ) {
                     sqls.push(sql);
                 }
             }
+
+            const sqlsDrop = [
+                `DROP PROCEDURE IF EXISTS FN_GetServiceNodeMapping;`,
+                `DROP PROCEDURE IF EXISTS SP_NodeInsert;`,
+                `DROP PROCEDURE IF EXISTS SP_NodeServiceUpdate;`,
+                `DROP PROCEDURE IF EXISTS SP_RemoveNode;`,
+                `DROP PROCEDURE IF EXISTS SP_RemoveService;`
+            ]
+
+            await this._cluster.pools[0].multiStatementQuery(sqlsDrop, { database: this._database });
             await this._cluster.pools[0].multiStatementQuery(sqls, { database: this._database });
 
             Logger.info(`Database ${this._database} completely created for hashing`);
