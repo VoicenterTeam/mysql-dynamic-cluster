@@ -18,7 +18,7 @@ class Metrics {
     /**
      * set value in metric with type Metric
      * @param metric metric object
-     * @param value the value to be changed
+     * @param value the value what need to change
      */
     public set(metric: Metric, value: number) {
         if (!Metrics._isMetricTypeValid(metric.type, MetricType.METRIC)) return;
@@ -39,7 +39,7 @@ class Metrics {
     }
 
     /**
-     * decrease value by 1 in metric with type Counter
+     * Decrease value by 1 in metric with type Counter
      * @param metric metric object
      */
     public dec(metric: Metric) {
@@ -79,7 +79,7 @@ class Metrics {
     }
 
     /**
-     * check if type is valid for current metric
+     * Check if type is valid for current metric
      * @param metricType type of metric what want to check
      * @param type type what need to compare with current metric
      * @private

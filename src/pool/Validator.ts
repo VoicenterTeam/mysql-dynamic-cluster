@@ -22,7 +22,8 @@ export class Validator {
         this._validators = validators;
     }
 
-    /** check pool by validators from result of db global status
+    /**
+     * Check pool by validators from result of db global status
      * @param result result of db global status
      */
     public check(result: GlobalStatusResult[]): boolean {
@@ -50,9 +51,10 @@ export class Validator {
         return validateCount === this._validators.length;
     }
 
-    /** check if value from db is valid with value from validator params
+    /**
+     * Check if value from db is valid with value from validator parameters
      * @param value value from result of db global status
-     * @param validator validator param to check value
+     * @param validator validator parameters to check value
      * @private
      */
     private static checkValueIsValid(value: string, validator: ValidatorParams): boolean {

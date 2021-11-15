@@ -33,7 +33,7 @@ export class ClusterHashing {
     }
 
     /**
-     * activate hashing and create helper db if needed
+     * Activate hashing and create helper db if needed
      */
     public async connect() {
         try {
@@ -45,6 +45,11 @@ export class ClusterHashing {
         }
     }
 
+    // #TODO: close pool when database create. When trying to end pool change active status and wait until all connection will release
+    /**
+     * Create database for hashing
+     * @private
+     */
     private async _createDB() {
         try {
             // const extraPath = '';
@@ -86,6 +91,11 @@ export class ClusterHashing {
         }
     }
 
+    /**
+     * Check if database for hashing completely created
+     * @param pathToSqls path to folders with sql files
+     * @private
+     */
     private async _isDatabaseCompletelyCreated(pathToSqls: string[]): Promise<boolean> {
         const res: any[] = await this._cluster.pools[0].query(`show databases where \`Database\` = '${this._database}';`);
         if (res.length) {
@@ -111,6 +121,11 @@ export class ClusterHashing {
         return false;
     }
 
+    /**
+     * Read content in files which in folder
+     * @param dirname path to folder
+     * @private
+     */
     private _readFilesInDir(dirname: string): string[] {
         const fileNames: string[] = readdirSync(dirname);
         const fileContents: string[] = [];
@@ -121,7 +136,7 @@ export class ClusterHashing {
     }
 
     /**
-     * create helper db
+     * Create helper db
      * @private
      */
     private async _insertNodes() {
@@ -138,7 +153,7 @@ export class ClusterHashing {
     }
 
     /**
-     * update hashing data from db
+     * Update hashing data from db
      */
     public async checkHashing() {
         try {
@@ -159,7 +174,7 @@ export class ClusterHashing {
     }
 
     /**
-     * activate next hashing check
+     * Activate next hashing check
      * @private
      */
     private _nextCheckHashing() {
@@ -167,14 +182,14 @@ export class ClusterHashing {
     }
 
     /**
-     * stop timer for hashing check
+     * Stop timer for hashing check
      */
     public stop() {
         this._timer.dispose();
     }
 
     /**
-     * update data in db for hashing
+     * Update data in db for hashing
      * @param serviceId service what need to hashing
      * @param nodeId pool which hashing data
      */

@@ -17,7 +17,7 @@ const prefix: string = '[mysql galera]';
  */
 const Logger = {
     /**
-     * log level. Choose what messages send to console and rabbitmq
+     * Log level. Choose what messages send to console and rabbitmq
      */
     level: defaultSettings.logLevel ? defaultSettings.logLevel : LOGLEVEL.FULL,
     /**
@@ -57,7 +57,7 @@ const Logger = {
         amqpLogger.warn(message);
     },
     /**
-     * change log level
+     * Change log level
      * @param newLevel new log level
      */
     setLogLevel(newLevel: LOGLEVEL) {

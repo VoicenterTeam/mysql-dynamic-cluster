@@ -2,6 +2,7 @@
  * Created by Bohdan on Sep, 2021
  */
 
+// #TODO: create documentation for use
 const galeraCluster = require('../dist/index')
 const { LOGLEVEL } = require("../dist/src/types/SettingsInterfaces");
 require('dotenv').config()
@@ -31,9 +32,9 @@ const cluster = galeraCluster.default.createPoolCluster({
     logLevel: LOGLEVEL.FULL
 })
 
-
 async function test() {
     await cluster.connect();
+    // recommend at first running on a server use await for completely create database for hashing
     cluster.enableHashing();
 
     try {

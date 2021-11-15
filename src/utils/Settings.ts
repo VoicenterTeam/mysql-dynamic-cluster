@@ -6,9 +6,9 @@ import { PoolSettings, UserSettings } from "../types/SettingsInterfaces";
 
 export class Settings {
     /**
-     * mix pool settings with global and global user settings
+     * Mix pool settings with global and user settings
      * @param poolSettings pool settings
-     * @param userSettings global user settings
+     * @param userSettings user settings
      */
     public static mixPoolSettings(poolSettings: PoolSettings, userSettings: UserSettings) : PoolSettings {
         poolSettings = {

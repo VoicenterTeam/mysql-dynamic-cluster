@@ -18,7 +18,8 @@ export class LoadFactor {
         this._loadFactors = loadFactors;
     }
 
-    /** update load factors from result of db global status if db has some changes
+    /**
+     * Update load factors from result of db global status if db has some changes
      * @param result result of db global status
      */
     public check(result: GlobalStatusResult[]): number {

@@ -55,8 +55,9 @@ export class Pool {
         Logger.info("configuration pool finished in host: " + this.host);
     }
 
-    /** create pool connection
-     * @param callback error callback
+    /**
+     * Create pool connection
+     * @param callback error callback when all status will not valid
      */
     public async connect(callback: (err: Error) => void) {
         Logger.debug("Creating pool in host: " + this.host);
@@ -80,6 +81,10 @@ export class Pool {
         }
     }
 
+    /**
+     * Connect events in pool
+     * @private
+     */
     private _connectEvents() {
         this._pool.on("connection", () => {
             this.status.availableConnectionCount--;
@@ -91,9 +96,8 @@ export class Pool {
     }
 
     /**
-     * close pool connection
+     * Close pool connection
      */
-    // #TODO: disconnect only if all queries is finished
     public disconnect() {
         Logger.debug("closing pool in host: " + this.host);
         this._pool.end((error) => {
@@ -108,7 +112,8 @@ export class Pool {
     }
 
     /**
-     * @param sql mysql query
+     * Pool query
+     * @param sql mysql query string
      * @param queryOptions query options like timeout, database, multipleStatements etc
      */
     public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, queryOptions: QueryOptions = { timeout: this.queryTimeout, database: this.database }): Promise<T | T[]> {

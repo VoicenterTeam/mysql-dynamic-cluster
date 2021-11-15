@@ -2,6 +2,9 @@
  * Created by Bohdan on Sep, 2021
  */
 
+/**
+ * Simple timer what call callback some period of time
+ */
 export class Timer {
     private _timer: NodeJS.Timeout;
     private readonly _callback: () => void;
@@ -19,16 +22,17 @@ export class Timer {
         this._active = true;
     }
 
-    /** run timer
+    /**
+     * Run timer
      * @param time time how much need to wait
      */
-    public start (time: number) {
+    public start(time: number) {
         if (!this._active) return;
         this._timer = setTimeout(this._callback, time);
     }
 
     /**
-     * clear timer
+     * Clear timer and stop it
      */
     public dispose() {
         clearTimeout(this._timer)

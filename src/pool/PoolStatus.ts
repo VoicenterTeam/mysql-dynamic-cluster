@@ -69,14 +69,14 @@ export class PoolStatus {
     }
 
     /**
-     * stop pool check status timer
+     * Stop pool check status timer
      */
     public stopTimerCheck() {
         this._timer.dispose();
     }
 
     /**
-     * check pool status
+     * Check pool status
      */
     public async checkStatus() {
         try {
@@ -103,8 +103,9 @@ export class PoolStatus {
         }
     }
 
-    /** start timer for next check pool status
-     * @param downgrade downgrade next time to check pool status
+    /**
+     * Start timer for next pool check status
+     * @param downgrade downgrade time for next check pool status?
      * @private
      */
     private nextCheckStatus(downgrade: boolean = false) {
