@@ -1,7 +1,7 @@
 {
-  "name": "mysql-dynamic-cluster",
+  "name": "@voicenter-team/mysql-dynamic-cluster",
   "version": "1.0.0",
-  "description": "mysql cluster implementation with dynamic limit and hashing logic",
+  "description": "Galera cluster with implementation of dynamic choose mysql server for queries and hashing services",
   "homepage": "https://github.com/VoicenterTeam/mysql-dynamic-cluster#readme",
   "bugs": {
     "url": "https://github.com/VoicenterTeam/mysql-dynamic-cluster/issues"
@@ -26,7 +26,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist/"
+    "dist/",
+    "assets/"
   ],
   "scripts": {
     "build": "tsc --build",

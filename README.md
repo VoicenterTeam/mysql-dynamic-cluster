@@ -12,7 +12,7 @@ Galera cluster with implementation of dynamic choose mysql server for queries an
 ## Install
 Download project from npm
 ```bash
-npm i <name>
+npm i @voicenter-team/mysql-dynamic-cluster
 ```
 
 ## How to use
@@ -74,7 +74,7 @@ const cfg = {
 
 ### Example
 ```javascript
-const galeraCluster = require('<name>');
+const galeraCluster = require('@voicenter-team/mysql-dynamic-cluster');
 const cluster = galeraCluster.default.createPoolCluster(cfg);
 
 await cluster.connect();

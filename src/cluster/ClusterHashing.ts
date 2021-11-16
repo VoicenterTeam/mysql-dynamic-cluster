@@ -45,7 +45,6 @@ export class ClusterHashing {
         }
     }
 
-    // #TODO: close pool when database create. When trying to end pool change active status and wait until all connection will release
     /**
      * Create database for hashing
      * @private
