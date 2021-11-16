@@ -20,7 +20,7 @@ const DefaultSettings: DefaultSettings = {
   timerCheckMultiplier: 1.3,
   errorRetryCount: 2,
   queryTimeout: 2 * 60 * 1000, // time in ms
-  logLevel: LOGLEVEL.QUIET
+  logLevel: LOGLEVEL.REGULAR
 }
 
 export default DefaultSettings;

@@ -97,28 +97,33 @@ export class ClusterHashing {
      * @private
      */
     private async _isDatabaseCompletelyCreated(pathToSqls: string[]): Promise<boolean> {
-        const res: any[] = await this._cluster.pools[0].query(`show databases where \`Database\` = '${this._database}';`);
-        if (res.length) {
-            const sqlFileNames: string[] = [];
-            let countCorrectlyCreated: number = 0;
+        try {
+            Logger.info(`Checking if database ${this._database} completely created for hashing...`);
+            const res: any[] = await this._cluster.pools[0].query(`show databases where \`Database\` = '${this._database}';`);
+            if (res.length) {
+                const sqlFileNames: string[] = [];
+                let countCorrectlyCreated: number = 0;
 
-            pathToSqls.forEach(path => {
-                readdirSync(join(__dirname, path)).forEach(filename => {
-                    sqlFileNames.push(parse(filename).name);
-                });
-            })
+                pathToSqls.forEach(path => {
+                    readdirSync(join(__dirname, path)).forEach(filename => {
+                        sqlFileNames.push(parse(filename).name);
+                    });
+                })
 
-            const resultTable: any[] = await this._cluster.pools[0].query(`show table status from \`${this._database}\`;`);
-            const resultFunc: any[] = await this._cluster.pools[0].query(`show function status WHERE Db like '${this._database}';`);
-            const resultProc: any[] = await this._cluster.pools[0].query(`show procedure status WHERE Db like '${this._database}';`);
-            [...resultTable, ...resultFunc, ...resultProc].forEach(elem => {
-                if (sqlFileNames.includes(elem.Name)) countCorrectlyCreated++;
-            })
+                const resultTable: any[] = await this._cluster.pools[0].query(`show table status from \`${this._database}\`;`);
+                const resultFunc: any[] = await this._cluster.pools[0].query(`show function status WHERE Db = '${this._database}';`);
+                const resultProc: any[] = await this._cluster.pools[0].query(`show procedure status WHERE Db = '${this._database}';`);
+                [...resultTable, ...resultFunc, ...resultProc].forEach(elem => {
+                    if (sqlFileNames.includes(elem.Name)) countCorrectlyCreated++;
+                })
 
-            if (countCorrectlyCreated === sqlFileNames.length) return true;
+                if (countCorrectlyCreated === sqlFileNames.length) return true;
+            }
+
+            return false;
+        } catch (e) {
+            throw e;
         }
-
-        return false;
     }
 
     /**
