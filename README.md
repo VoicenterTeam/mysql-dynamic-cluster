@@ -107,6 +107,21 @@ Build the project:
 npm run build
 ```
 
+Create .env
+#### Example .env
+```dotenv
+DB_HOST1=192.168.0.1
+DB_HOST2=192.168.0.2
+DB_HOST3=192.168.0.3
+
+DB_USERNAME=admin
+DB_PASSWORD=password
+DB_DATABASE=database
+DB_PORT=3306
+DB_CONNECTION_LIMIT=100
+DB_CHARSET=utf8mb4
+```
+
 To test that all work correctly run the demo file with script:
 ```bash
 npm run start
