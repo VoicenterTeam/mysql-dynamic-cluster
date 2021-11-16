@@ -13,13 +13,12 @@
   "keywords": [
     "mysql",
     "galera",
-    "pool",
-    "client"
+    "pool"
   ],
-  "author": "bodamat",
+  "author": "Bohdan",
   "contributors": [
     {
-      "name": "bodamat",
+      "name": "Bohdan",
       "email": "bomtvv@gmail.com"
     }
   ],
