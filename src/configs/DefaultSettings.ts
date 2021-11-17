@@ -14,7 +14,7 @@ const DefaultSettings: DefaultSettings = {
   ],
   loadFactors: [
     { key: 'Connections', multiplier: 2 },
-    { key: 'Threads_running', multiplier: 100 }
+    { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
   ],
   timerCheckRange: [5000, 15000],
   timerCheckMultiplier: 1.3,

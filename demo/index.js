@@ -41,7 +41,7 @@ const cfg = {
         { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
     ],
     /**
-     * Level for logger. Default QUIET
+     * Level for logger. Default REGULAR
      * FULL - show all log information
      * REGULAR - show all information instead debug
      * QUIET - show only warning and errors
