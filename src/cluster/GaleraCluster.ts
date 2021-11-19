@@ -28,6 +28,11 @@ export class GaleraCluster {
      * @param userSettings global user settings
      */
     constructor(userSettings: UserSettings) {
+        // enable amqp logger when user enable it in the settings
+        if (userSettings.use_amqp_logger ? userSettings.use_amqp_logger : defaultSettings.use_amqp_logger) {
+            Logger.enableAMQPLogger(userSettings.amqp_logger);
+        }
+
         this.errorRetryCount = userSettings.errorRetryCount ? userSettings.errorRetryCount : defaultSettings.errorRetryCount;
         const poolIds: number[] = this._sortPoolIds(userSettings.hosts);
 
@@ -42,6 +47,7 @@ export class GaleraCluster {
                 new Pool(poolSettings)
             )
         })
+
 
         this._clusterHashing = new ClusterHashing(this);
 

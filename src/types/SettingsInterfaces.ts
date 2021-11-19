@@ -29,12 +29,15 @@ export interface UserSettings extends Settings {
     hosts: PoolSettings[],
     user: string,
     password: string,
-    database: string
+    database: string,
+    amqp_logger?: object,
+    use_amqp_logger?: boolean
 }
 
 export interface DefaultSettings extends Settings {
     port: string,
-    connectionLimit: number
+    connectionLimit: number,
+    use_amqp_logger: boolean
 }
 
 export interface PoolSettings extends Settings {

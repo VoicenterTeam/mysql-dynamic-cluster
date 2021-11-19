@@ -20,7 +20,8 @@ const DefaultSettings: DefaultSettings = {
   timerCheckMultiplier: 1.3,
   errorRetryCount: 2,
   queryTimeout: 2 * 60 * 1000, // time in ms
-  logLevel: LOGLEVEL.REGULAR
+  logLevel: LOGLEVEL.REGULAR,
+  use_amqp_logger: false
 }
 
 export default DefaultSettings;

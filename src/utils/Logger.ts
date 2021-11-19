@@ -8,7 +8,7 @@ import amqp_logger_lib from '@voicenter-team/amqp-logger';
 import defaultSettings from '../configs/DefaultSettings';
 import loggerConfig from '../configs/LoggerConfig';
 
-const amqpLogger = amqp_logger_lib.pastash(loggerConfig);
+let amqpLogger = null;
 // prefix for each log message
 const prefix: string = '[mysql galera]';
 
@@ -21,13 +21,20 @@ const Logger = {
      */
     level: defaultSettings.logLevel ? defaultSettings.logLevel : LOGLEVEL.FULL,
     /**
+     * Enable amqp logger when need. It creates connection to it
+     * @param settings amqp_logger config
+     */
+    enableAMQPLogger(settings: object = {}) {
+        amqpLogger = amqp_logger_lib.pastash(Object.assign(settings, loggerConfig))
+    },
+    /**
      * Output to console with blue color and rabbitmq with debug log level
      * @param message log message what send to
      */
     debug(message: string) {
         if (this.level === LOGLEVEL.FULL) {
             console.log("\x1b[0m", prefix, "\x1b[34m", "[DEBUG]", message, "\x1b[0m");
-            amqpLogger.debug(message);
+            amqpLogger?.debug(message);
         }
     },
     /**
@@ -36,7 +43,7 @@ const Logger = {
      */
     error(message: string) {
         console.log("\x1b[0m", prefix, "\x1b[31m", "[ERROR]", message, "\x1b[0m");
-        amqpLogger.error(message);
+        amqpLogger?.error(message);
     },
     /**
      * Output to console with green color and rabbitmq with info log level
@@ -45,7 +52,7 @@ const Logger = {
     info(message: string) {
         if (this.level !== LOGLEVEL.QUIET) {
             console.log("\x1b[0m", prefix, "\x1b[32m", "[INFO]", message, "\x1b[0m");
-            amqpLogger.info(message);
+            amqpLogger?.info(message);
         }
     },
     /**
@@ -54,7 +61,7 @@ const Logger = {
      */
     warn(message: string) {
         console.log("\x1b[0m", prefix, "\x1b[33m", "[WARNING]", message, "\x1b[0m");
-        amqpLogger.warn(message);
+        amqpLogger?.warn(message);
     },
     /**
      * Change log level
