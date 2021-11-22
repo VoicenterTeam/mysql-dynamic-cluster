@@ -7,7 +7,6 @@ import { QueryOptions, QueryValues, ClusterEvent } from '../types/PoolInterfaces
 import Logger from "../utils/Logger";
 import defaultSettings from "../configs/DefaultSettings";
 
-import { EventEmitter } from 'events'
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import { format as MySQLFormat } from 'mysql2';
 import { Pool } from "../pool/Pool";
@@ -15,6 +14,7 @@ import { Settings } from "../utils/Settings";
 import { ClusterHashing } from "./ClusterHashing";
 import MetricNames from "../metrics/MetricNames";
 import Metrics from "../metrics/Metrics";
+import Events from "../utils/Events";
 
 export class GaleraCluster {
     private _pools: Pool[] = [];
@@ -24,7 +24,6 @@ export class GaleraCluster {
     private readonly _clusterHashing: ClusterHashing;
     private _queryTime: number = 1000;
     private readonly errorRetryCount: number; // retry count after query error
-    private _eventEmitter = new EventEmitter();
     public connected: boolean = false;
 
     /**
@@ -88,7 +87,7 @@ export class GaleraCluster {
                         if (this.connected) return;
                         Logger.info('Cluster connected');
                         this.connected = true;
-                        this._emit('connected');
+                        Events.emit('connected');
                         resolve();
                     }
                 });
@@ -114,7 +113,7 @@ export class GaleraCluster {
         this._pools.forEach((pool) => {
             pool.disconnect();
         })
-        this._emit('disconnected');
+        Events.emit('disconnected');
     }
 
     /**
@@ -123,17 +122,7 @@ export class GaleraCluster {
      * @param callback function what will be called after emit
      */
     public on(event: ClusterEvent, callback: (...args: any[]) => void) {
-        this._eventEmitter.on(event, callback);
-    }
-
-    /**
-     * Emit the event. Call all functions what connected to the event
-     * @param event event name
-     * @param args arguments what will be passed to the callback function
-     * @private
-     */
-    private _emit(event: ClusterEvent, ...args: any[]) {
-        this._eventEmitter.emit(event, args);
+        Events.on(event, callback);
     }
 
     /**

@@ -5,7 +5,7 @@
 // Validator operator
 type Operator = '>' | '<' | '=' | 'Like';
 // Cluster events
-export type ClusterEvent = 'connected' | 'disconnected';
+export type ClusterEvent = 'connected' | 'disconnected' | 'acquire' | 'connection' | 'release';
 // Database global status result
 export type GlobalStatusResult = { Variable_name: string, Value: string }
 // Values for mysql query

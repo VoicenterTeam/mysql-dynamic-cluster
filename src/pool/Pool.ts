@@ -11,6 +11,7 @@ import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
 import MetricNames from "../metrics/MetricNames";
 import { QueryOptions } from "../types/PoolInterfaces";
+import Events from "../utils/Events";
 
 // AKA galera node
 export class Pool {
@@ -90,11 +91,18 @@ export class Pool {
         this._pool.on("connection", () => {
             this.status.availableConnectionCount--;
             Logger.debug("Open connection");
+            Events.emit('connection');
         })
 
         this._pool.on("release", () => {
             this.status.availableConnectionCount++;
             Logger.debug("Connection closed");
+            Events.emit('release');
+        })
+
+        this._pool.on('acquire', () => {
+            Logger.debug("Connection is acquire");
+            Events.emit('acquire');
         })
     }
 
