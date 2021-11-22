@@ -3,6 +3,7 @@
  */
 
 import { PoolSettings, UserSettings } from "../types/SettingsInterfaces";
+import Logger from "./Logger";
 
 export class Settings {
     /**
@@ -11,6 +12,7 @@ export class Settings {
      * @param userSettings user settings
      */
     public static mixPoolSettings(poolSettings: PoolSettings, userSettings: UserSettings) : PoolSettings {
+        Logger.debug("Mixing pool settings with user settings and global settings...")
         poolSettings = {
             user: userSettings.user,
             password: userSettings.password,

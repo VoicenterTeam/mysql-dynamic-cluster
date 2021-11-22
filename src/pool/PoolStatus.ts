@@ -65,7 +65,8 @@ export class PoolStatus {
 
         this.timerCheckRange = settings.timerCheckRange ? settings.timerCheckRange : defaultSettings.timerCheckRange;
         this.timerCheckMultiplier = settings.timerCheckMultiplier ? settings.timerCheckMultiplier : defaultSettings.timerCheckMultiplier;
-        this._timer = new Timer(this.checkStatus.bind(this))
+        this._timer = new Timer(this.checkStatus.bind(this));
+        Logger.debug("Pool status configured");
     }
 
     /**
@@ -73,6 +74,7 @@ export class PoolStatus {
      */
     public stopTimerCheck() {
         this._timer.dispose();
+        Logger.info("Check status in pool stopped");
     }
 
     /**

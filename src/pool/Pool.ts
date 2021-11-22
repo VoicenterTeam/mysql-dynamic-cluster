@@ -75,6 +75,7 @@ export class Pool {
         await this.status.checkStatus();
 
         if (this.status.isValid) {
+            Logger.info('Pool is connected');
             callback(null);
         } else {
             callback(new Error("pool in host " + this.host + " is not valid"));
@@ -88,10 +89,12 @@ export class Pool {
     private _connectEvents() {
         this._pool.on("connection", () => {
             this.status.availableConnectionCount--;
+            Logger.debug("Open connection");
         })
 
         this._pool.on("release", () => {
             this.status.availableConnectionCount++;
+            Logger.debug("Connection closed");
         })
     }
 
@@ -133,6 +136,7 @@ export class Pool {
                 }
 
                 // change database
+                Logger.debug("Changing database to " + queryOptions.database);
                 conn?.changeUser({ database: queryOptions.database }, (error) => {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
@@ -141,6 +145,7 @@ export class Pool {
                     }
                 })
 
+                Logger.debug(`Query in pool by host ${this.host}`);
                 conn?.query({ sql, timeout: queryOptions.timeout }, (error, result: T) => {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
@@ -178,6 +183,7 @@ export class Pool {
                 }
 
                 // change database
+                Logger.debug("Changing database to " + queryOptions.database);
                 conn?.changeUser({ database: queryOptions.database }, (error) => {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
@@ -186,6 +192,7 @@ export class Pool {
                     }
                 })
 
+                Logger.debug("Start transaction in pool by host " + this.host);
                 conn?.beginTransaction(error => {
                     if (error) {
                         Metrics.inc(MetricNames.pools.errorQueries);
@@ -206,6 +213,7 @@ export class Pool {
                         });
                     })
 
+                    Logger.debug("Commit transaction in pool by host " + this.host);
                     conn.commit(errorC => {
                         if (errorC) {
                             conn.rollback(() => 0);

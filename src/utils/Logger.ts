@@ -26,6 +26,7 @@ const Logger = {
      */
     enableAMQPLogger(settings: object = {}) {
         amqpLogger = amqp_logger_lib.pastash(Object.assign(settings, loggerConfig))
+        Logger.info("AMQP logger enabled");
     },
     /**
      * Output to console with blue color and rabbitmq with debug log level
@@ -69,6 +70,7 @@ const Logger = {
      */
     setLogLevel(newLevel: LOGLEVEL) {
         this.level = newLevel;
+        Logger.info("Log level changed to " + LOGLEVEL[newLevel])
     }
 }
 

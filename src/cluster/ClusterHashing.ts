@@ -25,11 +25,13 @@ export class ClusterHashing {
      * @param database database in what helper data will be saved
      */
     constructor(cluster: GaleraCluster, timeCheck?: number, database?: string) {
+        Logger.debug("Configuring hashing in cluster...");
         this._cluster = cluster;
         if (timeCheck) this._nextCheckTime = timeCheck;
         if (database) this._database = database;
 
         this._timer = new Timer(this.checkHashing.bind(this));
+        Logger.debug("Cluster hashing configured");
     }
 
     /**
@@ -63,7 +65,7 @@ export class ClusterHashing {
                 return;
             }
 
-            Logger.info(`Creating database ${this._database} and procedures for hashing`);
+            Logger.debug(`Creating database ${this._database} and procedures for hashing...`);
             await this._cluster.pools[0].query(`CREATE SCHEMA IF NOT EXISTS \`${this._database}\` COLLATE utf8_general_ci;`);
 
             const sqls: string[] = [];
@@ -97,7 +99,7 @@ export class ClusterHashing {
      */
     private async _isDatabaseCompletelyCreated(pathToSqls: string[]): Promise<boolean> {
         try {
-            Logger.info(`Checking if database ${this._database} completely created for hashing...`);
+            Logger.debug(`Checking if database ${this._database} completely created for hashing...`);
             const res: any[] = await this._cluster.pools[0].query(`show databases where \`Database\` = '${this._database}';`);
             if (res.length) {
                 const sqlFileNames: string[] = [];
@@ -190,6 +192,7 @@ export class ClusterHashing {
      */
     public stop() {
         this._timer.dispose();
+        Logger.info("Checking hashing in the cluster stopped");
     }
 
     /**

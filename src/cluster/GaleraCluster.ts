@@ -33,6 +33,8 @@ export class GaleraCluster {
             Logger.enableAMQPLogger(userSettings.amqp_logger);
         }
 
+        Logger.debug("Configuring cluster...");
+
         this.errorRetryCount = userSettings.errorRetryCount ? userSettings.errorRetryCount : defaultSettings.errorRetryCount;
         const poolIds: number[] = this._sortPoolIds(userSettings.hosts);
 
@@ -79,7 +81,10 @@ export class GaleraCluster {
             this._pools.forEach((pool) => {
                 pool.connect((err) => {
                     if (err) Logger.error(err.message)
-                    else resolve();
+                    else  {
+                        Logger.info('Cluster connected');
+                        resolve();
+                    }
                 });
             })
         })
@@ -90,6 +95,7 @@ export class GaleraCluster {
      */
     public async enableHashing() {
         await this._clusterHashing.connect();
+        Logger.info("Cluster hashing enabled");
     }
 
     /**
@@ -130,7 +136,7 @@ export class GaleraCluster {
             } catch (e) {
                 error = e;
                 Logger.error(e.message);
-                if (i+1 < retryCount) {
+                if (i + 1 < retryCount) {
                     Logger.debug("Retrying query...");
                 }
             }
