@@ -88,21 +88,21 @@ export class Pool {
      * @private
      */
     private _connectEvents() {
-        this._pool.on("connection", () => {
+        this._pool.on("connection", (connection) => {
             this.status.availableConnectionCount--;
             Logger.debug("Open connection");
-            Events.emit('connection');
+            Events.emit('connection', connection);
         })
 
-        this._pool.on("release", () => {
+        this._pool.on("release", (connection) => {
             this.status.availableConnectionCount++;
             Logger.debug("Connection closed");
-            Events.emit('release');
+            Events.emit('release', connection);
         })
 
-        this._pool.on('acquire', () => {
+        this._pool.on('acquire', (connection) => {
             Logger.debug("Connection is acquire");
-            Events.emit('acquire');
+            Events.emit('acquire', connection);
         })
     }
 

@@ -68,7 +68,12 @@ const cfg = {
      * REGULAR - show all information instead debug
      * QUIET - show only warning and errors
      */
-    logLevel: LOGLEVEL.FULL
+    logLevel: LOGLEVEL.FULL,
+   /**
+    * Enabling amqp logger
+    * Default: false
+    */
+   use_amqp_logger: false
 }
 ```
 
@@ -90,6 +95,64 @@ try {
 } catch (e){
     console.log(e.message);
 }
+```
+
+## Connect to the events
+### connected
+The cluster will emit `connected` event when cluster is completely created.
+```javascript
+cluster.on('connected', () => {
+    console.log("Cluster completely created");
+})
+```
+### disconnected
+The cluster will emit `disconnected` event when cluster is completely disconnected.
+```javascript
+cluster.on('disconnected', () => {
+    console.log("Cluster completely disconnected");
+})
+```
+### acquire
+The pool will emit an `acquire` event when a connection is acquired from the pool. This is called after all acquiring activity has been performed on the connection, right before the connection is handed to the callback of the acquiring code.
+```javascript
+cluster.on('acquire', (connection) => {
+    console.log('Connection %d acquired', connection.threadId);
+})
+```
+### connection
+The pool will emit a `connection` event when a new connection is made within the pool. If you need to set session variables on the connection before it gets used, you can listen to the `connection` event.
+```javascript
+cluster.on('connection', (connection) => {
+    console.log("SET SESSION auto_increment_increment=1");
+})
+```
+### release
+The pool will emit a `release` event when a connection is released back to the pool. This is called after all release activity has been performed on the connection, so the connection will be listed as free at the time of the event.
+```javascript
+cluster.on('release', (connection) => {
+    console.log('Connection %d released', connection.threadId);
+})
+```
+### pool_connected
+The pool will emit `pool_connected` event when pool is completely connected. 
+```javascript
+cluster.on('pool_connected', () => {
+    console.log("Pool completely created");
+})
+```
+### pool_disconnected
+The pool will emit `pool_disconnected` event when pool is completely disconnected.
+```javascript
+cluster.on('pool_disconnected', () => {
+    console.log("Pool completely disconnected");
+})
+```
+### hashing_created
+The cluster will emit `hashing_created` event when hashing in cluster is completely created and connected.
+```javascript
+cluster.on('hashing_created', () => {
+    console.log("Cluster hashing completely created");
+})
 ```
 
 ## Demo
