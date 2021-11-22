@@ -2,7 +2,7 @@
  * Created by Bohdan on Sep, 2021
  */
 
-const galeraCluster = require('../dist/index')
+const galeraCluster = require('../dist')
 require('dotenv').config()
 
 const cfg = {
@@ -46,10 +46,10 @@ const cfg = {
      * REGULAR - show all information instead debug
      * QUIET - show only warning and errors
      */
-    logLevel: galeraCluster.default.LOGLEVEL.FULL
+    logLevel: galeraCluster.LOGLEVEL.FULL
 }
 
-const cluster = galeraCluster.default.createPoolCluster(cfg);
+const cluster = galeraCluster.createPoolCluster(cfg);
 
 /**
  * Connect to the cluster event

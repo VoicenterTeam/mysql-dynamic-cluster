@@ -2,13 +2,13 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import galeraCluster from "../../index";
+import { createPoolCluster } from "../../index";
 import dotenv from "dotenv";
 // import { ServiceNodeMap } from "../../src/types/PoolInterfaces";
 
 describe("Cluster queries", () => {
     dotenv.config({path: './.env'});
-    const cluster = galeraCluster.createPoolCluster({
+    const cluster = createPoolCluster({
         hosts: [
             {
                 host: process.env.DB_HOST2

@@ -14,7 +14,7 @@ function init(userSettings: UserSettings): void {
     }
 }
 
-export default {
+export {
     createPoolCluster,
     LOGLEVEL
 };

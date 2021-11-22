@@ -3,7 +3,7 @@
  */
 
 import dotenv from "dotenv";
-import galeraCluster from "../../index";
+import { createPoolCluster } from "../../index";
 import { ClusterHashing } from "../../src/cluster/ClusterHashing";
 import { ServiceNodeMap } from "../../src/types/PoolInterfaces";
 import { readdirSync } from "fs";
@@ -11,7 +11,7 @@ import { join, parse } from "path";
 
 describe("Cluster hashing", () => {
     dotenv.config({path: './.env'});
-    const cluster = galeraCluster.createPoolCluster({
+    const cluster = createPoolCluster({
         hosts: [
             {
                 host: process.env.DB_HOST2

@@ -2,7 +2,7 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import galeraCluster from '../../index'
+import { createPoolCluster } from '../../index'
 import { Utils } from "../../src/utils/Utils";
 import dotenv from "dotenv";
 import { GlobalStatusResult } from "../../src/types/PoolInterfaces";
@@ -13,7 +13,7 @@ beforeAll(() => {
 
 it("choosing right server in many queries", async () => {
     expect.assertions(2);
-    const cluster = galeraCluster.createPoolCluster({
+    const cluster = createPoolCluster({
         hosts: [
             {
                 host: process.env.DB_HOST2
