@@ -2,7 +2,6 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import mysql from "mysql2";
 import Logger from "../utils/Logger";
 import { PoolSettings } from "../types/SettingsInterfaces";
@@ -10,7 +9,7 @@ import defaultSettings from "../configs/DefaultSettings";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
 import MetricNames from "../metrics/MetricNames";
-import { QueryOptions } from "../types/PoolInterfaces";
+import { QueryOptions, QueryResult } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
 
 // AKA galera node
@@ -127,7 +126,7 @@ export class Pool {
      * @param sql mysql query string
      * @param queryOptions query options like timeout, database, multipleStatements etc
      */
-    public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, queryOptions: QueryOptions = { timeout: this.queryTimeout, database: this.database }): Promise<T | T[]> {
+    public async query<T extends QueryResult>(sql: string, queryOptions: QueryOptions = { timeout: this.queryTimeout, database: this.database }): Promise<T | T[]> {
         return new Promise((resolve, reject) => {
             Metrics.inc(MetricNames.pools.allQueries);
             Metrics.mark(MetricNames.pools.queryPerSecond);
@@ -173,7 +172,7 @@ export class Pool {
      * @param sqls array of sql queries
      * @param queryOptions query options like timeout, database etc.
      */
-    public async multiStatementQuery<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sqls: string[], queryOptions: QueryOptions = { timeout: this.queryTimeout, database: this.database }): Promise<T[]> {
+    public async multiStatementQuery<T extends QueryResult>(sqls: string[], queryOptions: QueryOptions = { timeout: this.queryTimeout, database: this.database }): Promise<T[]> {
         return new Promise((resolve, reject) => {
             Metrics.inc(MetricNames.pools.allQueries);
             Metrics.mark(MetricNames.pools.queryPerSecond);

@@ -3,11 +3,10 @@
  */
 
 import { PoolSettings, UserSettings } from "../types/SettingsInterfaces";
-import { QueryOptions, QueryValues, ClusterEvent } from '../types/PoolInterfaces'
+import { QueryOptions, QueryValues, ClusterEvent, QueryResult } from '../types/PoolInterfaces'
 import Logger from "../utils/Logger";
 import defaultSettings from "../configs/DefaultSettings";
 
-import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 import { format as MySQLFormat } from 'mysql2';
 import { Pool } from "../pool/Pool";
 import { Settings } from "../utils/Settings";
@@ -131,7 +130,7 @@ export class GaleraCluster {
      * @param values values what passed in sql string
      * @param queryOptions params for configure query
      */
-    public async query<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, values?: QueryValues, queryOptions?: QueryOptions): Promise<T> {
+    public async query<T extends QueryResult>(sql: string, values?: QueryValues, queryOptions?: QueryOptions): Promise<T> {
         let activePools: Pool[]; // available pools for query what passed the validator
         let retryCount; // max retry query count after error
         try {
@@ -168,7 +167,7 @@ export class GaleraCluster {
      * @param queryOptions options to configure query
      * @private
      */
-    private async _queryRequest<T extends RowDataPacket[][] | RowDataPacket[] | OkPacket | OkPacket[] | ResultSetHeader>(sql: string, pool: Pool, queryOptions: QueryOptions): Promise<T> {
+    private async _queryRequest<T extends QueryResult>(sql: string, pool: Pool, queryOptions: QueryOptions): Promise<T> {
         try {
             Metrics.inc(MetricNames.cluster.allQueries);
             const timeBefore = new Date().getTime();
