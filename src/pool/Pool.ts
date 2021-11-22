@@ -76,6 +76,7 @@ export class Pool {
 
         if (this.status.isValid) {
             Logger.info('Pool is connected');
+            Events.emit('pool_connected');
             callback(null);
         } else {
             callback(new Error("pool in host " + this.host + " is not valid"));
@@ -117,6 +118,7 @@ export class Pool {
         });
         this.status.active = false;
         this.status.stopTimerCheck();
+        Events.emit('pool_disconnected');
 
         Logger.info("pool in host " + this.host + " closed");
     }

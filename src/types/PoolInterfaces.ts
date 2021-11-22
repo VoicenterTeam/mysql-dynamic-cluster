@@ -7,7 +7,7 @@ import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
 // Validator operator
 type Operator = '>' | '<' | '=' | 'Like';
 // Cluster events
-export type ClusterEvent = 'connected' | 'disconnected' | 'acquire' | 'connection' | 'release';
+export type ClusterEvent = 'connected' | 'disconnected' | 'acquire' | 'connection' | 'release' | 'pool_connected' | 'pool_disconnected' | 'hashing_created';
 // Database global status result
 export type GlobalStatusResult = { Variable_name: string, Value: string }
 // Values for mysql query

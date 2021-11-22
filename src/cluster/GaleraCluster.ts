@@ -99,6 +99,7 @@ export class GaleraCluster {
      */
     public async enableHashing() {
         await this._clusterHashing.connect();
+        Events.emit('hashing_created');
         Logger.info("Cluster hashing enabled");
     }
 
