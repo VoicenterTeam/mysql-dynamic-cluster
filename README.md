@@ -80,7 +80,7 @@ const cfg = {
 ### Example
 ```javascript
 const galeraCluster = require('@voicenter-team/mysql-dynamic-cluster');
-const cluster = galeraCluster.default.createPoolCluster(cfg);
+const cluster = galeraCluster.createPoolCluster(cfg);
 
 await cluster.connect();
 /**
