@@ -23,6 +23,7 @@ export class GaleraCluster {
     private readonly _clusterHashing: ClusterHashing;
     private _queryTime: number = 1000;
     private readonly errorRetryCount: number; // retry count after query error
+    public connected: boolean = false;
 
     /**
      * @param userSettings global user settings
@@ -82,7 +83,9 @@ export class GaleraCluster {
                 pool.connect((err) => {
                     if (err) Logger.error(err.message)
                     else  {
+                        if (this.connected) return;
                         Logger.info('Cluster connected');
+                        this.connected = true;
                         resolve();
                     }
                 });
@@ -103,6 +106,7 @@ export class GaleraCluster {
      */
     public async disconnect() {
         Logger.debug("disconnecting all pools");
+        this.connected = false;
         this._clusterHashing?.stop();
         this._pools.forEach((pool) => {
             pool.disconnect();
