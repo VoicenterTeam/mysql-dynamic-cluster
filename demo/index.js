@@ -51,6 +51,13 @@ const cfg = {
 
 const cluster = galeraCluster.default.createPoolCluster(cfg);
 
+/**
+ * Connect to the cluster event
+ */
+cluster.on('connected', () => {
+    console.log("Cluster completely created. Called from main program");
+})
+
 async function test() {
     await cluster.connect();
     /**
