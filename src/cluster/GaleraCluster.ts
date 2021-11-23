@@ -158,7 +158,8 @@ export class GaleraCluster {
             }
         }
 
-        throw new Error("All pools have a error. Error message: " + error.message);
+        Logger.error("All pools have error. Error message: " + error.message);
+        throw new Error(error.message);
     }
 
     /**
