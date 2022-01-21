@@ -5,7 +5,6 @@
 import { PoolSettings, UserSettings } from "../types/SettingsInterfaces";
 import { QueryOptions, QueryValues, ClusterEvent, QueryResult } from '../types/PoolInterfaces'
 import Logger from "../utils/Logger";
-import defaultSettings from "../configs/DefaultSettings";
 
 import { format as MySQLFormat } from 'mysql2';
 import { Pool } from "../pool/Pool";
@@ -14,6 +13,7 @@ import { ClusterHashing } from "./ClusterHashing";
 import MetricNames from "../metrics/MetricNames";
 import Metrics from "../metrics/Metrics";
 import Events from "../utils/Events";
+import Redis from "../utils/Redis";
 
 export class GaleraCluster {
     private _pools: Pool[] = [];
@@ -29,18 +29,20 @@ export class GaleraCluster {
      * @param userSettings global user settings
      */
     constructor(userSettings: UserSettings) {
+        userSettings = Settings.mixSettings(userSettings);
+
         // enable amqp logger when user enable it in the settings
-        if (userSettings.use_amqp_logger ? userSettings.use_amqp_logger : defaultSettings.use_amqp_logger) {
+        if (userSettings.use_amqp_logger) {
             Logger.enableAMQPLogger(userSettings.amqp_logger);
         }
+        Redis.init(userSettings.redis, userSettings.redisSettings);
 
         Logger.debug("Configuring cluster...");
 
-        this.errorRetryCount = userSettings.errorRetryCount ? userSettings.errorRetryCount : defaultSettings.errorRetryCount;
+        this.errorRetryCount = userSettings.errorRetryCount;
         const poolIds: number[] = this._sortPoolIds(userSettings.hosts);
 
         userSettings.hosts.forEach(poolSettings => {
-            poolSettings = Settings.mixPoolSettings(poolSettings, userSettings);
             if (!poolSettings.id) {
                 poolSettings.id = poolIds.length <= 0 ? 0 : poolIds[poolIds.length - 1] + 1;
                 poolIds.push(poolSettings.id);
@@ -82,7 +84,7 @@ export class GaleraCluster {
             this._pools.forEach((pool) => {
                 pool.connect((err) => {
                     if (err) Logger.error(err.message)
-                    else  {
+                    else {
                         if (this.connected) return;
                         Logger.info('Cluster connected');
                         this.connected = true;
@@ -110,6 +112,7 @@ export class GaleraCluster {
         Logger.debug("disconnecting all pools");
         this.connected = false;
         this._clusterHashing?.stop();
+        Redis.disconnect();
         this._pools.forEach((pool) => {
             pool.disconnect();
         })

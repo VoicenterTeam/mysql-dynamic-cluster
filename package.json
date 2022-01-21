@@ -40,9 +40,11 @@
   "dependencies": {
     "@pm2/io": "^5.0.0",
     "@voicenter-team/amqp-logger": "^1.1.9",
+    "ioredis": "^4.28.3",
     "mysql2": "^2.3.0"
   },
   "devDependencies": {
+    "@types/ioredis": "^4.28.7",
     "@types/jest": "^27.0.1",
     "@types/node": "^16.9.0",
     "dotenv": "^10.0.0",

@@ -5,12 +5,12 @@
 import mysql from "mysql2";
 import Logger from "../utils/Logger";
 import { PoolSettings } from "../types/SettingsInterfaces";
-import defaultSettings from "../configs/DefaultSettings";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
 import MetricNames from "../metrics/MetricNames";
 import { QueryOptions, QueryResult } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
+import Redis from "../utils/Redis";
 
 // AKA galera node
 export class Pool {
@@ -39,16 +39,16 @@ export class Pool {
     constructor(settings: PoolSettings) {
         this.id = settings.id;
         this.host = settings.host;
-        this.port = settings.port ? settings.port : defaultSettings.port;
+        this.port = settings.port;
         this.name = settings.name ? settings.name : `${this.host}:${this.port}`
         Logger.debug("configure pool in host " + this.host);
 
         this.user = settings.user;
         this.password = settings.password;
         this.database = settings.database;
-        this.queryTimeout = settings.queryTimeout ? settings.queryTimeout : defaultSettings.queryTimeout;
+        this.queryTimeout = settings.queryTimeout;
 
-        this.connectionLimit = settings.connectionLimit ? settings.connectionLimit : defaultSettings.connectionLimit;
+        this.connectionLimit = settings.connectionLimit;
 
         this._status = new PoolStatus(this, settings, false, this.connectionLimit, 10000);
 
@@ -128,19 +128,37 @@ export class Pool {
      * @param sql mysql query string
      * @param queryOptions query options like timeout, database, multipleStatements etc
      */
-    public async query<T extends QueryResult>(sql: string, queryOptions: QueryOptions = { timeout: this.queryTimeout, database: this.database }): Promise<T | T[]> {
-        return new Promise((resolve, reject) => {
+    public async query<T extends QueryResult>(sql: string, queryOptions?: QueryOptions): Promise<T | T[]> {
+        return new Promise(async (resolve, reject) => {
+            queryOptions = {
+                timeout: this.queryTimeout,
+                database: this.database,
+                redis: false,
+                ...queryOptions
+            }
+
             Metrics.inc(MetricNames.pools.allQueries);
             Metrics.mark(MetricNames.pools.queryPerSecond);
+
+            if (queryOptions.redis) {
+                const redisResult = await Redis.get(sql);
+                if (redisResult) {
+                    Logger.debug("Get result of query from redis");
+                    resolve(JSON.parse(redisResult));
+                    return;
+                }
+            }
 
             this._pool.getConnection((err, conn) => {
                 if (err) {
                     Metrics.inc(MetricNames.pools.errorQueries);
+                    conn?.release();
                     reject(err);
                 }
 
                 if (!conn) {
                     Metrics.inc(MetricNames.pools.errorQueries);
+                    conn?.release();
                     reject(new Error("Can't find connection. Maybe it was unexpectedly closed."));
                 }
 
@@ -163,6 +181,7 @@ export class Pool {
                     }
                     conn.release();
                     Metrics.inc(MetricNames.pools.successfulQueries);
+                    if (queryOptions.redis) Redis.set(sql, JSON.stringify(result));
                     resolve(result);
                 });
             })

@@ -2,7 +2,9 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { ValidatorParams, LoadFactorParams } from './PoolInterfaces'
+import { ValidatorParams, LoadFactorParams } from './PoolInterfaces';
+import { Redis, Cluster } from 'ioredis';
+import { BinaryToTextEncoding } from 'crypto';
 
 export enum LOGLEVEL {
     QUIET,
@@ -31,13 +33,17 @@ export interface UserSettings extends Settings {
     password: string,
     database: string,
     amqp_logger?: object,
-    use_amqp_logger?: boolean
+    redis?: Redis | Cluster,
+    use_amqp_logger?: boolean,
+    redisSettings?: RedisSettings
 }
 
 export interface DefaultSettings extends Settings {
     port: string,
     connectionLimit: number,
-    use_amqp_logger: boolean
+    use_amqp_logger: boolean,
+    logLevel: LOGLEVEL,
+    redisSettings: RedisSettings
 }
 
 export interface PoolSettings extends Settings {
@@ -48,4 +54,12 @@ export interface PoolSettings extends Settings {
     password?: string,
     database?: string,
     queryTimeout?: number
+}
+
+export interface RedisSettings {
+    algorithm?: string,
+    encoding?: BinaryToTextEncoding,
+    keyPrefix?: string,
+    expiryMode?: string,
+    time?: number
 }

@@ -19,9 +19,9 @@ const Logger = {
     /**
      * Log level. Choose what messages send to console and rabbitmq
      */
-    level: defaultSettings.logLevel ? defaultSettings.logLevel : LOGLEVEL.FULL,
+    level: defaultSettings.logLevel,
     /**
-     * Enable amqp logger when need. It creates connection to it
+     * Enable amqp logger when needed. It creates connection to it
      * @param settings amqp_logger config
      */
     enableAMQPLogger(settings: object = {}) {

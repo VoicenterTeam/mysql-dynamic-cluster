@@ -4,7 +4,7 @@
 
 import { DefaultSettings, LOGLEVEL } from "../types/SettingsInterfaces";
 
-const DefaultSettings: DefaultSettings = {
+const defaultSettings: DefaultSettings = {
   port: "3306",
   connectionLimit: 100,
   validators: [
@@ -21,7 +21,15 @@ const DefaultSettings: DefaultSettings = {
   errorRetryCount: 2,
   queryTimeout: 2 * 60 * 1000, // time in ms
   logLevel: LOGLEVEL.REGULAR,
-  use_amqp_logger: false
+  use_amqp_logger: false,
+  redisSettings: {
+    algorithm: "md5",
+    encoding: "base64",
+    keyPrefix: "m_d_c:",
+    expiryMode: "EX",
+    time: 10
+  }
 }
+Object.freeze(defaultSettings);
 
-export default DefaultSettings;
+export default defaultSettings;

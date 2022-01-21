@@ -2,52 +2,32 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { PoolSettings, UserSettings } from "../types/SettingsInterfaces";
+import {PoolSettings, UserSettings} from "../types/SettingsInterfaces";
 import Logger from "./Logger";
+import defaultSettings from "../configs/DefaultSettings";
 
 export class Settings {
     /**
-     * Mix pool settings with global and user settings
-     * @param poolSettings pool settings
+     * Mix user and pool settings with global
      * @param userSettings user settings
      */
-    public static mixPoolSettings(poolSettings: PoolSettings, userSettings: UserSettings) : PoolSettings {
-        Logger.debug("Mixing pool settings with user settings and global settings...")
-        poolSettings = {
-            user: userSettings.user,
-            password: userSettings.password,
-            database: userSettings.database,
-            ...poolSettings
-        }
+    public static mixSettings(userSettings: UserSettings): UserSettings {
+        Logger.debug("Mixing user and pool settings with global...");
+        const defaultUserSettings = Object.assign({}, defaultSettings);
+        userSettings = Object.assign(defaultUserSettings, userSettings);
 
-        if (!poolSettings.connectionLimit && userSettings.connectionLimit) {
-            poolSettings.connectionLimit = userSettings.connectionLimit
-        }
+        const globalPoolSettings: UserSettings = Object.assign({}, userSettings);
+        delete globalPoolSettings.hosts;
+        delete globalPoolSettings.amqp_logger;
+        delete globalPoolSettings.use_amqp_logger;
+        delete globalPoolSettings.logLevel;
+        Object.freeze(globalPoolSettings);
 
-        if (!poolSettings.port && userSettings.port) {
-            poolSettings.port = userSettings.port
-        }
+        userSettings.hosts = userSettings.hosts.map(host => {
+            const poolSettings: PoolSettings = Object.assign({host: '127.0.0.1'}, globalPoolSettings);
+            return Object.assign(poolSettings, host);
+        });
 
-        if (!poolSettings.validators && userSettings.validators) {
-            poolSettings.validators = userSettings.validators
-        }
-
-        if (!poolSettings.loadFactors && userSettings.loadFactors) {
-            poolSettings.loadFactors = userSettings.loadFactors
-        }
-
-        if (!poolSettings.timerCheckRange && userSettings.timerCheckRange) {
-            poolSettings.timerCheckRange = userSettings.timerCheckRange
-        }
-
-        if (!poolSettings.timerCheckMultiplier && userSettings.timerCheckMultiplier) {
-            poolSettings.timerCheckMultiplier = userSettings.timerCheckMultiplier
-        }
-
-        if (!poolSettings.queryTimeout && userSettings.queryTimeout) {
-            poolSettings.queryTimeout = userSettings.queryTimeout
-        }
-
-        return poolSettings;
+        return userSettings;
     }
 }

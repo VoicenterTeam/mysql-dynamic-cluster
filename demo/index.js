@@ -4,6 +4,7 @@
 
 const galeraCluster = require('../dist')
 require('dotenv').config()
+const RedisLib = require('ioredis');
 
 const cfg = {
     // configuration for each pool. 2 pools are minimum
@@ -46,7 +47,8 @@ const cfg = {
      * REGULAR - show all information instead debug
      * QUIET - show only warning and errors
      */
-    logLevel: galeraCluster.LOGLEVEL.FULL
+    logLevel: galeraCluster.LOGLEVEL.FULL,
+    redis: new RedisLib()
 }
 
 const cluster = galeraCluster.createPoolCluster(cfg);
@@ -67,21 +69,20 @@ async function test() {
     await cluster.enableHashing();
 
     try {
-        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`);
+        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`, null, { redis: true });
         console.log(res[0]);
-    } catch (e){
+    } catch (e) {
         console.log(e.message);
     }
 
     console.log("Async test");
 
     try {
-        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`);
+        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`, null, { redis: true });
         console.log(res[0].MethodTypeName);
 
         cluster.disconnect();
-
-    } catch (e){
+    } catch (e) {
         console.log(e.message);
     }
 
