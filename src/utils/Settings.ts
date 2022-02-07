@@ -28,6 +28,9 @@ export class Settings {
             return Object.assign(poolSettings, host);
         });
 
+        const redisDefaultSettings = Object.assign({}, defaultSettings.redisSettings);
+        userSettings.redisSettings = Object.assign(redisDefaultSettings, userSettings.redisSettings);
+
         return userSettings;
     }
 }
