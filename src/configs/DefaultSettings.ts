@@ -27,7 +27,8 @@ const defaultSettings: DefaultSettings = {
     encoding: "base64",
     keyPrefix: "m_d_c:",
     expiryMode: "EX",
-    time: 10
+    expire: 100,
+    clearOnStart: false
   }
 }
 Object.freeze(defaultSettings);

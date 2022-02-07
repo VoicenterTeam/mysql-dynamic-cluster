@@ -2,9 +2,9 @@
  * Created by Bohdan on Jan, 2022
  */
 
-import {Redis as RedisLib, Cluster, ValueType, Ok} from "ioredis";
+import { Redis as RedisLib, Cluster, ValueType, Ok } from "ioredis";
 import Logger from "./Logger";
-import {RedisSettings} from "../types/SettingsInterfaces";
+import { RedisSettings } from "../types/SettingsInterfaces";
 import { createHash } from "crypto";
 
 class Redis {
@@ -34,7 +34,7 @@ class Redis {
 	private connectEvents() {
 		this.redis.on("ready", () => {
 			this.isReady = true;
-			this.clearAll();
+			if (this.redisSettings.clearOnStart) this.clearAll();
 			Logger.info("Redis is ready");
 		})
 	}
@@ -56,20 +56,25 @@ class Redis {
 	}
 
 	async set(key: string, value: ValueType): Promise<Ok | null> {
+		if (!this.isEnabled()) return null;
 		try {
+			const expire: number = this.redisSettings.expire || 100;
+			const expireMode: string = this.redisSettings.expiryMode || 'EX';
+
 			key = this.redisSettings.keyPrefix + this.hash(key);
 			Logger.debug(`Redis set data by key: ${key}`);
-			return this.isEnabled() ? await this.redis.set(key, value) : null;
+			return await this.redis.set(key, value, expireMode, expire);
 		} catch (e) {
 			Logger.error(e);
 		}
 	}
 
 	async get(key: string): Promise<string | null> {
+		if (!this.isEnabled()) return null;
 		try {
 			key = this.redisSettings.keyPrefix + this.hash(key);
 			Logger.debug(`Redis get data by key: ${key}`);
-			return this.isEnabled() ? await this.redis.get(key) : null;
+			return await this.redis.get(key);
 		} catch (e) {
 			Logger.error(e);
 		}

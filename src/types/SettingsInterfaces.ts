@@ -34,8 +34,8 @@ export interface UserSettings extends Settings {
     database: string,
     amqp_logger?: object,
     redis?: Redis | Cluster,
-    use_amqp_logger?: boolean,
     redisSettings?: RedisSettings
+    use_amqp_logger?: boolean,
 }
 
 export interface DefaultSettings extends Settings {
@@ -57,9 +57,10 @@ export interface PoolSettings extends Settings {
 }
 
 export interface RedisSettings {
+    keyPrefix?: string,
+    expire?: number,
+    expiryMode?: string,
     algorithm?: string,
     encoding?: BinaryToTextEncoding,
-    keyPrefix?: string,
-    expiryMode?: string,
-    time?: number
+    clearOnStart?: boolean
 }
