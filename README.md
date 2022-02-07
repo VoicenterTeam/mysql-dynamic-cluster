@@ -73,7 +73,7 @@ const cfg = {
     * Enabling amqp logger
     * Default: false
     */
-   use_amqp_logger: false
+   useAmqpLogger: false
 }
 ```
 

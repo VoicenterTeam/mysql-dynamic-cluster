@@ -18,8 +18,8 @@ export class Settings {
 
         const globalPoolSettings: UserSettings = Object.assign({}, userSettings);
         delete globalPoolSettings.hosts;
-        delete globalPoolSettings.amqp_logger;
-        delete globalPoolSettings.use_amqp_logger;
+        delete globalPoolSettings.amqpLoggerSettings;
+        delete globalPoolSettings.useAmqpLogger;
         delete globalPoolSettings.logLevel;
         Object.freeze(globalPoolSettings);
 

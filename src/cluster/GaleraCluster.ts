@@ -32,8 +32,8 @@ export class GaleraCluster {
         userSettings = Settings.mixSettings(userSettings);
 
         // enable amqp logger when user enable it in the settings
-        if (userSettings.use_amqp_logger) {
-            Logger.enableAMQPLogger(userSettings.amqp_logger);
+        if (userSettings.useAmqpLogger) {
+            Logger.enableAMQPLogger(userSettings.amqpLoggerSettings);
         }
         Redis.init(userSettings.redis, userSettings.redisSettings);
 

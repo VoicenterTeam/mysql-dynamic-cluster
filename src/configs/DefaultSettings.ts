@@ -21,7 +21,7 @@ const defaultSettings: DefaultSettings = {
   errorRetryCount: 2,
   queryTimeout: 2 * 60 * 1000, // time in ms
   logLevel: LOGLEVEL.REGULAR,
-  use_amqp_logger: false,
+  useAmqpLogger: true,
   redisSettings: {
     algorithm: "md5",
     encoding: "base64",

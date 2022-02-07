@@ -48,6 +48,7 @@ const cfg = {
      * QUIET - show only warning and errors
      */
     logLevel: galeraCluster.LOGLEVEL.FULL,
+    useAmqpLogger: false,
     redis: new RedisLib()
 }
 

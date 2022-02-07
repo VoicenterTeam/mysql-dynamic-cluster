@@ -32,16 +32,16 @@ export interface UserSettings extends Settings {
     user: string,
     password: string,
     database: string,
-    amqp_logger?: object,
+    amqpLoggerSettings?: object,
     redis?: Redis | Cluster,
     redisSettings?: RedisSettings
-    use_amqp_logger?: boolean,
+    useAmqpLogger?: boolean,
 }
 
 export interface DefaultSettings extends Settings {
     port: string,
     connectionLimit: number,
-    use_amqp_logger: boolean,
+    useAmqpLogger: boolean,
     logLevel: LOGLEVEL,
     redisSettings: RedisSettings
 }
