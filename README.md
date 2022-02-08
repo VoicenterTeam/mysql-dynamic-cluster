@@ -1,24 +1,32 @@
 # mysql-dynamic-cluster
-Galera cluster with implementation of dynamic choose mysql server for queries and hashing services
+> Galera cluster with implementation of dynamic choose mysql server for queries, caching it and hashing services
 
-## Logic
-1. Choose what pool to use for mysql query. Choosing by 2 points:
+## Features
+1. Choosing what pool to use for mysql query by 2 points:
    1. Validators - if pool is valid and ready for work
-   2. Load factors - prioritize pools by load. Less load on the top
-2. Hashing services for fast respond
-3. Realtime metrics for tracking
-4. Custom logger to console and RabbitMQ
+   2. Load factors - prioritizing pools by load. Less load on the top
+2. Hashing services for query
+3. Realtime metrics for cluster and each database node
+4. Custom colored logger and RabbitMQ for it
+5. Caching query by Redis
+
+## Technologies
+- mysql2
+- amqp-logger
+- pm2.io metrics
+- ioredis
+- jest
 
 ## Install
 Download project from npm
 ```bash
-npm i @voicenter-team/mysql-dynamic-cluster
+$ npm i @voicenter-team/mysql-dynamic-cluster
 ```
 
 ## How to use
 
-### Configuration
-
+### Configure cluster
+More detail about user settings [here](#user-settings)
 ```javascript
 const cfg = {
     // configuration for each pool. 2 pools are minimum
@@ -70,6 +78,11 @@ const cfg = {
      */
     logLevel: LOGLEVEL.FULL,
    /**
+    * Redis object created by `ioredis` library
+    * To enable redis pass some value othervise it's disabled
+    */
+   redis: new Redis(),
+   /**
     * Enabling amqp logger
     * Default: false
     */
@@ -78,6 +91,7 @@ const cfg = {
 ```
 
 ### Example
+`cfg` - [configuration for cluster](#configure-cluster)
 ```javascript
 const galeraCluster = require('@voicenter-team/mysql-dynamic-cluster');
 const cluster = galeraCluster.createPoolCluster(cfg);
@@ -97,7 +111,169 @@ try {
 }
 ```
 
-## Connect to the events
+## Accessible params
+`connected` - to check status of cluster if connected. **True** is connected and **false** opposite  
+`LOGLEVEL` - enum of available log levels: 
+```typescript
+enum LOGLEVEL {
+    QUIET,
+    REGULAR,
+    FULL
+}
+```
+
+## Accessible functions
+
+Creating the cluster and initialize with [user settings](#user-settings).
+```javascript
+galeraCluster.createPoolCluster({
+   hosts: [
+      {
+         host: "192.168.0.1",
+      }
+   ],
+   user: "admin",
+   password: "password_global",
+   database: "global_db",
+})
+```
+
+Connecting to all databases passed in [user settings](#user-settings)
+```javascript
+cluster.connect()
+```
+
+Enable feature hashing
+```javascript
+cluster.enableHashing()
+```
+Disconnecting from all databases
+```javascript
+cluster.disconnect()
+```
+Connecting to [events](#connect-to-events)
+```javascript
+cluster.on('connected', () => {
+    console.log("Some stuff after an event emitted")
+})
+```
+Request to the database. Cluster automatically select best database node for quick result by **validators** and **load factors**  
+**Query values** can be one of this structure: `string | any[] | { [paramName: string]: any }`  
+You can also pass [query options](#query-options) to configure only this request
+```javascript
+cluster.query(`SELECT SLEEP(?)`, [100], { redis: true })
+```
+
+### Configs
+#### User settings
+`?` - not necessary parameter
+```typescript
+interface UserSettings {
+   /**
+    * Array of settings for each database node
+    */
+   hosts: [
+      {
+         host: string,
+         id?: number,
+         name?: string,
+         user?: string,
+         port?: string,
+         password?: string,
+         database?: string,
+         queryTimeout?: number,
+         connectionLimit?: number,
+         validators?: {
+            key: string,
+            operator: '>' | '<' | '=' | 'Like', // 'Like' only for value type of string
+            value: string | number
+         },
+         loadFactors?: {
+            key: string,
+            multiplier: number
+         },
+         timerCheckRange?: [number, number], // Time in ms
+         timerCheckMultiplier?: number,
+         queryTimeout?: number, // Time in ms
+         errorRetryCount?: number,
+      }
+   ],
+   user: string,
+   password: string,
+   database: string,
+   port?: string, // @Default: '3306'
+   connectionLimit?: number, // @Default: 100
+   queryTimeout?: number, // Time in ms. @Default: 120 000
+   /**
+    * Validators to set that pool is valid and ready for work
+    * key - variable_name in mysql global status
+    * operator - operator to compare (=, <, >). For text only '='
+    * value - what value must be to complete pool check
+    */
+   validators?: [
+      {
+         key: string,
+         operator: '>' | '<' | '=' | 'Like', // 'Like' only for value type of string
+         value: string | number
+      }
+   ],
+   /**
+    * Load factors to sort the pools depends on load
+    * key - variable_name in mysql global status
+    * multiplier - multiply value of corresponding variable_name in mysql global status selected by key
+    */
+   loadFactors?: [
+      {
+         key: string,
+         multiplier: number
+      }
+   ],
+   /** 
+    * Max and min value of time for next pool status check 
+    * Time in ms
+    */
+   timerCheckRange?: [number, number], // @Default: [5 000, 15 000]
+   /**
+    * Multiplier time for next pool status check. 
+    * If check don't have errors than time multiply otherwise divide
+    */
+   timerCheckMultiplier?: number, // @Default: 1.3
+   /**
+    * How much retry query if have error by change the database node
+    */
+   errorRetryCount?: number, // @Default: 2
+   /**
+    * Created redis or redis cluster object by `ioredis` library
+    * Compatible only with `ioredis`
+    */
+   redis?: Redis | Cluster,
+   redisSettings?: {
+      keyPrefix?: string,
+      expire?: number, // @Default: 100
+      expiryMode?: string,
+      algorithm?: string,
+      encoding?: BinaryToTextEncoding,
+      clearOnStart?: boolean // @Default: false
+   }
+   amqpLoggerSettings?: object,
+   useAmqpLogger?: boolean,
+   logLevel?: LOGLEVEL
+}
+```
+More detail about amqp logger settings [here](https://github.com/VoicenterTeam/amqp-logger#readme)
+
+#### Query options
+```typescript
+interface QueryOptions {
+   timeout?: number,
+   database?: string,
+   serviceId?: number,
+   maxRetry?: number,
+   redis?: boolean
+}
+```
+
+## Connect to events
 ### connected
 The cluster will emit `connected` event when cluster is completely created.
 ```javascript
@@ -156,22 +332,21 @@ cluster.on('hashing_created', () => {
 ```
 
 ## Demo
-Demo file **index.js** for how to use the library in **demo** folder. Build the project to run it
+Demo file `index.js` for how to use the library in `demo` folder. Build the project to run it
 
 ## Build
 Clone repo and install dependencies:
 ```bash
-git clone https://github.com/VoicenterTeam/mysql-dynamic-cluster.git
-npm install
+$ git clone https://github.com/VoicenterTeam/mysql-dynamic-cluster.git
+$ npm install
 ```
 
 Build the project:
 ```bash
-npm run build
+$ npm run build
 ```
 
 Create .env
-#### Example .env
 ```dotenv
 DB_HOST1=192.168.0.1
 DB_HOST2=192.168.0.2
@@ -185,14 +360,14 @@ DB_CONNECTION_LIMIT=100
 DB_CHARSET=utf8mb4
 ```
 
-To test that all work correctly run the demo file with script:
+To test that all work correctly run the **demo file** with script:
 ```bash
-npm run start
+$ npm run start
 ```
 
 ## Tests
-All unit tests in **tests** folder. Test created using **jest** library.  
+All unit tests in `tests` folder. Test created using `jest` library.  
 To run all tests use script:
 ```bash
-npm run test
+$ npm run test
 ```
