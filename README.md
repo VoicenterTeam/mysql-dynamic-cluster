@@ -53,7 +53,7 @@ const cfg = {
     /**
      * Validators to set that pool is valid and ready for work
      * key - variable_name in mysql global status
-     * operator - operator to compare (=, <, >). For text only '='
+     * operator - operator to compare (=, <, >). For text only '=' or 'Like'
      * value - what value must be to complete pool check
      */
     validators: [
@@ -111,19 +111,18 @@ try {
 }
 ```
 
-## Accessible params
+## Params
 `connected` - to check status of cluster if connected. **True** is connected and **false** opposite  
-`LOGLEVEL` - enum of available log levels: 
+`LOGLEVEL` - enum of log levels. Default `QUIET`.
 ```typescript
 enum LOGLEVEL {
-    QUIET,
-    REGULAR,
-    FULL
+    QUIET, // show only warning and errors
+    REGULAR, // show all information instead debug
+    FULL // show all log information
 }
 ```
 
-## Accessible functions
-
+## Functions
 Creating the cluster and initialize with [user settings](#user-settings).
 ```javascript
 galeraCluster.createPoolCluster({
@@ -143,7 +142,7 @@ Connecting to all databases passed in [user settings](#user-settings)
 cluster.connect()
 ```
 
-Enable feature hashing
+Enable hashing feature
 ```javascript
 cluster.enableHashing()
 ```
@@ -185,7 +184,7 @@ interface UserSettings {
          connectionLimit?: number,
          validators?: {
             key: string,
-            operator: '>' | '<' | '=' | 'Like', // 'Like' only for value type of string
+            operator: '>' | '<' | '=' | 'Like',
             value: string | number
          },
          loadFactors?: {
@@ -207,7 +206,7 @@ interface UserSettings {
    /**
     * Validators to set that pool is valid and ready for work
     * key - variable_name in mysql global status
-    * operator - operator to compare (=, <, >). For text only '='
+    * operator - operator to compare (=, <, >). For text only '=' or 'Like'
     * value - what value must be to complete pool check
     */
    validators?: [
