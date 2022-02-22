@@ -19,8 +19,8 @@ class Redis {
 		Logger.debug("Initialized Redis");
 	}
 
-	private clearAll() {
-		this.redis.keys(this.redisSettings.keyPrefix + "*").then((keys) => {
+	private clearAll(): void {
+		this.redis?.keys(this.redisSettings.keyPrefix + "*").then((keys) => {
 			const pipeline = this.redis.pipeline();
 			keys.forEach((key) => {
 				pipeline.del(key);
@@ -31,15 +31,15 @@ class Redis {
 		Logger.debug("Redis cache cleared related to project");
 	}
 
-	private connectEvents() {
-		this.redis.on("ready", () => {
+	private connectEvents(): void {
+		this.redis?.on("ready", () => {
 			this.isReady = true;
 			if (this.redisSettings.clearOnStart) this.clearAll();
 			Logger.info("Redis is ready");
 		})
 	}
 
-	private isEnabled() {
+	private isEnabled(): boolean {
 		return this.redis && this.isReady;
 	}
 
