@@ -32,6 +32,7 @@ class Redis {
 	}
 
 	private connectEvents(): void {
+		if(!this.redis) return:
 		this.redis?.on("ready", () => {
 			this.isReady = true;
 			if (this.redisSettings.clearOnStart) this.clearAll();
