@@ -3,6 +3,7 @@
  */
 
 import { DefaultSettings, LOGLEVEL } from "../types/SettingsInterfaces";
+import AmqpLoggerConfig from './AmqpLoggerConfig'
 
 const defaultSettings: DefaultSettings = {
   port: "3306",
@@ -29,7 +30,8 @@ const defaultSettings: DefaultSettings = {
     expiryMode: "EX",
     expire: 100,
     clearOnStart: false
-  }
+  },
+  amqpLoggerSettings: AmqpLoggerConfig
 }
 Object.freeze(defaultSettings);
 

@@ -3,7 +3,7 @@
  */
 
 import { Settings } from "../../src/utils/Settings";
-import { PoolSettings, UserSettings } from "../../src/types/SettingsInterfaces";
+import { UserPoolSettings, UserSettings } from "../../src/types/SettingsInterfaces";
 
 describe("Mix settings", () => {
     it ("Set credentials for all pools", () => {
@@ -18,7 +18,7 @@ describe("Mix settings", () => {
             database: 'db'
         }
 
-        const expectedResult: PoolSettings = {
+        const expectedResult: UserPoolSettings = {
             host: '192.168.0.1',
             user: 'test',
             password: 'test2',
@@ -43,7 +43,7 @@ describe("Mix settings", () => {
             database: 'db'
         }
 
-        const expectedResult: PoolSettings = {
+        const expectedResult: UserPoolSettings = {
             host: '192.168.0.1',
             user: 'amazing',
             password: 'test2',

@@ -5,6 +5,7 @@
 import { ValidatorParams, LoadFactorParams } from './PoolInterfaces';
 import { Redis, Cluster } from 'ioredis';
 import { BinaryToTextEncoding } from 'crypto';
+import { IAmqpConfig, IUserAmqpConfig } from "./AmqpInterfaces";
 
 export enum LOGLEVEL {
     QUIET,
@@ -12,48 +13,57 @@ export enum LOGLEVEL {
     FULL
 }
 
-export interface Settings {
-    connectionLimit?: number,
+export interface PoolSettings {
     port?: string,
-    validators?: ValidatorParams[],
-    loadFactors?: LoadFactorParams[],
-    // Time in ms
-    timerCheckRange?: [number, number],
-    timerCheckMultiplier?: number,
-    // Time in ms
-    queryTimeout?: number,
-    errorRetryCount?: number,
-    logLevel?: LOGLEVEL
-}
-
-// Global user settings
-export interface UserSettings extends Settings {
-    hosts: PoolSettings[],
-    user: string,
-    password: string,
-    database: string,
-    amqpLoggerSettings?: object,
-    redis?: Redis | Cluster,
-    redisSettings?: RedisSettings
-    useAmqpLogger?: boolean,
-}
-
-export interface DefaultSettings extends Settings {
-    port: string,
-    connectionLimit: number,
-    useAmqpLogger: boolean,
-    logLevel: LOGLEVEL,
-    redisSettings: RedisSettings
-}
-
-export interface PoolSettings extends Settings {
-    id?: number,
-    host: string,
-    name?: string,
     user?: string,
     password?: string,
     database?: string,
-    queryTimeout?: number
+    queryTimeout?: number,
+    connectionLimit?: number,
+    errorRetryCount?: number,
+}
+
+export interface GlobalPoolSettings extends PoolSettings{
+    user: string,
+    password: string,
+    database: string
+}
+
+export interface UserPoolSettings extends PoolSettings {
+    id?: number,
+    name?: string,
+    host: string
+}
+
+export interface Settings {
+    validators?: ValidatorParams[],
+    loadFactors?: LoadFactorParams[],
+    timerCheckRange?: [number, number], // Time in ms
+    timerCheckMultiplier?: number, // Time in ms
+    redisSettings?: RedisSettings
+    useAmqpLogger?: boolean,
+    amqpLoggerSettings?: IUserAmqpConfig,
+    logLevel?: LOGLEVEL,
+}
+
+export interface UserSettings extends Settings, GlobalPoolSettings {
+    hosts: UserPoolSettings[],
+    redis?: Redis | Cluster
+}
+
+export interface DefaultSettings extends Settings, PoolSettings {
+    port: string,
+    connectionLimit: number,
+    queryTimeout: number, // Time in ms
+    errorRetryCount: number,
+    validators: ValidatorParams[],
+    loadFactors: LoadFactorParams[],
+    timerCheckRange: [number, number], // Time in ms
+    timerCheckMultiplier: number, // Time in ms
+    useAmqpLogger: boolean,
+    logLevel: LOGLEVEL,
+    redisSettings: DefaultRedisSettings,
+    amqpLoggerSettings: IAmqpConfig
 }
 
 export interface RedisSettings {
@@ -63,4 +73,13 @@ export interface RedisSettings {
     algorithm?: string,
     encoding?: BinaryToTextEncoding,
     clearOnStart?: boolean
+}
+
+export interface DefaultRedisSettings extends RedisSettings{
+    keyPrefix: string,
+    expire: number,
+    expiryMode: string,
+    algorithm: string,
+    encoding: BinaryToTextEncoding,
+    clearOnStart: boolean
 }

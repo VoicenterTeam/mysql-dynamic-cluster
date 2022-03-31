@@ -2,7 +2,7 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { PoolSettings, UserSettings } from "../types/SettingsInterfaces";
+import { UserPoolSettings, UserSettings } from "../types/SettingsInterfaces";
 import { QueryOptions, QueryValues, ClusterEvent, QueryResult } from '../types/PoolInterfaces'
 import Logger from "../utils/Logger";
 
@@ -64,7 +64,7 @@ export class GaleraCluster {
      * @param pools pools passed in userSettings
      * @private
      */
-    private _sortPoolIds(pools: PoolSettings[]): number[] {
+    private _sortPoolIds(pools: UserPoolSettings[]): number[] {
         const poolIds: number[] = [];
         pools.forEach(pool => {
             if (pool.id) poolIds.push(pool.id);

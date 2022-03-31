@@ -4,7 +4,7 @@
 
 import mysql from "mysql2";
 import Logger from "../utils/Logger";
-import { PoolSettings } from "../types/SettingsInterfaces";
+import { UserPoolSettings } from "../types/SettingsInterfaces";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
 import MetricNames from "../metrics/MetricNames";
@@ -36,7 +36,7 @@ export class Pool {
     /**
      * @param settings pool settings
      */
-    constructor(settings: PoolSettings) {
+    constructor(settings: UserPoolSettings) {
         this.id = settings.id;
         this.host = settings.host;
         this.port = settings.port;

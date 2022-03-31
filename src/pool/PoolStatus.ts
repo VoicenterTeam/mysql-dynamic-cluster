@@ -3,7 +3,7 @@
  */
 
 import { GlobalStatusResult } from "../types/PoolInterfaces";
-import { PoolSettings } from "../types/SettingsInterfaces";
+import { UserPoolSettings } from "../types/SettingsInterfaces";
 import Logger from "../utils/Logger";
 import { Utils } from "../utils/Utils";
 import { Timer } from "../utils/Timer";
@@ -49,7 +49,7 @@ export class PoolStatus {
      * @param availableConnectionCount max connection count in the pool
      * @param queryTime default query time before status check
      */
-    constructor(pool: Pool, settings: PoolSettings, active: boolean, availableConnectionCount: number, queryTime: number) {
+    constructor(pool: Pool, settings: UserPoolSettings, active: boolean, availableConnectionCount: number, queryTime: number) {
         this._pool = pool;
 
         this.active = active;

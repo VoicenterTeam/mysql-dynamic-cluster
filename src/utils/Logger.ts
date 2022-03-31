@@ -6,7 +6,8 @@ import { LOGLEVEL } from '../types/SettingsInterfaces';
 import amqp_logger_lib from '@voicenter-team/amqp-logger';
 
 import defaultSettings from '../configs/DefaultSettings';
-import loggerConfig from '../configs/LoggerConfig';
+import loggerConfig from '../configs/AmqpLoggerConfig';
+import {IAmqpConfig, IUserAmqpConfig} from "../types/AmqpInterfaces";
 
 let amqpLogger = null;
 // prefix for each log message
@@ -24,8 +25,8 @@ const Logger = {
      * Enable amqp logger when needed. It creates connection to it
      * @param settings amqp_logger config
      */
-    enableAMQPLogger(settings: object = {}) {
-        amqpLogger = amqp_logger_lib.pastash(Object.assign(settings, loggerConfig))
+    enableAMQPLogger(settings: IUserAmqpConfig) {
+        amqpLogger = amqp_logger_lib.pastash(loggerConfig)
         Logger.info("AMQP logger enabled");
     },
     /**
@@ -35,7 +36,7 @@ const Logger = {
     debug(message: string) {
         if (this.level === LOGLEVEL.FULL) {
             console.log("\x1b[0m", prefix, "\x1b[34m", "[DEBUG]", message, "\x1b[0m");
-            amqpLogger?.debug(message);
+            // amqpLogger?.debug(message);
         }
     },
     /**
@@ -53,7 +54,7 @@ const Logger = {
     info(message: string) {
         if (this.level !== LOGLEVEL.QUIET) {
             console.log("\x1b[0m", prefix, "\x1b[32m", "[INFO]", message, "\x1b[0m");
-            amqpLogger?.info(message);
+            // amqpLogger?.info(message);
         }
     },
     /**
