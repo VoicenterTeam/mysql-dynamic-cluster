@@ -7,7 +7,7 @@ import amqp_logger_lib from '@voicenter-team/amqp-logger';
 
 import defaultSettings from '../configs/DefaultSettings';
 import loggerConfig from '../configs/AmqpLoggerConfig';
-import {IAmqpConfig, IUserAmqpConfig} from "../types/AmqpInterfaces";
+import { IUserAmqpConfig } from "../types/AmqpInterfaces";
 
 let amqpLogger = null;
 // prefix for each log message

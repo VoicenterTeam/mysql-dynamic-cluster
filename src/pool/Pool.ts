@@ -62,11 +62,11 @@ export class Pool {
     public async connect(callback: (err: Error) => void) {
         Logger.debug("Creating pool in host: " + this.host);
         this._pool = mysql.createPool({
-            connectionLimit: this.connectionLimit,
             host: this.host,
             user: this.user,
             password: this.password,
-            database: this.database
+            database: this.database,
+            connectionLimit: this.connectionLimit
         })
 
         this.status.active = true;

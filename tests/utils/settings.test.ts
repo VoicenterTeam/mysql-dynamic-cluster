@@ -25,33 +25,33 @@ describe("Mix settings", () => {
             database: 'db'
         }
 
-        const result = Settings.mixPoolSettings(userSettings.hosts[0], userSettings);
+        const result = Settings.mixSettings(userSettings);
 
         expect(result).toStrictEqual(expectedResult);
     })
 
-    it('Override global credential for pool', () => {
-        const userSettings: UserSettings = {
-            hosts: [
-                {
-                    host: '192.168.0.1',
-                    user: 'amazing'
-                }
-            ],
-            user: 'test',
-            password: 'test2',
-            database: 'db'
-        }
-
-        const expectedResult: UserPoolSettings = {
-            host: '192.168.0.1',
-            user: 'amazing',
-            password: 'test2',
-            database: 'db'
-        }
-
-        const result = Settings.mixPoolSettings(userSettings.hosts[0], userSettings);
-
-        expect(result).toStrictEqual(expectedResult);
-    })
+    // it('Override global credential for pool', () => {
+    //     const userSettings: UserSettings = {
+    //         hosts: [
+    //             {
+    //                 host: '192.168.0.1',
+    //                 user: 'amazing'
+    //             }
+    //         ],
+    //         user: 'test',
+    //         password: 'test2',
+    //         database: 'db'
+    //     }
+    //
+    //     const expectedResult: UserPoolSettings = {
+    //         host: '192.168.0.1',
+    //         user: 'amazing',
+    //         password: 'test2',
+    //         database: 'db'
+    //     }
+    //
+    //     const result = Settings.mixSettings(userSettings.hosts[0], userSettings);
+    //
+    //     expect(result).toStrictEqual(expectedResult);
+    // })
 })

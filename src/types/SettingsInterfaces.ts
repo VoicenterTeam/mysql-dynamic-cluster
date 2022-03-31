@@ -13,7 +13,7 @@ export enum LOGLEVEL {
     FULL
 }
 
-export interface PoolSettings {
+interface PoolSettings {
     port?: string,
     user?: string,
     password?: string,
@@ -21,6 +21,10 @@ export interface PoolSettings {
     queryTimeout?: number,
     connectionLimit?: number,
     errorRetryCount?: number,
+    validators?: ValidatorParams[],
+    loadFactors?: LoadFactorParams[],
+    timerCheckRange?: [number, number], // Time in ms
+    timerCheckMultiplier?: number
 }
 
 export interface GlobalPoolSettings extends PoolSettings{
@@ -35,23 +39,19 @@ export interface UserPoolSettings extends PoolSettings {
     host: string
 }
 
-export interface Settings {
-    validators?: ValidatorParams[],
-    loadFactors?: LoadFactorParams[],
-    timerCheckRange?: [number, number], // Time in ms
-    timerCheckMultiplier?: number, // Time in ms
+interface ISettings {
     redisSettings?: RedisSettings
     useAmqpLogger?: boolean,
     amqpLoggerSettings?: IUserAmqpConfig,
     logLevel?: LOGLEVEL,
 }
 
-export interface UserSettings extends Settings, GlobalPoolSettings {
+export interface UserSettings extends ISettings, GlobalPoolSettings {
     hosts: UserPoolSettings[],
     redis?: Redis | Cluster
 }
 
-export interface DefaultSettings extends Settings, PoolSettings {
+export interface DefaultSettings extends ISettings, PoolSettings {
     port: string,
     connectionLimit: number,
     queryTimeout: number, // Time in ms
