@@ -3,26 +3,38 @@
  */
 
 import { Settings } from "../../src/utils/Settings";
-import { UserPoolSettings, UserSettings } from "../../src/types/SettingsInterfaces";
+import {LOGLEVEL, UserSettings} from "../../src/types/SettingsInterfaces";
+import AmqpLoggerConfig from "../../src/configs/AmqpLoggerConfig";
+import defaultSettings from "../../src/configs/DefaultSettings";
 
 describe("Mix settings", () => {
-    it ("Set credentials for all pools", () => {
+    it ("check 1 level of merging settings", () => {
         const userSettings: UserSettings = {
             hosts: [
                 {
                     host: '192.168.0.1'
                 }
             ],
-            user: 'test',
-            password: 'test2',
-            database: 'db'
+            globalPoolSettings: {
+                user: 'test',
+                password: 'test2',
+                database: 'db',
+            },
+            logLevel: LOGLEVEL.FULL
         }
 
-        const expectedResult: UserPoolSettings = {
-            host: '192.168.0.1',
-            user: 'test',
-            password: 'test2',
-            database: 'db'
+        const expectedResult: UserSettings = {
+            hosts: [
+                {
+                    host: '192.168.0.1'
+                }
+            ],
+            globalPoolSettings: {
+                user: 'test',
+                password: 'test2',
+                database: 'db',
+            }
+            // #TODO: finish add expected keys
         }
 
         const result = Settings.mixSettings(userSettings);
@@ -30,28 +42,73 @@ describe("Mix settings", () => {
         expect(result).toStrictEqual(expectedResult);
     })
 
-    // it('Override global credential for pool', () => {
-    //     const userSettings: UserSettings = {
-    //         hosts: [
-    //             {
-    //                 host: '192.168.0.1',
-    //                 user: 'amazing'
-    //             }
-    //         ],
-    //         user: 'test',
-    //         password: 'test2',
-    //         database: 'db'
-    //     }
-    //
-    //     const expectedResult: UserPoolSettings = {
-    //         host: '192.168.0.1',
-    //         user: 'amazing',
-    //         password: 'test2',
-    //         database: 'db'
-    //     }
-    //
-    //     const result = Settings.mixSettings(userSettings.hosts[0], userSettings);
-    //
-    //     expect(result).toStrictEqual(expectedResult);
-    // })
+    it('check 2 level of merging settings', () => {
+        const userSettings: UserSettings = {
+            hosts: [
+                {
+                    host: '192.168.0.1'
+                }
+            ],
+            globalPoolSettings: {
+                user: 'test',
+                password: 'test2',
+                database: 'db',
+                validators: [
+                    { key: 'wsrep_ready', operator: '=', value: 'OFF' }
+                ],
+                timerCheckRange: {
+                    start: 100,
+                    end: 502
+                },
+            },
+            redisSettings: {
+                algorithm: "test",
+                keyPrefix: "test_m_d_c:"
+            }
+        }
+
+        const expectedResult: UserSettings = {
+            hosts: [
+                {
+                    host: '192.168.0.1'
+                }
+            ],
+            globalPoolSettings: {
+                user: 'test',
+                password: 'test2',
+                database: 'db',
+                port: "3306",
+                connectionLimit: 100,
+                validators: [
+                    { key: 'wsrep_ready', operator: '=', value: 'OFF' },
+                ],
+                loadFactors: [
+                    { key: 'Connections', multiplier: 2 },
+                    { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
+                ],
+                timerCheckRange: {
+                    start: 100,
+                    end: 502
+                },
+                timerCheckMultiplier: 1.3,
+                errorRetryCount: 2,
+                queryTimeout: 2 * 60 * 1000, // time in ms
+            },
+            logLevel: LOGLEVEL.REGULAR,
+            useAmqpLogger: true,
+            redisSettings: {
+                algorithm: "test",
+                encoding: "base64",
+                keyPrefix: "test_m_d_c:",
+                expiryMode: "EX",
+                expire: 100,
+                clearOnStart: false
+            },
+            amqpLoggerSettings: AmqpLoggerConfig
+        }
+
+        const result = Settings.mixSettings(userSettings);
+
+        expect(result).toStrictEqual(expectedResult);
+    })
 })
