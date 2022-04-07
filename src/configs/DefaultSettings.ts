@@ -3,7 +3,7 @@
  */
 
 import { DefaultSettings, LOGLEVEL } from "../types/SettingsInterfaces";
-import AmqpLoggerConfig from './AmqpLoggerConfig'
+import { AmqpLoggerConfig } from './AmqpLoggerConfig'
 
 const defaultSettings: DefaultSettings = {
   globalPoolSettings: {

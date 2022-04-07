@@ -6,7 +6,7 @@ import { LOGLEVEL } from '../types/SettingsInterfaces';
 import amqp_logger_lib from '@voicenter-team/amqp-logger';
 
 import defaultSettings from '../configs/DefaultSettings';
-import loggerConfig from '../configs/AmqpLoggerConfig';
+import { MethDict } from '../configs/AmqpLoggerConfig';
 import { IUserAmqpConfig } from "../types/AmqpInterfaces";
 
 let amqpLogger = null;
@@ -23,9 +23,13 @@ const Logger = {
     level: defaultSettings.logLevel,
     /**
      * Enable amqp logger when needed. It creates connection to it
-     * @param settings amqp_logger config
+     * @param amqpSettings amqp_logger config
      */
-    enableAMQPLogger(settings: IUserAmqpConfig) {
+    enableAMQPLogger(amqpSettings: IUserAmqpConfig) {
+        const loggerConfig = {
+            ...amqpSettings,
+            meth_dict: MethDict
+        }
         amqpLogger = amqp_logger_lib.pastash(loggerConfig)
         Logger.info("AMQP logger enabled");
     },
