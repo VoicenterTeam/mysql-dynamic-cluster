@@ -42,6 +42,7 @@
     "@voicenter-team/amqp-logger": "^1.1.9",
     "deepmerge": "^4.2.2",
     "ioredis": "^4.28.3",
+    "is-plain-object": "^5.0.0",
     "mysql2": "^2.3.0"
   },
   "devDependencies": {

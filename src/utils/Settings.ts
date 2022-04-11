@@ -6,6 +6,7 @@ import { UserPoolSettings, UserSettings } from "../types/SettingsInterfaces";
 import Logger from "./Logger";
 import defaultSettings from "../configs/DefaultSettings";
 import deepmerge from "deepmerge";
+import { isPlainObject } from 'is-plain-object'
 
 export class Settings {
     /**
@@ -17,7 +18,8 @@ export class Settings {
 
         const overwriteMerge = (destinationArray, sourceArray) => sourceArray
         userSettings = deepmerge(defaultSettings, userSettings, {
-            arrayMerge: overwriteMerge
+            arrayMerge: overwriteMerge,
+            isMergeableObject: isPlainObject
         }) as UserSettings;
 
         userSettings.hosts = userSettings.hosts.map(host => {

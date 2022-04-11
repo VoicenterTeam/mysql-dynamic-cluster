@@ -39,7 +39,7 @@ export class GaleraCluster {
 
         Logger.debug("Configuring cluster...");
 
-        this.errorRetryCount = userSettings.errorRetryCount;
+        this.errorRetryCount = userSettings.globalPoolSettings.errorRetryCount;
         const poolIds: number[] = this._sortPoolIds(userSettings.hosts);
 
         userSettings.hosts.forEach(poolSettings => {
