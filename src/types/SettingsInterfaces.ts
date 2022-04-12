@@ -59,6 +59,7 @@ interface ISettings {
     redisSettings?: RedisSettings
     useAmqpLogger?: boolean,
     amqpLoggerSettings?: IUserAmqpConfig,
+    useConsoleLogger?: boolean,
     logLevel?: LOGLEVEL,
 }
 
@@ -71,6 +72,7 @@ export interface UserSettings extends ISettings {
 export interface DefaultSettings extends ISettings {
     globalPoolSettings: DefaultPoolSettings,
     useAmqpLogger: boolean,
+    useConsoleLogger: boolean,
     logLevel: LOGLEVEL,
     redisSettings: DefaultRedisSettings,
     amqpLoggerSettings: IAmqpConfig

@@ -21,6 +21,14 @@ const Logger = {
      * Log level. Choose what messages send to console and rabbitmq
      */
     level: defaultSettings.logLevel,
+    useConsole: defaultSettings.useConsoleLogger,
+    /**
+     * Initialize logger
+     * @param useConsole enable logger in a console
+     */
+    init(useConsole: boolean) {
+        this.useConsole = useConsole;
+    },
     /**
      * Enable amqp logger when needed. It creates connection to it
      * @param amqpSettings amqp_logger config
@@ -34,13 +42,21 @@ const Logger = {
         Logger.info("AMQP logger enabled");
     },
     /**
+     * Change log level
+     * @param newLevel new log level
+     */
+    setLogLevel(newLevel: LOGLEVEL) {
+        this.level = newLevel;
+        Logger.info("Log level changed to " + LOGLEVEL[newLevel])
+    },
+    /**
      * Output to console with blue color and rabbitmq with debug log level
      * @param message log message what send to
      */
     debug(message: string) {
         if (this.level === LOGLEVEL.FULL) {
-            console.log("\x1b[0m", prefix, "\x1b[34m", "[DEBUG]", message, "\x1b[0m");
-            // amqpLogger?.debug(message);
+            if (this.useConsole) console.log("\x1b[0m", prefix, "\x1b[34m", "[DEBUG]", message, "\x1b[0m");
+            amqpLogger?.debug(message);
         }
     },
     /**
@@ -48,7 +64,7 @@ const Logger = {
      * @param message log message what send to
      */
     error(message: string) {
-        console.log("\x1b[0m", prefix, "\x1b[31m", "[ERROR]", message, "\x1b[0m");
+        if (this.useConsole) console.log("\x1b[0m", prefix, "\x1b[31m", "[ERROR]", message, "\x1b[0m");
         amqpLogger?.error(message);
     },
     /**
@@ -57,8 +73,8 @@ const Logger = {
      */
     info(message: string) {
         if (this.level !== LOGLEVEL.QUIET) {
-            console.log("\x1b[0m", prefix, "\x1b[32m", "[INFO]", message, "\x1b[0m");
-            // amqpLogger?.info(message);
+            if (this.useConsole) console.log("\x1b[0m", prefix, "\x1b[32m", "[INFO]", message, "\x1b[0m");
+            amqpLogger?.info(message);
         }
     },
     /**
@@ -66,16 +82,8 @@ const Logger = {
      * @param message log message what send to
      */
     warn(message: string) {
-        console.log("\x1b[0m", prefix, "\x1b[33m", "[WARNING]", message, "\x1b[0m");
+        if (this.useConsole) console.log("\x1b[0m", prefix, "\x1b[33m", "[WARNING]", message, "\x1b[0m");
         amqpLogger?.warn(message);
-    },
-    /**
-     * Change log level
-     * @param newLevel new log level
-     */
-    setLogLevel(newLevel: LOGLEVEL) {
-        this.level = newLevel;
-        Logger.info("Log level changed to " + LOGLEVEL[newLevel])
     }
 }
 

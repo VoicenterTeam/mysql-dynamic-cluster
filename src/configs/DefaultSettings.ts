@@ -28,6 +28,7 @@ const defaultSettings: DefaultSettings = {
   },
   logLevel: LOGLEVEL.REGULAR,
   useAmqpLogger: true,
+  useConsoleLogger: true,
   redisSettings: {
     algorithm: "md5",
     encoding: "base64",

@@ -32,8 +32,8 @@ const AmqpLoggerConfig: IAmqpConfig = {
         LoggerSpecificData: "localhost",
         LogSpecificData: "ThisLogType"
     },
-    log_lvl: 3, // #TODO: check how works log lvl for amqp
-    // self_log_lvl: 3
+    log_lvl: 1,
+    self_log_lvl: 1
 };
 
 const MethDict: IMethDict = {

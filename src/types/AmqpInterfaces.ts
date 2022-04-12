@@ -6,13 +6,14 @@ export interface IUserAmqpConfig {
 	log_amqp?: IAmqpLog[],
 	pattern?: IAmqpPattern,
 	log_lvl?: number,
+	self_log_lvl?: number
 }
 
 export interface IAmqpConfig extends IUserAmqpConfig {
 	log_amqp: IAmqpLog[],
 	pattern: IDefaultAmqpPattern,
 	log_lvl: number
-	// self_log_lvl: number
+	self_log_lvl: number
 }
 
 export interface IMethDict {

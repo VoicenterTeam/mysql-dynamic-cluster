@@ -51,6 +51,11 @@ const cfg = {
      */
     logLevel: galeraCluster.LOGLEVEL.FULL,
     useAmqpLogger: true,
+    useConsoleLogger: false,
+    amqpLoggerSettings: {
+        log_lvl: 4,
+        self_log_lvl: 4
+    },
     redis: new RedisLib()
 }
 
