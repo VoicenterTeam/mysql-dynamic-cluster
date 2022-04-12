@@ -6,16 +6,18 @@ export interface IUserAmqpConfig {
 	log_amqp?: IAmqpLog[],
 	pattern?: IAmqpPattern,
 	log_lvl?: number,
+	self_log_lvl?: number
 }
 
 export interface IAmqpConfig extends IUserAmqpConfig {
 	log_amqp: IAmqpLog[],
-	pattern: IAmqpPattern,
-	meth_dict: {
-		[key: string]: number
-	},
+	pattern: IDefaultAmqpPattern,
 	log_lvl: number
-	// self_log_lvl: number
+	self_log_lvl: number
+}
+
+export interface IMethDict {
+	[key: string]: number
 }
 
 interface IAmqpLog {
@@ -43,6 +45,14 @@ interface IAmqpChannel {
 }
 
 interface IAmqpPattern {
+	DateTime?: string,
+	Title?: string,
+	Message?: string,
+	LoggerSpecificData?: string,
+	LogSpecificData?: string
+}
+
+interface IDefaultAmqpPattern extends IAmqpPattern{
 	DateTime: string,
 	Title: string,
 	Message: string,

@@ -23,11 +23,16 @@ interface PoolSettings {
     errorRetryCount?: number,
     validators?: ValidatorParams[],
     loadFactors?: LoadFactorParams[],
-    timerCheckRange?: [number, number], // Time in ms
+    timerCheckRange?: ITimerCheckRange, // Time in ms
     timerCheckMultiplier?: number
 }
 
-export interface GlobalPoolSettings extends PoolSettings{
+export interface ITimerCheckRange {
+    start: number,
+    end: number
+}
+
+export interface GlobalUserPoolSettings extends PoolSettings {
     user: string,
     password: string,
     database: string
@@ -39,28 +44,35 @@ export interface UserPoolSettings extends PoolSettings {
     host: string
 }
 
+export interface DefaultPoolSettings extends PoolSettings {
+    port: string,
+    queryTimeout: number,
+    connectionLimit: number,
+    errorRetryCount: number,
+    validators: ValidatorParams[],
+    loadFactors: LoadFactorParams[],
+    timerCheckRange: ITimerCheckRange, // Time in ms
+    timerCheckMultiplier: number
+}
+
 interface ISettings {
     redisSettings?: RedisSettings
     useAmqpLogger?: boolean,
     amqpLoggerSettings?: IUserAmqpConfig,
+    useConsoleLogger?: boolean,
     logLevel?: LOGLEVEL,
 }
 
-export interface UserSettings extends ISettings, GlobalPoolSettings {
+export interface UserSettings extends ISettings {
     hosts: UserPoolSettings[],
+    globalPoolSettings: GlobalUserPoolSettings,
     redis?: Redis | Cluster
 }
 
-export interface DefaultSettings extends ISettings, PoolSettings {
-    port: string,
-    connectionLimit: number,
-    queryTimeout: number, // Time in ms
-    errorRetryCount: number,
-    validators: ValidatorParams[],
-    loadFactors: LoadFactorParams[],
-    timerCheckRange: [number, number], // Time in ms
-    timerCheckMultiplier: number, // Time in ms
+export interface DefaultSettings extends ISettings {
+    globalPoolSettings: DefaultPoolSettings,
     useAmqpLogger: boolean,
+    useConsoleLogger: boolean,
     logLevel: LOGLEVEL,
     redisSettings: DefaultRedisSettings,
     amqpLoggerSettings: IAmqpConfig
@@ -75,7 +87,7 @@ export interface RedisSettings {
     clearOnStart?: boolean
 }
 
-export interface DefaultRedisSettings extends RedisSettings{
+export interface DefaultRedisSettings extends RedisSettings {
     keyPrefix: string,
     expire: number,
     expiryMode: string,

@@ -8,7 +8,6 @@ import Logger from "../utils/Logger";
 
 import { format as MySQLFormat } from 'mysql2';
 import { Pool } from "../pool/Pool";
-import { Settings } from "../utils/Settings";
 import { ClusterHashing } from "./ClusterHashing";
 import MetricNames from "../metrics/MetricNames";
 import Metrics from "../metrics/Metrics";
@@ -29,17 +28,9 @@ export class GaleraCluster {
      * @param userSettings global user settings
      */
     constructor(userSettings: UserSettings) {
-        userSettings = Settings.mixSettings(userSettings);
-
-        // enable amqp logger when user enable it in the settings
-        if (userSettings.useAmqpLogger) {
-            Logger.enableAMQPLogger(userSettings.amqpLoggerSettings);
-        }
-        Redis.init(userSettings.redis, userSettings.redisSettings);
-
         Logger.debug("Configuring cluster...");
 
-        this.errorRetryCount = userSettings.errorRetryCount;
+        this.errorRetryCount = userSettings.globalPoolSettings.errorRetryCount;
         const poolIds: number[] = this._sortPoolIds(userSettings.hosts);
 
         userSettings.hosts.forEach(poolSettings => {

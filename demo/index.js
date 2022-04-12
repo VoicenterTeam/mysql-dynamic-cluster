@@ -17,30 +17,32 @@ const cfg = {
             host: process.env.DB_HOST3
         }
     ],
-    // Configure global settings for all pools
-    user: process.env.DB_USERNAME,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_DATABASE,
-    /**
-     * Validators to set that pool is valid and ready for work
-     * key - variable_name in mysql global status
-     * operator - operator to compare (=, <, >). For text only '='
-     * value - what value must be to complete pool check
-     */
-    validators: [
-        { key: 'wsrep_ready', operator: '=', value: 'ON' },
-        { key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' },
-        { key: 'available_connection_count', operator: '>', value: 50 }
-    ],
-    /**
-     * Load factors to sort the pools depends on load
-     * key - variable_name in mysql global status
-     * multiplier - multiply value of corresponding variable_name in mysql global status selected by key
-     */
-    loadFactors: [
-        { key: 'Connections', multiplier: 2 },
-        { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
-    ],
+    globalPoolSettings: {
+        // Configure global settings for all pools
+        user: process.env.DB_USERNAME,
+        password: process.env.DB_PASSWORD,
+        database: process.env.DB_DATABASE,
+        /**
+         * Validators to set that pool is valid and ready for work
+         * key - variable_name in mysql global status
+         * operator - operator to compare (=, <, >). For text only '='
+         * value - what value must be to complete pool check
+         */
+        validators: [
+            { key: 'wsrep_ready', operator: '=', value: 'ON' },
+            { key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' },
+            { key: 'available_connection_count', operator: '>', value: 50 }
+        ],
+        /**
+         * Load factors to sort the pools depends on load
+         * key - variable_name in mysql global status
+         * multiplier - multiply value of corresponding variable_name in mysql global status selected by key
+         */
+        loadFactors: [
+            { key: 'Connections', multiplier: 2 },
+            { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
+        ],
+    },
     /**
      * Level for logger. Default REGULAR
      * FULL - show all log information
@@ -49,6 +51,11 @@ const cfg = {
      */
     logLevel: galeraCluster.LOGLEVEL.FULL,
     useAmqpLogger: true,
+    useConsoleLogger: false,
+    amqpLoggerSettings: {
+        log_lvl: 4,
+        self_log_lvl: 4
+    },
     redis: new RedisLib()
 }
 

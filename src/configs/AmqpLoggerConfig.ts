@@ -1,7 +1,7 @@
 /**
  * Created by Bohdan on Sep, 2021
  */
-import { IAmqpConfig } from "../types/AmqpInterfaces";
+import { IAmqpConfig, IMethDict } from "../types/AmqpInterfaces";
 
 const AmqpLoggerConfig: IAmqpConfig = {
     log_amqp: [
@@ -32,15 +32,16 @@ const AmqpLoggerConfig: IAmqpConfig = {
         LoggerSpecificData: "localhost",
         LogSpecificData: "ThisLogType"
     },
-    meth_dict: {
-        error: 0,
-        warn: 1,
-        info: 2,
-        debug: 3,
-        trace: 4
-    },
-    log_lvl: 3, // #TODO: check how works log lvl for amqp
-    // self_log_lvl: 3
+    log_lvl: 1,
+    self_log_lvl: 1
 };
 
-export default AmqpLoggerConfig;
+const MethDict: IMethDict = {
+    error: 0,
+    warn: 1,
+    info: 2,
+    debug: 3,
+    trace: 4
+}
+
+export { AmqpLoggerConfig, MethDict };

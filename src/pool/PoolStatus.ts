@@ -3,7 +3,7 @@
  */
 
 import { GlobalStatusResult } from "../types/PoolInterfaces";
-import { UserPoolSettings } from "../types/SettingsInterfaces";
+import {ITimerCheckRange, UserPoolSettings} from "../types/SettingsInterfaces";
 import Logger from "../utils/Logger";
 import { Utils } from "../utils/Utils";
 import { Timer } from "../utils/Timer";
@@ -38,7 +38,7 @@ export class PoolStatus {
     // Time to next check status. Time in ms
     private _nextCheckTime: number = 10000;
     // Check status time range [min, max]
-    private readonly timerCheckRange: [number, number];
+    private readonly timerCheckRange: ITimerCheckRange;
     // Check status multiplier to change next time check depends on error or success
     private readonly timerCheckMultiplier: number;
 
@@ -115,7 +115,7 @@ export class PoolStatus {
         } else {
             this._nextCheckTime *= this.timerCheckMultiplier;
         }
-        this._nextCheckTime = Utils.clamp(this._nextCheckTime, this.timerCheckRange[0], this.timerCheckRange[1])
+        this._nextCheckTime = Utils.clamp(this._nextCheckTime, this.timerCheckRange.start, this.timerCheckRange.end)
 
         this._timer.start(this._nextCheckTime);
     }
