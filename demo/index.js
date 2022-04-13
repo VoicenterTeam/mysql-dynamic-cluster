@@ -8,6 +8,7 @@ const RedisLib = require('ioredis');
 
 const cfg = {
     // configuration for each pool. 2 pools are minimum
+    clusterName: 'demo',
     hosts: [
         {
             host: process.env.DB_HOST2
@@ -51,10 +52,9 @@ const cfg = {
      */
     logLevel: galeraCluster.LOGLEVEL.FULL,
     useAmqpLogger: true,
-    useConsoleLogger: false,
+    useConsoleLogger: true,
     amqpLoggerSettings: {
-        log_lvl: 4,
-        self_log_lvl: 4
+        log_lvl: 4
     },
     redis: new RedisLib()
 }

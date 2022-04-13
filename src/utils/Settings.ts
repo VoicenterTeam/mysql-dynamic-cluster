@@ -2,11 +2,12 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { UserPoolSettings, UserSettings } from "../types/SettingsInterfaces";
+import { UserSettings } from "../types/SettingsInterfaces";
+import { UserPoolSettings } from "../types/PoolSettingsInterfaces";
 import Logger from "./Logger";
 import defaultSettings from "../configs/DefaultSettings";
 import deepmerge from "deepmerge";
-import { isPlainObject } from 'is-plain-object'
+import { isPlainObject } from 'is-plain-object';
 
 export class Settings {
     /**

@@ -4,17 +4,19 @@
 
 import { Redis as RedisLib, Cluster, ValueType, Ok } from "ioredis";
 import Logger from "./Logger";
-import { RedisSettings } from "../types/SettingsInterfaces";
 import { createHash } from "crypto";
+import { RedisSettings } from "../types/RedisInterfaces";
 
 class Redis {
 	private redis: RedisLib | Cluster;
 	private isReady: boolean = false;
 	private redisSettings: RedisSettings;
 
-	init(newRedis: RedisLib | Cluster, redisSettings: RedisSettings): void {
+	init(newRedis: RedisLib | Cluster, clusterName: string, redisSettings: RedisSettings): void {
+		// #TODO: Redis not initializing and check clusterName for metrics
 		this.redis = newRedis;
 		this.redisSettings = redisSettings;
+		this.redisSettings.keyPrefix = `${clusterName}_${this.redisSettings.keyPrefix}`;
 		this.connectEvents();
 		Logger.debug("Initialized Redis");
 	}
@@ -32,7 +34,7 @@ class Redis {
 	}
 
 	private connectEvents(): void {
-		if(!this.redis) return;
+		if(!this.isEnabled()) return;
 		this.redis?.on("ready", () => {
 			this.isReady = true;
 			if (this.redisSettings.clearOnStart) this.clearAll();

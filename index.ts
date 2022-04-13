@@ -1,9 +1,10 @@
 import { UserSettings } from "./src/types/SettingsInterfaces";
 import { GaleraCluster } from "./src/cluster/GaleraCluster";
-import { LOGLEVEL } from './src/types/SettingsInterfaces';
+import { LOGLEVEL } from './src/types/AmqpInterfaces';
 import Logger from "./src/utils/Logger";
 import { Settings } from "./src/utils/Settings";
 import Redis from "./src/utils/Redis";
+import Metrics from "./src/metrics/Metrics";
 
 function createPoolCluster(userSettings: UserSettings): GaleraCluster {
     userSettings = Settings.mixSettings(userSettings);
@@ -12,7 +13,7 @@ function createPoolCluster(userSettings: UserSettings): GaleraCluster {
 }
 
 function init(userSettings: UserSettings): void {
-    Logger.init(userSettings.useConsoleLogger);
+    Logger.init(userSettings.useConsoleLogger, userSettings.clusterName);
     if (userSettings.logLevel !== undefined) {
         Logger.setLogLevel(userSettings.logLevel);
     }
@@ -20,7 +21,8 @@ function init(userSettings: UserSettings): void {
         Logger.enableAMQPLogger(userSettings.amqpLoggerSettings);
     }
 
-    Redis.init(userSettings.redis, userSettings.redisSettings);
+    Metrics.init(userSettings.clusterName);
+    Redis.init(userSettings.redis, userSettings.clusterName, userSettings.redisSettings);
     Logger.info("Initialized app");
 }
 

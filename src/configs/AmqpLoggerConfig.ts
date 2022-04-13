@@ -1,9 +1,9 @@
 /**
  * Created by Bohdan on Sep, 2021
  */
-import { IAmqpConfig, IMethDict } from "../types/AmqpInterfaces";
+import { IDefaultAmqpConfig, IMethDict } from "../types/AmqpInterfaces";
 
-const AmqpLoggerConfig: IAmqpConfig = {
+const AmqpLoggerConfig: IDefaultAmqpConfig = {
     log_amqp: [
         {
             connection: {
@@ -17,7 +17,7 @@ const AmqpLoggerConfig: IAmqpConfig = {
             },
             channel: {
                 directives: "ae",
-                exchange_name: "TestE",
+                exchange_name: "MDC",
                 exchange_type: "fanout",
                 exchange_durable: true,
                 topic: "",

@@ -4,13 +4,13 @@
 
 import mysql from "mysql2";
 import Logger from "../utils/Logger";
-import { UserPoolSettings } from "../types/SettingsInterfaces";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
 import MetricNames from "../metrics/MetricNames";
 import { QueryOptions, QueryResult } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
 import Redis from "../utils/Redis";
+import { UserPoolSettings } from "../types/PoolSettingsInterfaces";
 
 // AKA galera node
 export class Pool {
@@ -35,13 +35,15 @@ export class Pool {
 
     /**
      * @param settings pool settings
+     * @param clusterName cluster name used for prefix
      */
-    constructor(settings: UserPoolSettings) {
+    constructor(settings: UserPoolSettings, clusterName: string) {
         this.id = settings.id;
         this.host = settings.host;
         this.port = settings.port;
         this.name = settings.name ? settings.name : `${this.host}:${this.port}`
-        Logger.debug("configure pool in host " + this.host);
+        this.name = `${clusterName}_${this.name}`;
+        Logger.debug(`Configure pool named ${this.name}`);
 
         this.user = settings.user;
         this.password = settings.password;
@@ -120,7 +122,7 @@ export class Pool {
         this.status.stopTimerCheck();
         Events.emit('pool_disconnected');
 
-        Logger.info("pool in host " + this.host + " closed");
+        Logger.info("pool named " + this.name + " closed");
     }
 
     /**
@@ -193,8 +195,14 @@ export class Pool {
      * @param sqls array of sql queries
      * @param queryOptions query options like timeout, database etc.
      */
-    public async multiStatementQuery<T extends QueryResult>(sqls: string[], queryOptions: QueryOptions = { timeout: this.queryTimeout, database: this.database }): Promise<T[]> {
+    public async multiStatementQuery<T extends QueryResult>(sqls: string[], queryOptions: QueryOptions): Promise<T[]> {
         return new Promise((resolve, reject) => {
+            queryOptions = {
+                timeout: this.queryTimeout,
+                database: this.database,
+                ...queryOptions
+            }
+
             Metrics.inc(MetricNames.pools.allQueries);
             Metrics.mark(MetricNames.pools.queryPerSecond);
             const results: T[] = [];

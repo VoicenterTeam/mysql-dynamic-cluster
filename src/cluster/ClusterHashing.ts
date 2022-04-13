@@ -8,27 +8,28 @@ import { Timer } from "../utils/Timer";
 import { ServiceNodeMap } from "../types/PoolInterfaces";
 import { readFileSync, readdirSync }  from 'fs'
 import { join, parse } from "path";
+import { ClusterHashingSettings } from "../types/ClusterHashingInterfaces";
 
 export class ClusterHashing {
+    public serviceNodeMap: ServiceNodeMap;
+
     private _cluster: GaleraCluster;
     private _timer: Timer;
 
     // Next time for hashing check
-    private readonly _nextCheckTime: number = 5000;
-    private readonly _database: string = "mysql_dynamic_cluster";
-
-    public serviceNodeMap: ServiceNodeMap;
+    private readonly _nextCheckTime: number;
+    private readonly _database: string;
 
     /**
      * @param cluster cluster for what hashing data
-     * @param timeCheck time to next time check
-     * @param database database in what helper data will be saved
+     * @param clusterName cluster name used for prefix
+     * @param options cluster settings
      */
-    constructor(cluster: GaleraCluster, timeCheck?: number, database?: string) {
+    constructor(cluster: GaleraCluster, clusterName: string, options: ClusterHashingSettings) {
         Logger.debug("Configuring hashing in cluster...");
         this._cluster = cluster;
-        if (timeCheck) this._nextCheckTime = timeCheck;
-        if (database) this._database = database;
+        this._nextCheckTime = options.nextCheckTime;
+        this._database = `${clusterName}_${options.dbName}`;
 
         this._timer = new Timer(this.checkHashing.bind(this));
         Logger.debug("Cluster hashing configured");

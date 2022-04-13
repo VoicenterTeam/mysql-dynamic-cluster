@@ -3,7 +3,6 @@
  */
 
 import { GlobalStatusResult } from "../types/PoolInterfaces";
-import {ITimerCheckRange, UserPoolSettings} from "../types/SettingsInterfaces";
 import Logger from "../utils/Logger";
 import { Utils } from "../utils/Utils";
 import { Timer } from "../utils/Timer";
@@ -12,6 +11,7 @@ import { Validator } from "./Validator";
 import { LoadFactor } from "./LoadFactor";
 import Metrics from "../metrics/Metrics";
 import MetricNames from "../metrics/MetricNames";
+import { ITimerCheckRange, UserPoolSettings } from "../types/PoolSettingsInterfaces";
 
 export class PoolStatus {
     public active: boolean;

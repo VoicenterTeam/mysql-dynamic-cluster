@@ -2,7 +2,7 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { UserPoolSettings, UserSettings } from "../types/SettingsInterfaces";
+import { UserSettings } from "../types/SettingsInterfaces";
 import { QueryOptions, QueryValues, ClusterEvent, QueryResult } from '../types/PoolInterfaces'
 import Logger from "../utils/Logger";
 
@@ -13,16 +13,19 @@ import MetricNames from "../metrics/MetricNames";
 import Metrics from "../metrics/Metrics";
 import Events from "../utils/Events";
 import Redis from "../utils/Redis";
+import { UserPoolSettings } from "../types/PoolSettingsInterfaces";
 
 export class GaleraCluster {
+    public connected: boolean = false;
+
     private _pools: Pool[] = [];
     public get pools(): Pool[] {
         return this._pools;
     }
+
     private readonly _clusterHashing: ClusterHashing;
+    private readonly _errorRetryCount: number; // retry count after query error
     private _queryTime: number = 1000;
-    private readonly errorRetryCount: number; // retry count after query error
-    public connected: boolean = false;
 
     /**
      * @param userSettings global user settings
@@ -30,7 +33,7 @@ export class GaleraCluster {
     constructor(userSettings: UserSettings) {
         Logger.debug("Configuring cluster...");
 
-        this.errorRetryCount = userSettings.globalPoolSettings.errorRetryCount;
+        this._errorRetryCount = userSettings.globalPoolSettings.errorRetryCount;
         const poolIds: number[] = this._sortPoolIds(userSettings.hosts);
 
         userSettings.hosts.forEach(poolSettings => {
@@ -40,12 +43,11 @@ export class GaleraCluster {
             }
 
             this._pools.push(
-                new Pool(poolSettings)
+                new Pool(poolSettings, userSettings.clusterName)
             )
         })
 
-
-        this._clusterHashing = new ClusterHashing(this);
+        this._clusterHashing = new ClusterHashing(this, userSettings.clusterName, userSettings.clusterHashing);
 
         Logger.info("Cluster configuration finished");
     }
@@ -200,7 +202,7 @@ export class GaleraCluster {
      * @private
      */
     private _maxRetryCount(maxRetry: number, activePoolsLength: number): number {
-        let retryCount = maxRetry && maxRetry > 0 ? maxRetry : this.errorRetryCount;
+        let retryCount = maxRetry && maxRetry > 0 ? maxRetry : this._errorRetryCount;
         if (retryCount > activePoolsLength) {
             Logger.warn("Active pools less than error retry count");
         }

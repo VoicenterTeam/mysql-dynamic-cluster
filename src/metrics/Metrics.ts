@@ -14,6 +14,15 @@ import Meter from "@pm2/io/build/main/utils/metrics/meter";
  */
 class Metrics {
     private metricsRepository: MetricsRepository = {};
+    private clusterName: string = "";
+
+    /**
+     * Initialize metrics
+     * @param clusterName cluster name used for prefix in metric names
+     */
+    public init(clusterName: string) {
+        this.clusterName = clusterName;
+    }
 
     /**
      * set value in metric with type Metric
@@ -24,7 +33,8 @@ class Metrics {
         if (!Metrics._isMetricTypeValid(metric.type, MetricType.METRIC)) return;
 
         this._createMetric(metric);
-        (this.metricsRepository[metric.key] as Gauge).set(value);
+        const metricKey = this._getMetricKey(metric);
+        (this.metricsRepository[metricKey] as Gauge).set(value);
     }
 
     /**
@@ -35,7 +45,8 @@ class Metrics {
         if (!Metrics._isMetricTypeValid(metric.type, MetricType.COUNTER)) return;
 
         this._createMetric(metric);
-        (this.metricsRepository[metric.key] as Counter).inc();
+        const metricKey = this._getMetricKey(metric);
+        (this.metricsRepository[metricKey] as Counter).inc();
     }
 
     /**
@@ -46,7 +57,8 @@ class Metrics {
         if (!Metrics._isMetricTypeValid(metric.type, MetricType.COUNTER)) return;
 
         this._createMetric(metric);
-        (this.metricsRepository[metric.key] as Counter).dec();
+        const metricKey = this._getMetricKey(metric);
+        (this.metricsRepository[metricKey] as Counter).dec();
     }
 
     /**
@@ -57,7 +69,8 @@ class Metrics {
         if (!Metrics._isMetricTypeValid(metric.type, MetricType.METER)) return;
 
         this._createMetric(metric);
-        (this.metricsRepository[metric.key] as Meter).mark();
+        const metricKey = this._getMetricKey(metric);
+        (this.metricsRepository[metricKey] as Meter).mark();
     }
 
     /**
@@ -65,17 +78,26 @@ class Metrics {
      * @param metricGroup group of metrics
      */
     public activateMetrics(metricGroup: MetricGroup) {
-        for (const [, value] of Object.entries(metricGroup)) {
-            switch (value.type) {
+        for (const [, metric] of Object.entries(metricGroup)) {
+            switch (metric.type) {
                 case MetricType.METRIC:
-                    this.set(value, 0);
+                    this.set(metric, 0);
                     break;
                 case MetricType.COUNTER:
-                    this.inc(value);
-                    this.dec(value);
+                    this.inc(metric);
+                    this.dec(metric);
                     break;
             }
         }
+    }
+
+    /**
+     * Get formatted metric key with prefix by cluster name
+     * @param metric metric object
+     * @private
+     */
+    private _getMetricKey(metric: Metric): string {
+        return `${this.clusterName}_${metric.key}`;
     }
 
     /**
@@ -98,8 +120,8 @@ class Metrics {
      * @private
      */
     private _createMetric(metric: Metric) {
-        const metricKey = metric.key;
-        const metricName = metric.name ? metric.name : metricKey;
+        const metricKey = this._getMetricKey(metric);
+        const metricName = metric.name ? `[${this.clusterName}] ${metric.name}` : metricKey;
         if (this.metricsRepository[metricKey]) return;
 
         switch (metric.type) {

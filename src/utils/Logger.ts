@@ -2,16 +2,16 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { LOGLEVEL } from '../types/SettingsInterfaces';
 import amqp_logger_lib from '@voicenter-team/amqp-logger';
 
 import defaultSettings from '../configs/DefaultSettings';
 import { MethDict } from '../configs/AmqpLoggerConfig';
-import { IUserAmqpConfig } from "../types/AmqpInterfaces";
+import { IAmqpConfig, IUserAmqpConfig, LOGLEVEL } from "../types/AmqpInterfaces";
 
 let amqpLogger = null;
 // prefix for each log message
-const prefix: string = '[mysql galera]';
+let prefix: string = '[mysql galera]';
+let clusterName: string = "mdc";
 
 /**
  * Output messages to console and rabbitmq
@@ -25,21 +25,32 @@ const Logger = {
     /**
      * Initialize logger
      * @param useConsole enable logger in a console
+     * @param newClusterName cluster name used for prefix
      */
-    init(useConsole: boolean) {
+    init(useConsole: boolean, newClusterName: string) {
         this.useConsole = useConsole;
+        clusterName = newClusterName;
+        prefix = `[${clusterName}]`;
     },
     /**
      * Enable amqp logger when needed. It creates connection to it
      * @param amqpSettings amqp_logger config
      */
     enableAMQPLogger(amqpSettings: IUserAmqpConfig) {
-        const loggerConfig = {
+        const loggerConfig: IAmqpConfig = {
             ...amqpSettings,
             meth_dict: MethDict
         }
-        amqpLogger = amqp_logger_lib.pastash(loggerConfig)
+        this.addPrefixAMQP(loggerConfig);
+
+        amqpLogger = amqp_logger_lib.pastash(loggerConfig);
         Logger.info("AMQP logger enabled");
+    },
+    addPrefixAMQP(amqpConfig: IAmqpConfig) {
+        amqpConfig.log_amqp = amqpConfig.log_amqp.map(amqpLog => {
+            amqpLog.channel.exchange_name = `${clusterName}_${amqpLog.channel.exchange_name}`;
+            return amqpLog;
+        })
     },
     /**
      * Change log level
