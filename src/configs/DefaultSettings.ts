@@ -37,7 +37,7 @@ const defaultSettings: DefaultSettings = {
   redisSettings: {
     algorithm: "md5",
     encoding: "base64",
-    keyPrefix: "m_d_c:",
+    keyPrefix: "mdc:",
     expiryMode: "EX",
     expire: 100,
     clearOnStart: false
