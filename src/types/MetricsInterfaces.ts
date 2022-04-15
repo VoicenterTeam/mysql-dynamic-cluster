@@ -24,3 +24,14 @@ export interface Metric {
 export interface MetricsRepository {
     [metric: string]: Gauge | Meter | Counter
 }
+
+export interface MetricOptions {
+    pool?: {
+        id: number,
+        name: string
+    },
+    service?: {
+        id: number,
+        name: string
+    }
+}

@@ -42,7 +42,6 @@ export class Pool {
         this.host = settings.host;
         this.port = settings.port;
         this.name = settings.name ? settings.name : `${this.host}:${this.port}`
-        this.name = `${clusterName}_${this.name}`;
         Logger.debug(`Configure pool named ${this.name}`);
 
         this.user = settings.user;
@@ -72,7 +71,6 @@ export class Pool {
         })
 
         this.status.active = true;
-        Metrics.activateMetrics(MetricNames.pools);
         this._connectEvents();
         await this.status.checkStatus();
 
@@ -139,8 +137,15 @@ export class Pool {
                 ...queryOptions
             }
 
-            Metrics.inc(MetricNames.pools.allQueries);
-            Metrics.mark(MetricNames.pools.queryPerSecond);
+            const poolMetricOption = {
+                pool: {
+                    id: this.id,
+                    name: this.name
+                }
+            }
+
+            Metrics.inc(MetricNames.pool.allQueries, poolMetricOption);
+            Metrics.mark(MetricNames.pool.queryPerMinute, poolMetricOption);
 
             if (queryOptions.redis) {
                 const redisResult = await Redis.get(sql);
@@ -153,13 +158,13 @@ export class Pool {
 
             this._pool.getConnection((err, conn) => {
                 if (err) {
-                    Metrics.inc(MetricNames.pools.errorQueries);
+                    Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                     conn?.release();
                     reject(err);
                 }
 
                 if (!conn) {
-                    Metrics.inc(MetricNames.pools.errorQueries);
+                    Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                     conn?.release();
                     reject(new Error("Can't find connection. Maybe it was unexpectedly closed."));
                 }
@@ -168,7 +173,7 @@ export class Pool {
                 Logger.debug("Changing database to " + queryOptions.database);
                 conn?.changeUser({ database: queryOptions.database }, (error) => {
                     if (error) {
-                        Metrics.inc(MetricNames.pools.errorQueries);
+                        Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                         conn.release();
                         reject(error);
                     }
@@ -177,12 +182,12 @@ export class Pool {
                 Logger.debug(`Query in pool by host ${this.host}`);
                 conn?.query({ sql, timeout: queryOptions.timeout }, (error, result: T) => {
                     if (error) {
-                        Metrics.inc(MetricNames.pools.errorQueries);
+                        Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                         conn.release();
                         reject(error);
                     }
                     conn.release();
-                    Metrics.inc(MetricNames.pools.successfulQueries);
+                    Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
                     if (queryOptions.redis) Redis.set(sql, JSON.stringify(result));
                     resolve(result);
                 });
@@ -203,18 +208,25 @@ export class Pool {
                 ...queryOptions
             }
 
-            Metrics.inc(MetricNames.pools.allQueries);
-            Metrics.mark(MetricNames.pools.queryPerSecond);
+            const poolMetricOption = {
+                pool: {
+                    id: this.id,
+                    name: this.name
+                }
+            }
+
+            Metrics.inc(MetricNames.pool.allQueries, poolMetricOption);
+            Metrics.mark(MetricNames.pool.queryPerMinute, poolMetricOption);
             const results: T[] = [];
 
             this._pool.getConnection((err, conn) => {
                 if (err) {
-                    Metrics.inc(MetricNames.pools.errorQueries);
+                    Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                     reject(err);
                 }
 
                 if (!conn) {
-                    Metrics.inc(MetricNames.pools.errorQueries);
+                    Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                     reject(new Error("Can't find connection. Maybe it was unexpectedly closed."));
                 }
 
@@ -222,7 +234,7 @@ export class Pool {
                 Logger.debug("Changing database to " + queryOptions.database);
                 conn?.changeUser({ database: queryOptions.database }, (error) => {
                     if (error) {
-                        Metrics.inc(MetricNames.pools.errorQueries);
+                        Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                         conn.release();
                         reject(error);
                     }
@@ -231,7 +243,7 @@ export class Pool {
                 Logger.debug("Start transaction in pool by host " + this.host);
                 conn?.beginTransaction(error => {
                     if (error) {
-                        Metrics.inc(MetricNames.pools.errorQueries);
+                        Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                         conn.release();
                         reject(error);
                     }
@@ -240,12 +252,12 @@ export class Pool {
                         conn.query({ sql, timeout: queryOptions.timeout }, (errorQ, result: T) => {
                             if (errorQ) {
                                 conn.rollback(() => 0);
-                                Metrics.inc(MetricNames.pools.errorQueries);
+                                Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                                 conn.release();
                                 reject(errorQ);
                             }
                             results.push(result);
-                            Metrics.inc(MetricNames.pools.successfulQueries);
+                            Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
                         });
                     })
 
@@ -253,7 +265,7 @@ export class Pool {
                     conn.commit(errorC => {
                         if (errorC) {
                             conn.rollback(() => 0);
-                            Metrics.inc(MetricNames.pools.errorQueries);
+                            Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                             conn.release();
                             reject(errorC);
                         }

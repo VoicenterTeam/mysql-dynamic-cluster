@@ -20,12 +20,12 @@ const MetricNames = {
         },
         successfulQueries: {
             key: 'cluster_successful_queries',
-            name: 'Cluster all successful queries',
+            name: 'Cluster successful queries',
             type: MetricType.COUNTER
         },
         errorQueries: {
             key: 'cluster_error_queries',
-            name: 'Cluster all error queries',
+            name: 'Cluster error queries',
             type: MetricType.COUNTER
         },
         queryTime: {
@@ -33,56 +33,56 @@ const MetricNames = {
             name: 'Cluster query time',
             type: MetricType.METRIC
         },
-        queryPerSecond: {
+        queryPerMinute: {
             key: 'cluster_query_per_minute',
             name: 'Cluster query per minute',
             type: MetricType.METER
         }
     },
-    pools: {
+    pool: {
         allQueries: {
-            key: 'pools_all_queries',
-            name: 'Pools all queries',
+            key: 'pool_all_queries',
+            name: 'Pool all queries',
             type: MetricType.COUNTER
         },
         successfulQueries: {
-            key: 'pools_successful_queries',
-            name: 'Pools all successful queries',
+            key: 'pool_successful_queries',
+            name: 'Pool successful queries',
             type: MetricType.COUNTER
         },
         errorQueries: {
-            key: 'pools_error_queries',
-            name: 'Pools all error queries',
+            key: 'pool_error_queries',
+            name: 'Pool error queries',
             type: MetricType.COUNTER
         },
         queryTime: {
-            key: 'pools_query_time',
-            name: 'Pools query time',
+            key: 'pool_query_time',
+            name: 'Pool query time',
             type: MetricType.METRIC
         },
-        queryPerSecond: {
-            key: 'pools_query_per_minute',
-            name: 'Pools query per minute',
+        queryPerMinute: {
+            key: 'pool_query_per_minute',
+            name: 'Pool query per minute',
             type: MetricType.METER
         }
-    },
-    services: {
-        allQueries: {
-            key: 'services_all_queries',
-            name: 'Services all queries',
-            type: MetricType.COUNTER
-        },
-        successfulQueries: {
-            key: 'services_successful_queries',
-            name: 'Services all successful queries',
-            type: MetricType.COUNTER
-        },
-        errorQueries: {
-            key: 'services_error_queries',
-            name: 'Services all error queries',
-            type: MetricType.COUNTER
-        }
     }
+    // services: {
+    //     allQueries: {
+    //         key: 'services_all_queries',
+    //         name: 'Services all queries',
+    //         type: MetricType.COUNTER
+    //     },
+    //     successfulQueries: {
+    //         key: 'services_successful_queries',
+    //         name: 'Services all successful queries',
+    //         type: MetricType.COUNTER
+    //     },
+    //     errorQueries: {
+    //         key: 'services_error_queries',
+    //         name: 'Services all error queries',
+    //         type: MetricType.COUNTER
+    //     }
+    // }
 }
 
 export default MetricNames;

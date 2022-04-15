@@ -11,6 +11,7 @@ import { DefaultPoolSettings, GlobalUserPoolSettings, UserPoolSettings } from ".
 interface ISettings {
     clusterHashing?: ClusterHashingSettings,
     redisSettings?: RedisSettings,
+    showMetricKeys?: boolean,
     useAmqpLogger?: boolean,
     amqpLoggerSettings?: IUserAmqpConfig,
     useConsoleLogger?: boolean,
@@ -27,6 +28,7 @@ export interface UserSettings extends ISettings {
 export interface DefaultSettings extends ISettings {
     globalPoolSettings: DefaultPoolSettings,
     clusterHashing: DefaultClusterHashingSettings,
+    showMetricKeys: boolean,
     useAmqpLogger: boolean,
     useConsoleLogger: boolean,
     logLevel: LOGLEVEL,

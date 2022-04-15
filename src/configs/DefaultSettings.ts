@@ -31,6 +31,7 @@ const defaultSettings: DefaultSettings = {
     nextCheckTime: 5000,
     dbName: "mysql_dynamic_cluster"
   },
+  showMetricKeys: false,
   logLevel: LOGLEVEL.REGULAR,
   useAmqpLogger: true,
   useConsoleLogger: true,

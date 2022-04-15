@@ -9,8 +9,6 @@ import { Timer } from "../utils/Timer";
 import { Pool } from "./Pool";
 import { Validator } from "./Validator";
 import { LoadFactor } from "./LoadFactor";
-import Metrics from "../metrics/Metrics";
-import MetricNames from "../metrics/MetricNames";
 import { ITimerCheckRange, UserPoolSettings } from "../types/PoolSettingsInterfaces";
 
 export class PoolStatus {
@@ -84,13 +82,14 @@ export class PoolStatus {
             if (!this.active) return;
 
             Logger.debug("checking pool status in host: " + this._pool.host);
-            const timeBefore = new Date().getTime();
+            // const timeBefore = new Date().getTime();
 
             const result = await this._pool.query(`SHOW GLOBAL STATUS;`) as GlobalStatusResult[];
 
-            const timeAfter = new Date().getTime();
-            this.queryTime = Math.abs(timeAfter - timeBefore) / 1000;
-            Metrics.set(MetricNames.pools.queryTime, this.queryTime);
+            // #TODO: move check for query time to the pool query
+            // const timeAfter = new Date().getTime();
+            // this.queryTime = Math.abs(timeAfter - timeBefore) / 1000;
+            // Metrics.set(MetricNames.pool.queryTime, this.queryTime);
 
             this._isValid = this._validator.check(result);
             Logger.debug("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())

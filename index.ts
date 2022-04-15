@@ -21,7 +21,7 @@ function init(userSettings: UserSettings): void {
         Logger.enableAMQPLogger(userSettings.amqpLoggerSettings);
     }
 
-    Metrics.init(userSettings.clusterName);
+    Metrics.init(userSettings.clusterName, userSettings.showMetricKeys);
     Redis.init(userSettings.redis, userSettings.clusterName, userSettings.redisSettings);
     Logger.info("Initialized app");
 }

@@ -72,8 +72,6 @@ export class GaleraCluster {
     public connect(): Promise<void> {
         return new Promise(resolve => {
             Logger.debug("connecting all pools");
-            Metrics.activateMetrics(MetricNames.cluster);
-            Metrics.activateMetrics(MetricNames.services);
             this._pools.forEach((pool) => {
                 pool.connect((err) => {
                     if (err) Logger.error(err.message)
@@ -143,7 +141,7 @@ export class GaleraCluster {
         for (let i = 0; i < retryCount; i++) {
             try {
                 Logger.debug("Query use host: " + activePools[i].host);
-                Metrics.mark(MetricNames.cluster.queryPerSecond);
+                Metrics.mark(MetricNames.cluster.queryPerMinute);
                 return await this._queryRequest(sql, activePools[i], queryOptions);
             } catch (e) {
                 error = e;
@@ -171,7 +169,7 @@ export class GaleraCluster {
             const timeBefore = new Date().getTime();
 
             if (queryOptions?.serviceId) {
-                Metrics.inc(MetricNames.services.allQueries);
+                // Metrics.inc(MetricNames.services.allQueries);
             }
 
             const result = await pool.query(sql, queryOptions) as T;
@@ -181,13 +179,13 @@ export class GaleraCluster {
             Metrics.set(MetricNames.cluster.queryTime, this._queryTime);
             Metrics.inc(MetricNames.cluster.successfulQueries);
             if (queryOptions?.serviceId) {
-                Metrics.inc(MetricNames.services.successfulQueries);
+                // Metrics.inc(MetricNames.services.successfulQueries);
                 this._clusterHashing?.updateServiceForNode(queryOptions.serviceId, pool.id);
             }
             return result;
         } catch (e) {
             if (queryOptions?.serviceId) {
-                Metrics.inc(MetricNames.services.errorQueries);
+                // Metrics.inc(MetricNames.services.errorQueries);
                 this._clusterHashing?.updateServiceForNode(queryOptions.serviceId, pool.id);
             }
             Metrics.inc(MetricNames.cluster.errorQueries);

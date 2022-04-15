@@ -3,7 +3,7 @@
  */
 
 import pm2io from '@pm2/io'
-import { Metric, MetricGroup, MetricsRepository, MetricType } from "../types/MetricsInterfaces";
+import { Metric, MetricGroup, MetricOptions, MetricsRepository, MetricType } from "../types/MetricsInterfaces";
 import Logger from "../utils/Logger";
 import Gauge from "@pm2/io/build/main/utils/metrics/gauge";
 import Counter from "@pm2/io/build/main/utils/metrics/counter";
@@ -15,66 +15,69 @@ import Meter from "@pm2/io/build/main/utils/metrics/meter";
 class Metrics {
     private metricsRepository: MetricsRepository = {};
     private clusterName: string = "";
+    private showKeys: boolean;
 
     /**
      * Initialize metrics
      * @param clusterName cluster name used for prefix in metric names
+     * @param showKeys show keys instead names
      */
-    public init(clusterName: string) {
+    public init(clusterName: string, showKeys: boolean) {
         this.clusterName = clusterName;
+        this.showKeys = showKeys;
     }
 
     /**
      * set value in metric with type Metric
      * @param metric metric object
      * @param value the value what need to change
+     * @param options extra options to metrics like pool name or service name
      */
-    public set(metric: Metric, value: number) {
-        if (!Metrics._isMetricTypeValid(metric.type, MetricType.METRIC)) return;
+    public set(metric: Metric, value: number, options?: MetricOptions) {
+        if (!Metrics._isMetricTypeValid(metric, MetricType.METRIC)) return;
 
-        this._createMetric(metric);
-        const metricKey = this._getMetricKey(metric);
+        const metricKey = this._createMetric(metric, options);
         (this.metricsRepository[metricKey] as Gauge).set(value);
     }
 
     /**
      * Increase value by 1 in metric with type Counter
      * @param metric metric object
+     * @param options extra options to metrics like pool name or service name
      */
-    public inc(metric: Metric) {
-        if (!Metrics._isMetricTypeValid(metric.type, MetricType.COUNTER)) return;
+    public inc(metric: Metric, options?: MetricOptions) {
+        if (!Metrics._isMetricTypeValid(metric, MetricType.COUNTER)) return;
 
-        this._createMetric(metric);
-        const metricKey = this._getMetricKey(metric);
+        const metricKey = this._createMetric(metric, options);
         (this.metricsRepository[metricKey] as Counter).inc();
     }
 
     /**
      * Decrease value by 1 in metric with type Counter
      * @param metric metric object
+     * @param options extra options to metrics like pool name or service name
      */
-    public dec(metric: Metric) {
-        if (!Metrics._isMetricTypeValid(metric.type, MetricType.COUNTER)) return;
+    public dec(metric: Metric, options?: MetricOptions) {
+        if (!Metrics._isMetricTypeValid(metric, MetricType.COUNTER)) return;
 
-        this._createMetric(metric);
-        const metricKey = this._getMetricKey(metric);
+        const metricKey = this._createMetric(metric, options);
         (this.metricsRepository[metricKey] as Counter).dec();
     }
 
     /**
      * Mark the state to compute frequency in metric with type Meter
      * @param metric metric object
+     * @param options extra options to metrics like pool name or service name
      */
-    public mark(metric: Metric) {
-        if (!Metrics._isMetricTypeValid(metric.type, MetricType.METER)) return;
+    public mark(metric: Metric, options?: MetricOptions) {
+        if (!Metrics._isMetricTypeValid(metric, MetricType.METER)) return;
 
-        this._createMetric(metric);
-        const metricKey = this._getMetricKey(metric);
+        const metricKey = this._createMetric(metric, options);
         (this.metricsRepository[metricKey] as Meter).mark();
     }
 
     /**
-     * Activate metrics to see them in the panel
+     * Activate metrics to see them immediately in the panel
      * @param metricGroup group of metrics
      */
     public activateMetrics(metricGroup: MetricGroup) {
@@ -92,37 +95,50 @@ class Metrics {
     }
 
     /**
-     * Get formatted metric key with prefix by cluster name
-     * @param metric metric object
-     * @private
-     */
-    private _getMetricKey(metric: Metric): string {
-        return `${this.clusterName}_${metric.key}`;
-    }
-
-    /**
      * Check if type is valid for current metric
-     * @param metricType type of metric what want to check
+     * @param metric metric object
      * @param type type what need to compare with current metric
      * @private
      */
-    private static _isMetricTypeValid(metricType: MetricType, type: MetricType): boolean {
-        if (metricType !== type) {
-            Logger.error("Metric type is not a " + MetricType[type]);
+    private static _isMetricTypeValid(metric: Metric, type: MetricType): boolean {
+        if (metric.type !== type) {
+            Logger.error(`Metric type of ${metric.key} is not valid. Should be ${MetricType[type]}`);
             return false;
         }
         return true;
     }
 
     /**
-     * Create metric and set it to the metric repository if doesn't exist
+     * Get formatted metric key and name with prefix by cluster name and extra options
      * @param metric metric object
+     * @param options extra options to metrics like pool name or service name
      * @private
      */
-    private _createMetric(metric: Metric) {
-        const metricKey = this._getMetricKey(metric);
-        const metricName = metric.name ? `[${this.clusterName}] ${metric.name}` : metricKey;
-        if (this.metricsRepository[metricKey]) return;
+    private _generateMetricKeyName(metric: Metric, options?: MetricOptions): { key: string, name: string } {
+        let key = `${this.clusterName}_`;
+        let name = `[${this.clusterName}] `;
+        if (options?.service) {
+            key += `${options.service.id}_`
+            name += `[${options.service.name}] `
+        }
+        if (options?.pool) {
+            key += `${options.pool.id}_`;
+            name += `[${options.pool.name}] `
+        }
+        key += metric.key;
+        name = metric.name && !this.showKeys ? name + metric.name : key;
+        return { key, name };
+    }
+
+    /**
+     * Create metric and set it to the metric repository if doesn't exist
+     * @param metric metric object
+     * @param options extra options to metrics like pool name or service name
+     * @private
+     */
+    private _createMetric(metric: Metric, options?: MetricOptions): string {
+        const { key: metricKey, name: metricName } = this._generateMetricKeyName(metric, options);
+        if (this.metricsRepository[metricKey]) return metricKey;
 
         switch (metric.type) {
             case MetricType.METRIC:
@@ -141,6 +157,8 @@ class Metrics {
                 })
                 break;
         }
+
+        return metricKey;
     }
 }
 
