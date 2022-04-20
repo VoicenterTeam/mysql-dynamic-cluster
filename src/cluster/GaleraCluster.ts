@@ -14,6 +14,7 @@ import Metrics from "../metrics/Metrics";
 import Events from "../utils/Events";
 import Redis from "../utils/Redis";
 import { UserPoolSettings } from "../types/PoolSettingsInterfaces";
+import { QueryTimer } from "../utils/QueryTimer";
 
 export class GaleraCluster {
     public connected: boolean = false;
@@ -25,7 +26,6 @@ export class GaleraCluster {
 
     private readonly _clusterHashing: ClusterHashing;
     private readonly _errorRetryCount: number; // retry count after query error
-    private _queryTime: number = 1000;
 
     /**
      * @param userSettings global user settings
@@ -166,7 +166,8 @@ export class GaleraCluster {
     private async _queryRequest<T extends QueryResult>(sql: string, pool: Pool, queryOptions: QueryOptions): Promise<T> {
         try {
             Metrics.inc(MetricNames.cluster.allQueries);
-            const timeBefore = new Date().getTime();
+            const queryTimer = new QueryTimer(MetricNames.cluster.queryTime);
+            queryTimer.start();
 
             if (queryOptions?.serviceId) {
                 // Metrics.inc(MetricNames.services.allQueries);
@@ -174,9 +175,8 @@ export class GaleraCluster {
 
             const result = await pool.query(sql, queryOptions) as T;
 
-            const timeAfter = new Date().getTime();
-            this._queryTime = Math.abs(timeAfter - timeBefore) / 1000;
-            Metrics.set(MetricNames.cluster.queryTime, this._queryTime);
+            queryTimer.end();
+            queryTimer.save();
             Metrics.inc(MetricNames.cluster.successfulQueries);
             if (queryOptions?.serviceId) {
                 // Metrics.inc(MetricNames.services.successfulQueries);

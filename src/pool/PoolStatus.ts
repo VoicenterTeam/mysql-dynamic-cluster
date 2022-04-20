@@ -10,6 +10,8 @@ import { Pool } from "./Pool";
 import { Validator } from "./Validator";
 import { LoadFactor } from "./LoadFactor";
 import { ITimerCheckRange, UserPoolSettings } from "../types/PoolSettingsInterfaces";
+import { QueryTimer } from "../utils/QueryTimer";
+import MetricNames from "../metrics/MetricNames";
 
 export class PoolStatus {
     public active: boolean;
@@ -21,6 +23,11 @@ export class PoolStatus {
     private _isValid: boolean = false;
     public get isValid(): boolean {
         return this._isValid;
+    }
+
+    private _queryTime: number;
+    get queryTime(): number {
+        return this._queryTime;
     }
 
     // Score from load factor
@@ -77,10 +84,16 @@ export class PoolStatus {
     public async checkStatus() {
         try {
             if (!this.active) return;
+            const queryTimer = new QueryTimer(MetricNames.pool.queryTime);
 
             Logger.debug("checking pool status in host: " + this._pool.host);
 
+            queryTimer.start();
+
             const result = await this._pool.query(`SHOW GLOBAL STATUS;`) as GlobalStatusResult[];
+
+            queryTimer.end();
+            this._queryTime = queryTimer.get();
 
             this._isValid = this._validator.check(result);
             Logger.debug("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())
