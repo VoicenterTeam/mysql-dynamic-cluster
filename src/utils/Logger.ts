@@ -66,7 +66,7 @@ const Logger = {
      */
     debug(message: string) {
         if (this.level === LOGLEVEL.FULL) {
-            if (this.useConsole) console.log("\x1b[0m", prefix, "\x1b[34m", "[DEBUG]", message, "\x1b[0m");
+            if (this.useConsole) console.log("\x1b[0m", this.getPrefix(), "\x1b[34m", "[DEBUG]", message, "\x1b[0m");
             amqpLogger?.debug(message);
         }
     },
@@ -75,7 +75,7 @@ const Logger = {
      * @param message log message what send to
      */
     error(message: string) {
-        if (this.useConsole) console.log("\x1b[0m", prefix, "\x1b[31m", "[ERROR]", message, "\x1b[0m");
+        if (this.useConsole) console.log("\x1b[0m", this.getPrefix(), "\x1b[31m", "[ERROR]", message, "\x1b[0m");
         amqpLogger?.error(message);
     },
     /**
@@ -84,7 +84,7 @@ const Logger = {
      */
     info(message: string) {
         if (this.level !== LOGLEVEL.QUIET) {
-            if (this.useConsole) console.log("\x1b[0m", prefix, "\x1b[32m", "[INFO]", message, "\x1b[0m");
+            if (this.useConsole) console.log("\x1b[0m", this.getPrefix(), "\x1b[32m", "[INFO]", message, "\x1b[0m");
             amqpLogger?.info(message);
         }
     },
@@ -93,8 +93,14 @@ const Logger = {
      * @param message log message what send to
      */
     warn(message: string) {
-        if (this.useConsole) console.log("\x1b[0m", prefix, "\x1b[33m", "[WARNING]", message, "\x1b[0m");
+        if (this.useConsole) console.log("\x1b[0m", this.getPrefix(), "\x1b[33m", "[WARNING]", message, "\x1b[0m");
         amqpLogger?.warn(message);
+    },
+    /**
+     * Get prefix for console log
+     */
+    getPrefix(): string {
+        return `${prefix} [${new Date().toISOString()}]`;
     }
 }
 

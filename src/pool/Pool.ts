@@ -31,6 +31,7 @@ export class Pool {
     private readonly _password: string;
     private readonly _database: string;
     private readonly _queryTimeout: number;
+    private readonly _slowQueryTime: number;
 
     private _pool: mysql.Pool;
 
@@ -49,6 +50,7 @@ export class Pool {
         this._password = settings.password;
         this._database = settings.database;
         this._queryTimeout = settings.queryTimeout;
+        this._slowQueryTime = settings.slowQueryTime;
 
         this.connectionLimit = settings.connectionLimit;
 
@@ -193,6 +195,10 @@ export class Pool {
 
                     queryTimer.end();
                     queryTimer.save(poolMetricOption);
+                    if (queryTimer.get() >= this._slowQueryTime) {
+                        Logger.warn(`Query in pool named ${this.name} takes ${queryTimer.get()} sec`);
+                    }
+
                     Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
 
                     if (queryOptions.redis) Redis.set(sql, JSON.stringify(result));

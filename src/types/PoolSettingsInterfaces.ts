@@ -16,7 +16,8 @@ interface PoolSettings {
     validators?: ValidatorParams[],
     loadFactors?: LoadFactorParams[],
     timerCheckRange?: ITimerCheckRange, // Time in ms
-    timerCheckMultiplier?: number
+    timerCheckMultiplier?: number,
+    slowQueryTime?: number;
 }
 
 export interface GlobalUserPoolSettings extends PoolSettings {
@@ -39,5 +40,6 @@ export interface DefaultPoolSettings extends PoolSettings {
     validators: ValidatorParams[],
     loadFactors: LoadFactorParams[],
     timerCheckRange: ITimerCheckRange, // Time in ms
-    timerCheckMultiplier: number
+    timerCheckMultiplier: number,
+    slowQueryTime: number
 }
