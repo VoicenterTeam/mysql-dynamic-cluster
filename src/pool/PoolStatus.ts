@@ -15,7 +15,6 @@ export class PoolStatus {
     public active: boolean;
     public availableConnectionCount: number;
     // How much time query take. Time in seconds
-    public queryTime: number;
 
     private readonly _pool: Pool;
     // Check if valid by passed validator
@@ -45,14 +44,12 @@ export class PoolStatus {
      * @param settings pool settings
      * @param active default pool active status before status check
      * @param availableConnectionCount max connection count in the pool
-     * @param queryTime default query time before status check
      */
-    constructor(pool: Pool, settings: UserPoolSettings, active: boolean, availableConnectionCount: number, queryTime: number) {
+    constructor(pool: Pool, settings: UserPoolSettings, active: boolean, availableConnectionCount: number) {
         this._pool = pool;
 
         this.active = active;
         this.availableConnectionCount = availableConnectionCount;
-        this.queryTime = queryTime;
 
         this._isValid = false;
         this._loadScore = 100000;
@@ -82,14 +79,8 @@ export class PoolStatus {
             if (!this.active) return;
 
             Logger.debug("checking pool status in host: " + this._pool.host);
-            // const timeBefore = new Date().getTime();
 
             const result = await this._pool.query(`SHOW GLOBAL STATUS;`) as GlobalStatusResult[];
-
-            // #TODO: move check for query time to the pool query
-            // const timeAfter = new Date().getTime();
-            // this.queryTime = Math.abs(timeAfter - timeBefore) / 1000;
-            // Metrics.set(MetricNames.pool.queryTime, this.queryTime);
 
             this._isValid = this._validator.check(result);
             Logger.debug("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())

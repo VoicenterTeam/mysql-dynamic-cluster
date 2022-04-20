@@ -31,7 +31,7 @@ class Metrics {
      * set value in metric with type Metric
      * @param metric metric object
      * @param value the value what need to change
-     * @param options extra options to metrics like pool name or service name
+     * @param options extra options for metric like pool name or service name
      */
     public set(metric: Metric, value: number, options?: MetricOptions) {
         if (!Metrics._isMetricTypeValid(metric, MetricType.METRIC)) return;
@@ -43,7 +43,7 @@ class Metrics {
     /**
      * Increase value by 1 in metric with type Counter
      * @param metric metric object
-     * @param options extra options to metrics like pool name or service name
+     * @param options extra options for metric like pool name or service name
      */
     public inc(metric: Metric, options?: MetricOptions) {
         if (!Metrics._isMetricTypeValid(metric, MetricType.COUNTER)) return;
@@ -55,7 +55,7 @@ class Metrics {
     /**
      * Decrease value by 1 in metric with type Counter
      * @param metric metric object
-     * @param options extra options to metrics like pool name or service name
+     * @param options extra options for metric like pool name or service name
      */
     public dec(metric: Metric, options?: MetricOptions) {
         if (!Metrics._isMetricTypeValid(metric, MetricType.COUNTER)) return;
@@ -67,7 +67,7 @@ class Metrics {
     /**
      * Mark the state to compute frequency in metric with type Meter
      * @param metric metric object
-     * @param options extra options to metrics like pool name or service name
+     * @param options extra options for metric like pool name or service name
      */
     public mark(metric: Metric, options?: MetricOptions) {
         if (!Metrics._isMetricTypeValid(metric, MetricType.METER)) return;
@@ -111,7 +111,7 @@ class Metrics {
     /**
      * Get formatted metric key and name with prefix by cluster name and extra options
      * @param metric metric object
-     * @param options extra options to metrics like pool name or service name
+     * @param options extra options for metric like pool name or service name
      * @private
      */
     private _generateMetricKeyName(metric: Metric, options?: MetricOptions): { key: string, name: string } {
@@ -133,7 +133,7 @@ class Metrics {
     /**
      * Create metric and set it to the metric repository if doesn't exist
      * @param metric metric object
-     * @param options extra options to metrics like pool name or service name
+     * @param options extra options for metric like pool name or service name
      * @private
      */
     private _createMetric(metric: Metric, options?: MetricOptions): string {

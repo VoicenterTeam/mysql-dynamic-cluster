@@ -11,6 +11,7 @@ import { QueryOptions, QueryResult } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
 import Redis from "../utils/Redis";
 import { UserPoolSettings } from "../types/PoolSettingsInterfaces";
+import { QueryTimer } from "../utils/QueryTimer";
 
 // AKA galera node
 export class Pool {
@@ -26,10 +27,10 @@ export class Pool {
     // max connection count in pool
     public readonly connectionLimit: number;
 
-    private readonly user: string;
-    private readonly password: string;
-    private readonly database: string;
-    private readonly queryTimeout: number;
+    private readonly _user: string;
+    private readonly _password: string;
+    private readonly _database: string;
+    private readonly _queryTimeout: number;
 
     private _pool: mysql.Pool;
 
@@ -44,14 +45,14 @@ export class Pool {
         this.name = settings.name ? settings.name : `${this.host}:${this.port}`
         Logger.debug(`Configure pool named ${this.name}`);
 
-        this.user = settings.user;
-        this.password = settings.password;
-        this.database = settings.database;
-        this.queryTimeout = settings.queryTimeout;
+        this._user = settings.user;
+        this._password = settings.password;
+        this._database = settings.database;
+        this._queryTimeout = settings.queryTimeout;
 
         this.connectionLimit = settings.connectionLimit;
 
-        this._status = new PoolStatus(this, settings, false, this.connectionLimit, 10000);
+        this._status = new PoolStatus(this, settings, false, this.connectionLimit);
 
         Logger.info("configuration pool finished in host: " + this.host);
     }
@@ -64,9 +65,9 @@ export class Pool {
         Logger.debug("Creating pool in host: " + this.host);
         this._pool = mysql.createPool({
             host: this.host,
-            user: this.user,
-            password: this.password,
-            database: this.database,
+            user: this._user,
+            password: this._password,
+            database: this._database,
             connectionLimit: this.connectionLimit
         })
 
@@ -131,18 +132,18 @@ export class Pool {
     public async query<T extends QueryResult>(sql: string, queryOptions?: QueryOptions): Promise<T | T[]> {
         return new Promise(async (resolve, reject) => {
             queryOptions = {
-                timeout: this.queryTimeout,
-                database: this.database,
+                timeout: this._queryTimeout,
+                database: this._database,
                 redis: false,
                 ...queryOptions
             }
-
             const poolMetricOption = {
                 pool: {
                     id: this.id,
                     name: this.name
                 }
             }
+            const queryTimer = new QueryTimer(MetricNames.pool.queryTime);
 
             Metrics.inc(MetricNames.pool.allQueries, poolMetricOption);
             Metrics.mark(MetricNames.pool.queryPerMinute, poolMetricOption);
@@ -155,6 +156,8 @@ export class Pool {
                     return;
                 }
             }
+
+            queryTimer.start();
 
             this._pool.getConnection((err, conn) => {
                 if (err) {
@@ -187,7 +190,11 @@ export class Pool {
                         reject(error);
                     }
                     conn.release();
+
+                    queryTimer.end();
+                    queryTimer.save(poolMetricOption);
                     Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
+
                     if (queryOptions.redis) Redis.set(sql, JSON.stringify(result));
                     resolve(result);
                 });
@@ -203,11 +210,10 @@ export class Pool {
     public async multiStatementQuery<T extends QueryResult>(sqls: string[], queryOptions: QueryOptions): Promise<T[]> {
         return new Promise((resolve, reject) => {
             queryOptions = {
-                timeout: this.queryTimeout,
-                database: this.database,
+                timeout: this._queryTimeout,
+                database: this._database,
                 ...queryOptions
             }
-
             const poolMetricOption = {
                 pool: {
                     id: this.id,
