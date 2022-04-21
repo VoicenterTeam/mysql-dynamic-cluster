@@ -12,9 +12,10 @@ import { ClusterHashing } from "./ClusterHashing";
 import MetricNames from "../metrics/MetricNames";
 import Metrics from "../metrics/Metrics";
 import Events from "../utils/Events";
-import Redis from "../utils/Redis";
+import Redis from "../Redis/Redis";
 import { UserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
+import ServiceNames from "../utils/ServiceNames";
 
 export class GaleraCluster {
     public connected: boolean = false;
@@ -69,21 +70,19 @@ export class GaleraCluster {
     /**
      * Connect all cluster pools what created from host information in config
      */
-    public connect(): Promise<void> {
-        return new Promise(resolve => {
-            Logger.debug("connecting all pools");
-            this._pools.forEach((pool) => {
-                pool.connect((err) => {
-                    if (err) Logger.error(err.message)
-                    else {
-                        if (this.connected) return;
-                        Logger.info('Cluster connected');
-                        this.connected = true;
-                        Events.emit('connected');
-                        resolve();
-                    }
-                });
-            })
+    public async connect(): Promise<void> {
+        Logger.debug("Connecting all pools");
+        this._pools.forEach((pool) => {
+            pool.connect().then(() => {
+                if (this.connected) return;
+
+                this.connected = true;
+                Events.emit('connected');
+                Logger.info('Cluster connected');
+                return;
+            }).catch(err => {
+                Logger.error(err.message);
+            });
         })
     }
 
@@ -129,7 +128,9 @@ export class GaleraCluster {
         let activePools: Pool[]; // available pools for query what passed the validator
         let retryCount; // max retry query count after error
         try {
-            activePools = await this._getActivePools(queryOptions?.serviceId);
+            // #FIXME: it looks so shitty to use everywhere get service id from db. Better pass service id than name
+            const serviceId = queryOptions?.serviceName ? await ServiceNames.getID(queryOptions.serviceName) : undefined;
+            activePools = await this._getActivePools(serviceId);
             retryCount = this._maxRetryCount(queryOptions?.maxRetry, activePools.length);
         } catch (e) {
             throw new Error(e);
@@ -169,25 +170,21 @@ export class GaleraCluster {
             const queryTimer = new QueryTimer(MetricNames.cluster.queryTime);
             queryTimer.start();
 
-            if (queryOptions?.serviceId) {
-                // Metrics.inc(MetricNames.services.allQueries);
-            }
-
             const result = await pool.query(sql, queryOptions) as T;
 
             queryTimer.end();
             queryTimer.save();
             Metrics.inc(MetricNames.cluster.successfulQueries);
-            if (queryOptions?.serviceId) {
-                // Metrics.inc(MetricNames.services.successfulQueries);
-                this._clusterHashing?.updateServiceForNode(queryOptions.serviceId, pool.id);
-            }
+            // if (queryOptions?.serviceName) {
+            //     const serviceId = await ServiceNames.getID(queryOptions.serviceName);
+            //     this._clusterHashing?.updateServiceForNode(serviceId, pool.id);
+            // }
             return result;
         } catch (e) {
-            if (queryOptions?.serviceId) {
-                // Metrics.inc(MetricNames.services.errorQueries);
-                this._clusterHashing?.updateServiceForNode(queryOptions.serviceId, pool.id);
-            }
+            // if (queryOptions?.serviceName) {
+            //     const serviceId = await ServiceNames.getID(queryOptions.serviceName);
+            //     this._clusterHashing?.updateServiceForNode(serviceId, pool.id);
+            // }
             Metrics.inc(MetricNames.cluster.errorQueries);
             throw new Error("Query error: " + e.message);
         }
@@ -237,9 +234,9 @@ export class GaleraCluster {
      */
     private async _getActivePools(serviceId?: number) : Promise<Pool[]> {
         const activePools: Pool[] = this._pools.filter(pool => {
-            if (serviceId && !pool.status.isValid) {
-                this._clusterHashing?.updateServiceForNode(serviceId, pool.id);
-            }
+            // if (serviceId && !pool.status.isValid) {
+            //     this._clusterHashing?.updateServiceForNode(serviceId, pool.id);
+            // }
             return pool.status.isValid;
         })
         activePools.sort((a, b) => a.status.loadScore - b.status.loadScore)

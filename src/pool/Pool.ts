@@ -9,9 +9,12 @@ import Metrics from "../metrics/Metrics";
 import MetricNames from "../metrics/MetricNames";
 import { QueryOptions, QueryResult } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
-import Redis from "../utils/Redis";
+import Redis from "../Redis/Redis";
 import { UserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
+import { MetricOptions } from "../types/MetricsInterfaces";
+import ServiceNames from "../utils/ServiceNames";
+import serviceNames from "../utils/ServiceNames";
 
 // AKA galera node
 export class Pool {
@@ -61,9 +64,8 @@ export class Pool {
 
     /**
      * Create pool connection
-     * @param callback error callback when all status will not valid
      */
-    public async connect(callback: (err: Error) => void) {
+    public async connect() {
         Logger.debug("Creating pool in host: " + this.host);
         this._pool = mysql.createPool({
             host: this.host,
@@ -80,9 +82,8 @@ export class Pool {
         if (this.status.isValid) {
             Logger.info('Pool is connected');
             Events.emit('pool_connected');
-            callback(null);
         } else {
-            callback(new Error("pool in host " + this.host + " is not valid"));
+            throw new Error("pool in host " + this.host + " is not valid");
         }
     }
 
@@ -139,26 +140,27 @@ export class Pool {
                 redis: false,
                 ...queryOptions
             }
-            const poolMetricOption = {
+            const poolMetricOption: MetricOptions = {
                 pool: {
                     id: this.id,
                     name: this.name
                 }
             }
+            if (queryOptions.serviceName) {
+                const serviceId = await ServiceNames.getID(queryOptions.serviceName);
+
+                if (serviceId) {
+                    poolMetricOption.service = {
+                        id: serviceId,
+                        name: queryOptions.serviceName
+                    }
+                }
+            }
+
             const queryTimer = new QueryTimer(MetricNames.pool.queryTime);
 
             Metrics.inc(MetricNames.pool.allQueries, poolMetricOption);
             Metrics.mark(MetricNames.pool.queryPerMinute, poolMetricOption);
-
-            if (queryOptions.redis) {
-                const redisResult = await Redis.get(sql);
-                if (redisResult) {
-                    Logger.debug("Get result of query from redis");
-                    resolve(JSON.parse(redisResult));
-                    return;
-                }
-            }
-
             queryTimer.start();
 
             this._pool.getConnection((err, conn) => {
@@ -201,12 +203,42 @@ export class Pool {
 
                     Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
 
-                    if (queryOptions.redis) Redis.set(sql, JSON.stringify(result));
+
+                    // let redisExpired = new Date().getTime() + queryTimer.get() * 1000 * redisFactor (60);
+                    // let redisData = {
+                    //     data: result,
+                    //     expired: redisExpired
+                    // }
+                    // if (queryOptions.redis) Redis.set(sql, JSON.stringify(result));
                     resolve(result);
                 });
             })
         })
     }
+
+    // #TODO: move redis to cluster
+    // getRedis(useRedis: boolean) {
+    //     if (useRedis) {
+    //         // redis metrics counter
+    //         const redisResult = await Redis.get(sql);
+    //
+    //         // redis latency is query time for redis
+    //         if (redisResult) {
+    //             Logger.debug("Get result of query from redis");
+    //             let redisData = JSON.parse(redisResult);
+    //             if (redisData.expired < Date.now()) {
+    //                 // metrics for redis error
+    //                 try {
+    //                     resolve()
+    //                 } catch (e) {
+    //
+    //                 }
+    //             }
+    //             resolve(JSON.parse(redisData.data));
+    //             return;
+    //         }
+    //     }
+    // }
 
     /**
      * Pool query by mysql transaction

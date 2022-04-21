@@ -29,7 +29,7 @@ export interface LoadFactorParams {
 export interface QueryOptions {
     timeout?: number,
     database?: string,
-    serviceId?: number,
+    serviceName?: string,
     maxRetry?: number,
     redis?: boolean
 }

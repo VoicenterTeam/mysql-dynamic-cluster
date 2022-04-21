@@ -118,12 +118,12 @@ class Metrics {
         let key = `${this.clusterName}_`;
         let name = `[${this.clusterName}] `;
         if (options?.service) {
-            key += `${options.service.id}_`
-            name += `[${options.service.name}] `
+            key += `${options.service.id}_`;
+            name += `[${options.service.name}] `;
         }
         if (options?.pool) {
             key += `${options.pool.id}_`;
-            name += `[${options.pool.name}] `
+            name += `[${options.pool.name}] `;
         }
         key += metric.key;
         name = metric.name && !this.showKeys ? name + metric.name : key;

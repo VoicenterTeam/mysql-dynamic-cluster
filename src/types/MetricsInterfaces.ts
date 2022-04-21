@@ -35,3 +35,13 @@ export interface MetricOptions {
         name: string
     }
 }
+
+export interface ServiceMetricsSettings {
+    database?: string,
+    table?: string
+}
+
+export interface DefaultServiceMetricsSettings extends ServiceMetricsSettings {
+    database: string,
+    table: string
+}

@@ -112,9 +112,21 @@ export class ClusterHashing {
                     });
                 })
 
-                const resultTable: any[] = await this._cluster.pools[0].query(`show table status from \`${this._database}\`;`);
-                const resultFunc: any[] = await this._cluster.pools[0].query(`show function status WHERE Db = '${this._database}';`);
-                const resultProc: any[] = await this._cluster.pools[0].query(`show procedure status WHERE Db = '${this._database}';`);
+                const resultTable: any[] = await this._cluster.query(
+                    `show table status from \`${this._database}\`;`,
+                    null,
+                    { maxRetry: 1 }
+                );
+                const resultFunc: any[] = await this._cluster.query(
+                    `show function status WHERE Db = '${this._database}';`,
+                    null,
+                    { maxRetry: 1 }
+                );
+                const resultProc: any[] = await this._cluster.query(
+                    `show procedure status WHERE Db = '${this._database}';`,
+                    null,
+                    { maxRetry: 1 }
+                );
                 [...resultTable, ...resultFunc, ...resultProc].forEach(elem => {
                     if (sqlFileNames.includes(elem.Name)) countCorrectlyCreated++;
                 })

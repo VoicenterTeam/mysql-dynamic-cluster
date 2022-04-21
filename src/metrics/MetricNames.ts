@@ -7,9 +7,18 @@ import { MetricType } from "../types/MetricsInterfaces";
  * All metric names used in the program. Structure:
  * {
  *     (group): {
- *          (metric): Metric
+ *          (metric): <Metric> {
+ *              key: string,
+ *              name?: string,
+ *              type: MetricType
+ *          }
  *      }
  * }
+ *
+ * Metric types:
+ * COUNTER - Things that increment or decrement
+ * METER - Things that are measured as events / interval
+ * METRIC - Values that can be read instantly
  */
 const MetricNames = {
     cluster: {
@@ -65,24 +74,24 @@ const MetricNames = {
             name: 'Pool query per minute',
             type: MetricType.METER
         }
+    },
+    redis: {
+        counter: {
+            key: 'redis_uses',
+            name: 'Redis uses',
+            type: MetricType.COUNTER
+        },
+        errors: {
+            key: 'redis_errors',
+            name: 'Redis errors',
+            type: MetricType.COUNTER
+        },
+        latency: {
+            key: 'redis_latency',
+            name: 'Redis latency',
+            type: MetricType.METRIC
+        }
     }
-    // services: {
-    //     allQueries: {
-    //         key: 'services_all_queries',
-    //         name: 'Services all queries',
-    //         type: MetricType.COUNTER
-    //     },
-    //     successfulQueries: {
-    //         key: 'services_successful_queries',
-    //         name: 'Services all successful queries',
-    //         type: MetricType.COUNTER
-    //     },
-    //     errorQueries: {
-    //         key: 'services_error_queries',
-    //         name: 'Services all error queries',
-    //         type: MetricType.COUNTER
-    //     }
-    // }
 }
 
 export default MetricNames;

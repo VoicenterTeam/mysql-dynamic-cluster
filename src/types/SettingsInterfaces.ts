@@ -7,8 +7,10 @@ import { IDefaultAmqpConfig, IUserAmqpConfig, LOGLEVEL } from "./AmqpInterfaces"
 import { ClusterHashingSettings, DefaultClusterHashingSettings } from "./ClusterHashingInterfaces";
 import { DefaultRedisSettings, RedisSettings } from "./RedisInterfaces";
 import { DefaultPoolSettings, GlobalUserPoolSettings, UserPoolSettings } from "./PoolSettingsInterfaces";
+import { DefaultServiceMetricsSettings, ServiceMetricsSettings } from "./MetricsInterfaces";
 
 interface ISettings {
+    serviceMetrics?: ServiceMetricsSettings,
     clusterHashing?: ClusterHashingSettings,
     redisSettings?: RedisSettings,
     showMetricKeys?: boolean,
@@ -27,6 +29,7 @@ export interface UserSettings extends ISettings {
 
 export interface DefaultSettings extends ISettings {
     globalPoolSettings: DefaultPoolSettings,
+    serviceMetrics: DefaultServiceMetricsSettings,
     clusterHashing: DefaultClusterHashingSettings,
     showMetricKeys: boolean,
     useAmqpLogger: boolean,

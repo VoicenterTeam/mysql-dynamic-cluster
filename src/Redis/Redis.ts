@@ -3,7 +3,7 @@
  */
 
 import { Redis as RedisLib, Cluster, ValueType, Ok } from "ioredis";
-import Logger from "./Logger";
+import Logger from "../utils/Logger";
 import { createHash } from "crypto";
 import { RedisSettings } from "../types/RedisInterfaces";
 

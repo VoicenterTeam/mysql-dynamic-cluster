@@ -78,13 +78,11 @@ async function test() {
     await cluster.enableHashing();
 
     try {
-        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`, null, { redis: true });
+        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`, null, { redis: true, serviceName: 'test' });
         console.log(res[0]);
     } catch (e) {
         console.log(e.message);
     }
-
-    console.log("Async test");
 
     try {
         const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`, null, { redis: true });
@@ -96,7 +94,7 @@ async function test() {
     }
 
     /**
-     * Part of code to test load
+     * Part of code to test load. Just uncomment if you want to test
      */
     // for (let i = 0; i < 100; i++) {
     //     try {

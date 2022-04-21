@@ -3,7 +3,7 @@ import { GaleraCluster } from "./src/cluster/GaleraCluster";
 import { LOGLEVEL } from './src/types/AmqpInterfaces';
 import Logger from "./src/utils/Logger";
 import { Settings } from "./src/utils/Settings";
-import Redis from "./src/utils/Redis";
+import Redis from "./src/Redis/Redis";
 import Metrics from "./src/metrics/Metrics";
 
 function createPoolCluster(userSettings: UserSettings): GaleraCluster {

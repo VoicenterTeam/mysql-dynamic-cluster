@@ -28,6 +28,10 @@ const defaultSettings: DefaultSettings = {
     queryTimeout: 2 * 60 * 1000, // time in ms
     slowQueryTime: 1 // time in sec
   },
+  serviceMetrics: {
+    database: 'swagger_realtime',
+    table: 'Service'
+  },
   clusterHashing: {
     nextCheckTime: 5000,
     dbName: "mysql_dynamic_cluster"
@@ -41,7 +45,7 @@ const defaultSettings: DefaultSettings = {
     encoding: "base64",
     keyPrefix: "mdc:",
     expiryMode: "EX",
-    expire: 100,
+    expire: 1_000_000,
     clearOnStart: false
   },
   amqpLoggerSettings: AmqpLoggerConfig
