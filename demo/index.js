@@ -78,7 +78,7 @@ async function test() {
     await cluster.enableHashing();
 
     try {
-        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`, null, { redis: true, serviceName: 'test' });
+        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`, null, { redis: true });
         console.log(res[0]);
     } catch (e) {
         console.log(e.message);
@@ -88,7 +88,7 @@ async function test() {
         const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`, null, { redis: true });
         console.log(res[0].MethodTypeName);
 
-        // cluster.disconnect();
+        cluster.disconnect();
     } catch (e) {
         console.log(e.message);
     }

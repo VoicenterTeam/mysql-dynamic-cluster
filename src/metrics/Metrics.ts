@@ -3,7 +3,13 @@
  */
 
 import pm2io from '@pm2/io'
-import { Metric, MetricGroup, MetricOptions, MetricsRepository, MetricType } from "../types/MetricsInterfaces";
+import {
+    Metric,
+    MetricOptions,
+    MetricsRepository,
+    MetricType,
+    MetricValue
+} from "../types/MetricsInterfaces";
 import Logger from "../utils/Logger";
 import Gauge from "@pm2/io/build/main/utils/metrics/gauge";
 import Counter from "@pm2/io/build/main/utils/metrics/counter";
@@ -14,7 +20,7 @@ import Meter from "@pm2/io/build/main/utils/metrics/meter";
  */
 class Metrics {
     private metricsRepository: MetricsRepository = {};
-    private clusterName: string = "";
+    private clusterName: string;
     private showKeys: boolean;
 
     /**
@@ -36,8 +42,9 @@ class Metrics {
     public set(metric: Metric, value: number, options?: MetricOptions) {
         if (!Metrics._isMetricTypeValid(metric, MetricType.METRIC)) return;
 
-        const metricKey = this._createMetric(metric, options);
-        (this.metricsRepository[metricKey] as Gauge).set(value);
+        this._getMetricValues(metric, options).forEach(metricValue => {
+            (metricValue as Gauge).set(value);
+        })
     }
 
     /**
@@ -48,8 +55,9 @@ class Metrics {
     public inc(metric: Metric, options?: MetricOptions) {
         if (!Metrics._isMetricTypeValid(metric, MetricType.COUNTER)) return;
 
-        const metricKey = this._createMetric(metric, options);
-        (this.metricsRepository[metricKey] as Counter).inc();
+        this._getMetricValues(metric, options).forEach(metricValue => {
+            (metricValue as Counter).inc();
+        })
     }
 
     /**
@@ -60,8 +68,9 @@ class Metrics {
     public dec(metric: Metric, options?: MetricOptions) {
         if (!Metrics._isMetricTypeValid(metric, MetricType.COUNTER)) return;
 
-        const metricKey = this._createMetric(metric, options);
-        (this.metricsRepository[metricKey] as Counter).dec();
+        this._getMetricValues(metric, options).forEach(metricValue => {
+            (metricValue as Counter).dec();
+        })
     }
 
     /**
@@ -72,26 +81,9 @@ class Metrics {
     public mark(metric: Metric, options?: MetricOptions) {
         if (!Metrics._isMetricTypeValid(metric, MetricType.METER)) return;
 
-        const metricKey = this._createMetric(metric, options);
-        (this.metricsRepository[metricKey] as Meter).mark();
-    }
-
-    /**
-     * Activate metrics to see them immediately in the panel
-     * @param metricGroup group of metrics
-     */
-    public activateMetrics(metricGroup: MetricGroup) {
-        for (const [, metric] of Object.entries(metricGroup)) {
-            switch (metric.type) {
-                case MetricType.METRIC:
-                    this.set(metric, 0);
-                    break;
-                case MetricType.COUNTER:
-                    this.inc(metric);
-                    this.dec(metric);
-                    break;
-            }
-        }
+        this._getMetricValues(metric, options).forEach(metricValue => {
+            (metricValue as Meter).mark();
+        })
     }
 
     /**
@@ -101,44 +93,72 @@ class Metrics {
      * @private
      */
     private static _isMetricTypeValid(metric: Metric, type: MetricType): boolean {
-        if (metric.type !== type) {
-            Logger.error(`Metric type of ${metric.key} is not valid. Should be ${MetricType[type]}`);
-            return false;
-        }
-        return true;
+        if (metric.type === type) return true;
+
+        Logger.error(`Metric type of ${metric.key} is not valid. Should be ${MetricType[type]}`);
+        return false;
     }
 
     /**
      * Get formatted metric key and name with prefix by cluster name and extra options
      * @param metric metric object
+     * @param useService use service options to generate prop
      * @param options extra options for metric like pool name or service name
      * @private
      */
-    private _generateMetricKeyName(metric: Metric, options?: MetricOptions): { key: string, name: string } {
-        let key = `${this.clusterName}_`;
-        let name = `[${this.clusterName}] `;
-        if (options?.service) {
-            key += `${options.service.id}_`;
-            name += `[${options.service.name}] `;
+    private _generatePrefixes(metric: Metric, options?: MetricOptions, useService: boolean = false): Metric {
+        const newMetric: Metric = {
+            key: `${this.clusterName}_`,
+            name: `[${this.clusterName}] `,
+            type: metric.type
+        }
+        if (options?.service && useService) {
+            newMetric.key += `${options.service.id}_`;
+            newMetric.name += `[${options.service.name}] `;
         }
         if (options?.pool) {
-            key += `${options.pool.id}_`;
-            name += `[${options.pool.name}] `;
+            newMetric.key += `${options.pool.id}_`;
+            newMetric.name += `[${options.pool.name}] `;
         }
-        key += metric.key;
-        name = metric.name && !this.showKeys ? name + metric.name : key;
-        return { key, name };
+        newMetric.key += metric.key;
+        newMetric.name = metric.name && !this.showKeys ? newMetric.name + metric.name : newMetric.key;
+
+        return newMetric;
     }
 
     /**
-     * Create metric and set it to the metric repository if doesn't exist
+     * Get all metric separated to service metric and common
      * @param metric metric object
-     * @param options extra options for metric like pool name or service name
+     * @param options extra options for metric like pool name or/and service name
      * @private
      */
-    private _createMetric(metric: Metric, options?: MetricOptions): string {
-        const { key: metricKey, name: metricName } = this._generateMetricKeyName(metric, options);
-        if (this.metricsRepository[metricKey]) return metricKey;
+    private _getMetricValues(metric: Metric, options?: MetricOptions): MetricValue[] {
+        const metrics: Metric[] = [];
+        const metricValues: MetricValue[] = [];
+
+        if (options?.service) {
+            metrics.push(this._generatePrefixes(metric, options, true));
+        }
+        metrics.push(this._generatePrefixes(metric, options));
+
+        metrics.forEach(metricProp => {
+            if (!this.metricsRepository[metricProp.key]) {
+                this._createMetric(metricProp)
+            }
+            metricValues.push(this.metricsRepository[metricProp.key])
+        })
+
+        return metricValues
+    }
+
+    /**
+     * Create metric
+     * @param metric metric object
+     * @private
+     */
+    private _createMetric(metric: Metric): void {
+        const metricKey = metric.key;
+        const metricName = metric.name;
 
         switch (metric.type) {
             case MetricType.METRIC:
@@ -156,9 +176,9 @@ class Metrics {
                     name: metricName
                 })
                 break;
+            default:
+                Logger.error(`Metric type ${MetricType[metric.type]} doesn't exist`);
         }
-
-        return metricKey;
     }
 }
 

@@ -30,6 +30,7 @@ export interface QueryOptions {
     timeout?: number,
     database?: string,
     serviceName?: string,
+    serviceId?: number,
     maxRetry?: number,
     redis?: boolean
 }

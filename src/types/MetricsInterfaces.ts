@@ -5,6 +5,8 @@ import Gauge from "@pm2/io/build/main/utils/metrics/gauge";
 import Meter from "@pm2/io/build/main/utils/metrics/meter";
 import Counter from "@pm2/io/build/main/utils/metrics/counter";
 
+export type MetricValue = Gauge | Meter | Counter;
+
 export enum MetricType {
     METRIC,
     METER,
@@ -22,7 +24,7 @@ export interface Metric {
 }
 
 export interface MetricsRepository {
-    [metric: string]: Gauge | Meter | Counter
+    [metric: string]: MetricValue
 }
 
 export interface MetricOptions {

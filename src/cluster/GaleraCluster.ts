@@ -26,6 +26,7 @@ export class GaleraCluster {
     }
 
     private readonly _clusterHashing: ClusterHashing;
+    private readonly _serviceNames: ServiceNames;
     private readonly _errorRetryCount: number; // retry count after query error
 
     /**
@@ -48,6 +49,7 @@ export class GaleraCluster {
             )
         })
 
+        this._serviceNames = new ServiceNames(this, userSettings.serviceMetrics);
         this._clusterHashing = new ClusterHashing(this, userSettings.clusterName, userSettings.clusterHashing);
 
         Logger.info("Cluster configuration finished");
@@ -127,9 +129,13 @@ export class GaleraCluster {
     public async query<T extends QueryResult>(sql: string, values?: QueryValues, queryOptions?: QueryOptions): Promise<T> {
         let activePools: Pool[]; // available pools for query what passed the validator
         let retryCount; // max retry query count after error
+        let serviceId = queryOptions?.serviceId;
+
         try {
-            // #FIXME: it looks so shitty to use everywhere get service id from db. Better pass service id than name
-            const serviceId = queryOptions?.serviceName ? await ServiceNames.getID(queryOptions.serviceName) : undefined;
+            if (!serviceId && queryOptions?.serviceName) {
+                serviceId = await this._serviceNames.getID(queryOptions.serviceName);
+                queryOptions.serviceId = serviceId;
+            }
             activePools = await this._getActivePools(serviceId);
             retryCount = this._maxRetryCount(queryOptions?.maxRetry, activePools.length);
         } catch (e) {
@@ -137,7 +143,10 @@ export class GaleraCluster {
         }
 
         sql = this._formatSQL(sql, values);
-        let error;
+        const errorList: {
+            error: any,
+            pool: Pool
+        }[] = [];
 
         for (let i = 0; i < retryCount; i++) {
             try {
@@ -145,7 +154,10 @@ export class GaleraCluster {
                 Metrics.mark(MetricNames.cluster.queryPerMinute);
                 return await this._queryRequest(sql, activePools[i], queryOptions);
             } catch (e) {
-                error = e;
+                errorList.push({
+                    error: e,
+                    pool: activePools[i],
+                });
                 Logger.error(e.message);
                 if (i + 1 < retryCount) {
                     Logger.debug("Retrying query...");
@@ -153,8 +165,13 @@ export class GaleraCluster {
             }
         }
 
-        Logger.error("All pools have error. Error message: " + error.message);
-        throw new Error(error.message);
+        let errorMessage: string;
+        errorList.forEach(err => {
+            errorMessage += `Pool: ${err.pool.name}; Error: ${err.error.message}\n`;
+        })
+
+        Logger.error("All pools have error. Error messages: \n" + errorMessage);
+        throw new Error(errorMessage);
     }
 
     /**
@@ -175,15 +192,13 @@ export class GaleraCluster {
             queryTimer.end();
             queryTimer.save();
             Metrics.inc(MetricNames.cluster.successfulQueries);
-            // if (queryOptions?.serviceName) {
-            //     const serviceId = await ServiceNames.getID(queryOptions.serviceName);
-            //     this._clusterHashing?.updateServiceForNode(serviceId, pool.id);
+            // if (queryOptions?.serviceId) {
+            //     this._clusterHashing?.updateServiceForNode(queryOptions?.serviceId, pool.id);
             // }
             return result;
         } catch (e) {
-            // if (queryOptions?.serviceName) {
-            //     const serviceId = await ServiceNames.getID(queryOptions.serviceName);
-            //     this._clusterHashing?.updateServiceForNode(serviceId, pool.id);
+            // if (queryOptions?.serviceId) {
+            //     this._clusterHashing?.updateServiceForNode(queryOptions?.serviceId, pool.id);
             // }
             Metrics.inc(MetricNames.cluster.errorQueries);
             throw new Error("Query error: " + e.message);

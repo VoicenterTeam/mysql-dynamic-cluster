@@ -17,7 +17,8 @@ interface PoolSettings {
     loadFactors?: LoadFactorParams[],
     timerCheckRange?: ITimerCheckRange, // Time in ms
     timerCheckMultiplier?: number,
-    slowQueryTime?: number;
+    slowQueryTime?: number,
+    useRedis?: boolean
 }
 
 export interface GlobalUserPoolSettings extends PoolSettings {
@@ -41,5 +42,6 @@ export interface DefaultPoolSettings extends PoolSettings {
     loadFactors: LoadFactorParams[],
     timerCheckRange: ITimerCheckRange, // Time in ms
     timerCheckMultiplier: number,
-    slowQueryTime: number
+    slowQueryTime: number,
+    useRedis: boolean
 }

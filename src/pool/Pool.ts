@@ -13,8 +13,6 @@ import Redis from "../Redis/Redis";
 import { UserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
 import { MetricOptions } from "../types/MetricsInterfaces";
-import ServiceNames from "../utils/ServiceNames";
-import serviceNames from "../utils/ServiceNames";
 
 // AKA galera node
 export class Pool {
@@ -35,6 +33,7 @@ export class Pool {
     private readonly _database: string;
     private readonly _queryTimeout: number;
     private readonly _slowQueryTime: number;
+    private readonly _useRedis: boolean;
 
     private _pool: mysql.Pool;
 
@@ -54,6 +53,7 @@ export class Pool {
         this._database = settings.database;
         this._queryTimeout = settings.queryTimeout;
         this._slowQueryTime = settings.slowQueryTime;
+        this._useRedis = settings.useRedis;
 
         this.connectionLimit = settings.connectionLimit;
 
@@ -137,7 +137,7 @@ export class Pool {
             queryOptions = {
                 timeout: this._queryTimeout,
                 database: this._database,
-                redis: false,
+                redis: this._useRedis,
                 ...queryOptions
             }
             const poolMetricOption: MetricOptions = {
@@ -146,14 +146,10 @@ export class Pool {
                     name: this.name
                 }
             }
-            if (queryOptions.serviceName) {
-                const serviceId = await ServiceNames.getID(queryOptions.serviceName);
-
-                if (serviceId) {
-                    poolMetricOption.service = {
-                        id: serviceId,
-                        name: queryOptions.serviceName
-                    }
+            if (queryOptions?.serviceId) {
+                poolMetricOption.service = {
+                    id: queryOptions.serviceId,
+                    name: queryOptions?.serviceName ? queryOptions.serviceName : String(queryOptions.serviceId)
                 }
             }
 
@@ -301,7 +297,6 @@ export class Pool {
                                 reject(errorQ);
                             }
                             results.push(result);
-                            Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
                         });
                     })
 
@@ -315,6 +310,7 @@ export class Pool {
                         }
                     });
 
+                    Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
                     conn.release();
                     resolve(results);
                 })

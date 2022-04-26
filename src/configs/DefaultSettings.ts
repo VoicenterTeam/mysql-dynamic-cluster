@@ -26,7 +26,8 @@ const defaultSettings: DefaultSettings = {
     timerCheckMultiplier: 1.3,
     errorRetryCount: 2,
     queryTimeout: 2 * 60 * 1000, // time in ms
-    slowQueryTime: 1 // time in sec
+    slowQueryTime: 1, // time in sec
+    useRedis: false
   },
   serviceMetrics: {
     database: 'swagger_realtime',

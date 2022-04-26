@@ -6,8 +6,8 @@ import { MetricType } from "../types/MetricsInterfaces";
 /**
  * All metric names used in the program. Structure:
  * {
- *     (group): {
- *          (metric): <Metric> {
+ *     (group name): {
+ *          (metric name): <Metric> {
  *              key: string,
  *              name?: string,
  *              type: MetricType
