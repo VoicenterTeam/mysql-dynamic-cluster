@@ -33,7 +33,7 @@ const AmqpLoggerConfig: IDefaultAmqpConfig = {
         LogSpecificData: "ThisLogType"
     },
     log_lvl: 1,
-    self_log_lvl: 1
+    self_log_lvl: -1
 };
 
 const MethDict: IMethDict = {
@@ -43,5 +43,8 @@ const MethDict: IMethDict = {
     debug: 3,
     trace: 4
 }
+
+Object.freeze(AmqpLoggerConfig);
+Object.freeze(MethDict);
 
 export { AmqpLoggerConfig, MethDict };

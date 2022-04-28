@@ -1,9 +1,9 @@
-export interface ClusterHashingSettings {
+export interface IClusterHashingSettings {
     nextCheckTime?: number,
     dbName?: string
 }
 
-export interface DefaultClusterHashingSettings extends ClusterHashingSettings {
+export interface IDefaultClusterHashingSettings extends IClusterHashingSettings {
     nextCheckTime: number,
     dbName: string
 }

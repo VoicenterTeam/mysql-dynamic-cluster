@@ -1,16 +1,16 @@
-import { Metric, MetricOptions } from "../types/MetricsInterfaces";
+import { IMetric, IMetricOptions } from "../types/MetricsInterfaces";
 import Metrics from "../metrics/Metrics";
 
 export class QueryTimer {
     private _timeStart: number;
     private _timeEnd: number;
     private _queryTime: number;
-    private readonly _metric: Metric;
+    private readonly _metric: IMetric;
 
     /**
      * @param metric metric object
      */
-    constructor(metric: Metric) {
+    constructor(metric: IMetric) {
         this._metric = metric;
     }
 
@@ -33,7 +33,7 @@ export class QueryTimer {
      * Set query time to Metric
      * @param options extra options for metric like pool name or service name
      */
-    public save(options?: MetricOptions): void {
+    public save(options?: IMetricOptions): void {
         Metrics.set(this._metric, this._queryTime, options);
     }
 

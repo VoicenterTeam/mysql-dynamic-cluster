@@ -54,9 +54,6 @@ const cfg = {
     // showMetricKeys: true,
     useAmqpLogger: true,
     useConsoleLogger: true,
-    amqpLoggerSettings: {
-        log_lvl: 4
-    },
     redis: new RedisLib()
 }
 

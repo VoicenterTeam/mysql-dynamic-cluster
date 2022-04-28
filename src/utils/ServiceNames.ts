@@ -4,7 +4,7 @@
 
 import { GaleraCluster } from "../cluster/GaleraCluster";
 import Logger from "./Logger";
-import { ServiceMetricsSettings } from "../types/MetricsInterfaces";
+import { IServiceMetricsSettings } from "../types/MetricsInterfaces";
 
 interface ServiceNameResult {
     Result: number
@@ -16,7 +16,7 @@ export default class ServiceNames {
     private readonly _database: string;
     private readonly _table: string;
 
-    constructor(cluster: GaleraCluster, options: ServiceMetricsSettings) {
+    constructor(cluster: GaleraCluster, options: IServiceMetricsSettings) {
         this._cluster = cluster;
         this._database = options.database;
         this._table = options.table;

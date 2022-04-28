@@ -5,7 +5,7 @@
 import dotenv from "dotenv";
 import { createPoolCluster } from "../../index";
 import { ClusterHashing } from "../../src/cluster/ClusterHashing";
-import { ServiceNodeMap } from "../../src/types/PoolInterfaces";
+import { IServiceNodeMap } from "../../src/types/PoolInterfaces";
 import { readdirSync } from "fs";
 import { join, parse } from "path";
 
@@ -71,9 +71,9 @@ describe("Cluster hashing", () => {
 
         const clusterHashing = new ClusterHashing(cluster);
         await clusterHashing.checkHashing();
-        const result1: ServiceNodeMap = clusterHashing.serviceNodeMap;
+        const result1: IServiceNodeMap = clusterHashing.serviceNodeMap;
         clusterHashing.stop();
-        const result2: ServiceNodeMap = (await cluster.query(`SELECT FN_GetServiceNodeMapping();`))[0]["FN_GetServiceNodeMapping()"] as ServiceNodeMap;
+        const result2: IServiceNodeMap = (await cluster.query(`SELECT FN_GetServiceNodeMapping();`))[0]["FN_GetServiceNodeMapping()"] as IServiceNodeMap;
 
         cluster.disconnect();
         await expect(result1).toStrictEqual(result2);

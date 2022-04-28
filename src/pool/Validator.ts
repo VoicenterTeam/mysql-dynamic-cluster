@@ -2,7 +2,7 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { GlobalStatusResult, ValidatorParams } from "../types/PoolInterfaces";
+import { GlobalStatusResult, IValidatorParams } from "../types/PoolInterfaces";
 import Logger from "../utils/Logger";
 import { PoolStatus } from "./PoolStatus";
 
@@ -11,13 +11,13 @@ import { PoolStatus } from "./PoolStatus";
  */
 export class Validator {
     private readonly _poolStatus: PoolStatus;
-    private _validators: ValidatorParams[];
+    private _validators: IValidatorParams[];
 
     /**
      * @param pool pool what check by validators
      * @param validators validators params by which to check possibility handle queries
      */
-    constructor(pool: PoolStatus, validators: ValidatorParams[]) {
+    constructor(pool: PoolStatus, validators: IValidatorParams[]) {
         this._poolStatus = pool;
         this._validators = validators;
     }
@@ -57,7 +57,7 @@ export class Validator {
      * @param validator validator parameters to check value
      * @private
      */
-    private static checkValueIsValid(value: string, validator: ValidatorParams): boolean {
+    private static checkValueIsValid(value: string, validator: IValidatorParams): boolean {
         if (isNaN(+value)) {
             // check values if value from db is string
             const val = value as string;

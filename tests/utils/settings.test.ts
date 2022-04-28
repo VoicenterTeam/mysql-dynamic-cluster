@@ -3,12 +3,13 @@
  */
 
 import { Settings } from "../../src/utils/Settings";
-import {LOGLEVEL, UserSettings} from "../../src/types/SettingsInterfaces";
+import { IUserSettings } from "../../src/types/SettingsInterfaces";
 import { AmqpLoggerConfig } from "../../src/configs/AmqpLoggerConfig";
+import { LOGLEVEL } from "../../src/types/AmqpInterfaces";
 
 describe("Mix settings", () => {
     it ("check merging global with user pool settings", () => {
-        const userSettings: UserSettings = {
+        const userSettings: IUserSettings = {
             hosts: [
                 {
                     host: '192.168.0.1',
@@ -35,7 +36,7 @@ describe("Mix settings", () => {
             }
         }
 
-        const expectedResult: UserSettings = {
+        const expectedResult: IUserSettings = {
             hosts: [
                 {
                     host: '192.168.0.1',
@@ -126,7 +127,7 @@ describe("Mix settings", () => {
     })
 
     it ("check object merging settings", () => {
-        const userSettings: UserSettings = {
+        const userSettings: IUserSettings = {
             hosts: [
                 {
                     host: '192.168.0.1'
@@ -144,7 +145,7 @@ describe("Mix settings", () => {
             }
         }
 
-        const expectedResult: UserSettings = {
+        const expectedResult: IUserSettings = {
             hosts: [
                 {
                     host: '192.168.0.1',
@@ -213,7 +214,7 @@ describe("Mix settings", () => {
     })
 
     it('check array merging settings', () => {
-        const userSettings: UserSettings = {
+        const userSettings: IUserSettings = {
             hosts: [
                 {
                     host: '192.168.0.1'
@@ -233,7 +234,7 @@ describe("Mix settings", () => {
             }
         }
 
-        const expectedResult: UserSettings = {
+        const expectedResult: IUserSettings = {
             hosts: [
                 {
                     host: '192.168.0.1',
@@ -298,7 +299,7 @@ describe("Mix settings", () => {
     })
 
     it('check merging amqp settings', () => {
-        const userSettings: UserSettings = {
+        const userSettings: IUserSettings = {
             hosts: [
                 {
                     host: '192.168.0.1'
@@ -338,7 +339,7 @@ describe("Mix settings", () => {
             }
         }
 
-        const expectedResult: UserSettings = {
+        const expectedResult: IUserSettings = {
             hosts: [
                 {
                     host: '192.168.0.1',

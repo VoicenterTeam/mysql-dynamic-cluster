@@ -13,21 +13,21 @@ export enum MetricType {
     COUNTER
 }
 
-export interface MetricGroup {
-    [metric: string]: Metric
+export interface IMetricGroup {
+    [metric: string]: IMetric
 }
 
-export interface Metric {
+export interface IMetric {
     key: string,
     name?: string,
     type: MetricType
 }
 
-export interface MetricsRepository {
+export interface IMetricsRepository {
     [metric: string]: MetricValue
 }
 
-export interface MetricOptions {
+export interface IMetricOptions {
     pool?: {
         id: number,
         name: string
@@ -38,12 +38,12 @@ export interface MetricOptions {
     }
 }
 
-export interface ServiceMetricsSettings {
+export interface IServiceMetricsSettings {
     database?: string,
     table?: string
 }
 
-export interface DefaultServiceMetricsSettings extends ServiceMetricsSettings {
+export interface IDefaultServiceMetricsSettings extends IServiceMetricsSettings {
     database: string,
     table: string
 }

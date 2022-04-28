@@ -5,13 +5,13 @@
 import { GaleraCluster } from "./GaleraCluster";
 import Logger from "../utils/Logger";
 import { Timer } from "../utils/Timer";
-import { ServiceNodeMap } from "../types/PoolInterfaces";
+import { IServiceNodeMap } from "../types/PoolInterfaces";
 import { readFileSync, readdirSync }  from 'fs'
 import { join, parse } from "path";
-import { ClusterHashingSettings } from "../types/ClusterHashingInterfaces";
+import { IClusterHashingSettings } from "../types/ClusterHashingInterfaces";
 
 export class ClusterHashing {
-    public serviceNodeMap: ServiceNodeMap;
+    public serviceNodeMap: IServiceNodeMap;
 
     private _cluster: GaleraCluster;
     private _timer: Timer;
@@ -25,7 +25,7 @@ export class ClusterHashing {
      * @param clusterName cluster name used for prefix
      * @param options cluster settings
      */
-    constructor(cluster: GaleraCluster, clusterName: string, options: ClusterHashingSettings) {
+    constructor(cluster: GaleraCluster, clusterName: string, options: IClusterHashingSettings) {
         Logger.debug("Configuring hashing in cluster...");
         this._cluster = cluster;
         this._nextCheckTime = options.nextCheckTime;
@@ -183,7 +183,7 @@ export class ClusterHashing {
             {
                 database: this._database
             });
-            this.serviceNodeMap = result[0]["FN_GetServiceNodeMapping()"] as ServiceNodeMap;
+            this.serviceNodeMap = result[0]["FN_GetServiceNodeMapping()"] as IServiceNodeMap;
 
             this._nextCheckHashing()
         } catch (err) {

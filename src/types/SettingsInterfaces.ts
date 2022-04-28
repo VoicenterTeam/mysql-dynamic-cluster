@@ -4,15 +4,15 @@
 
 import { Redis, Cluster } from 'ioredis';
 import { IDefaultAmqpConfig, IUserAmqpConfig, LOGLEVEL } from "./AmqpInterfaces";
-import { ClusterHashingSettings, DefaultClusterHashingSettings } from "./ClusterHashingInterfaces";
-import { DefaultRedisSettings, RedisSettings } from "./RedisInterfaces";
-import { DefaultPoolSettings, GlobalUserPoolSettings, UserPoolSettings } from "./PoolSettingsInterfaces";
-import { DefaultServiceMetricsSettings, ServiceMetricsSettings } from "./MetricsInterfaces";
+import { IClusterHashingSettings, IDefaultClusterHashingSettings } from "./ClusterHashingInterfaces";
+import { IDefaultRedisSettings, IRedisSettings } from "./RedisInterfaces";
+import { IDefaultPoolSettings, IGlobalUserPoolSettings, IUserPoolSettings } from "./PoolSettingsInterfaces";
+import { IDefaultServiceMetricsSettings, IServiceMetricsSettings } from "./MetricsInterfaces";
 
 interface ISettings {
-    serviceMetrics?: ServiceMetricsSettings,
-    clusterHashing?: ClusterHashingSettings,
-    redisSettings?: RedisSettings,
+    serviceMetrics?: IServiceMetricsSettings,
+    clusterHashing?: IClusterHashingSettings,
+    redisSettings?: IRedisSettings,
     showMetricKeys?: boolean,
     useAmqpLogger?: boolean,
     amqpLoggerSettings?: IUserAmqpConfig,
@@ -20,21 +20,21 @@ interface ISettings {
     logLevel?: LOGLEVEL,
 }
 
-export interface UserSettings extends ISettings {
+export interface IUserSettings extends ISettings {
     clusterName: string,
-    hosts: UserPoolSettings[],
-    globalPoolSettings: GlobalUserPoolSettings,
+    hosts: IUserPoolSettings[],
+    globalPoolSettings: IGlobalUserPoolSettings,
     redis?: Redis | Cluster
 }
 
-export interface DefaultSettings extends ISettings {
-    globalPoolSettings: DefaultPoolSettings,
-    serviceMetrics: DefaultServiceMetricsSettings,
-    clusterHashing: DefaultClusterHashingSettings,
+export interface IDefaultSettings extends ISettings {
+    globalPoolSettings: IDefaultPoolSettings,
+    serviceMetrics: IDefaultServiceMetricsSettings,
+    clusterHashing: IDefaultClusterHashingSettings,
     showMetricKeys: boolean,
     useAmqpLogger: boolean,
     useConsoleLogger: boolean,
     logLevel: LOGLEVEL,
-    redisSettings: DefaultRedisSettings,
+    redisSettings: IDefaultRedisSettings,
     amqpLoggerSettings: IDefaultAmqpConfig
 }

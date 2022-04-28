@@ -2,8 +2,8 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { UserSettings } from "../types/SettingsInterfaces";
-import { QueryOptions, QueryValues, ClusterEvent, QueryResult } from '../types/PoolInterfaces'
+import { IUserSettings } from "../types/SettingsInterfaces";
+import { IQueryOptions, QueryValues, ClusterEvent, QueryResult } from '../types/PoolInterfaces'
 import Logger from "../utils/Logger";
 
 import { format as MySQLFormat } from 'mysql2';
@@ -13,7 +13,7 @@ import MetricNames from "../metrics/MetricNames";
 import Metrics from "../metrics/Metrics";
 import Events from "../utils/Events";
 import Redis from "../Redis/Redis";
-import { UserPoolSettings } from "../types/PoolSettingsInterfaces";
+import { IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
 import ServiceNames from "../utils/ServiceNames";
 
@@ -32,7 +32,7 @@ export class GaleraCluster {
     /**
      * @param userSettings global user settings
      */
-    constructor(userSettings: UserSettings) {
+    constructor(userSettings: IUserSettings) {
         Logger.debug("Configuring cluster...");
 
         this._errorRetryCount = userSettings.globalPoolSettings.errorRetryCount;
@@ -60,7 +60,7 @@ export class GaleraCluster {
      * @param pools pools passed in userSettings
      * @private
      */
-    private _sortPoolIds(pools: UserPoolSettings[]): number[] {
+    private _sortPoolIds(pools: IUserPoolSettings[]): number[] {
         const poolIds: number[] = [];
         pools.forEach(pool => {
             if (pool.id) poolIds.push(pool.id);
@@ -126,7 +126,7 @@ export class GaleraCluster {
      * @param values values what passed in sql string
      * @param queryOptions params for configure query
      */
-    public async query<T extends QueryResult>(sql: string, values?: QueryValues, queryOptions?: QueryOptions): Promise<T> {
+    public async query<T extends QueryResult>(sql: string, values?: QueryValues, queryOptions?: IQueryOptions): Promise<T> {
         let activePools: Pool[]; // available pools for query what passed the validator
         let retryCount; // max retry query count after error
         let serviceId = queryOptions?.serviceId;
@@ -165,7 +165,7 @@ export class GaleraCluster {
             }
         }
 
-        let errorMessage: string;
+        let errorMessage: string = "";
         errorList.forEach(err => {
             errorMessage += `Pool: ${err.pool.name}; Error: ${err.error.message}\n`;
         })
@@ -181,7 +181,7 @@ export class GaleraCluster {
      * @param queryOptions options to configure query
      * @private
      */
-    private async _queryRequest<T extends QueryResult>(sql: string, pool: Pool, queryOptions: QueryOptions): Promise<T> {
+    private async _queryRequest<T extends QueryResult>(sql: string, pool: Pool, queryOptions: IQueryOptions): Promise<T> {
         try {
             Metrics.inc(MetricNames.cluster.allQueries);
             const queryTimer = new QueryTimer(MetricNames.cluster.queryTime);

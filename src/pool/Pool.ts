@@ -7,12 +7,11 @@ import Logger from "../utils/Logger";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
 import MetricNames from "../metrics/MetricNames";
-import { QueryOptions, QueryResult } from "../types/PoolInterfaces";
+import { IQueryOptions, QueryResult } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
-import Redis from "../Redis/Redis";
-import { UserPoolSettings } from "../types/PoolSettingsInterfaces";
+import { IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
-import { MetricOptions } from "../types/MetricsInterfaces";
+import { IMetricOptions } from "../types/MetricsInterfaces";
 
 // AKA galera node
 export class Pool {
@@ -41,7 +40,7 @@ export class Pool {
      * @param settings pool settings
      * @param clusterName cluster name used for prefix
      */
-    constructor(settings: UserPoolSettings, clusterName: string) {
+    constructor(settings: IUserPoolSettings, clusterName: string) {
         this.id = settings.id;
         this.host = settings.host;
         this.port = settings.port;
@@ -132,7 +131,7 @@ export class Pool {
      * @param sql mysql query string
      * @param queryOptions query options like timeout, database, multipleStatements etc
      */
-    public async query<T extends QueryResult>(sql: string, queryOptions?: QueryOptions): Promise<T | T[]> {
+    public async query<T extends QueryResult>(sql: string, queryOptions?: IQueryOptions): Promise<T | T[]> {
         return new Promise(async (resolve, reject) => {
             queryOptions = {
                 timeout: this._queryTimeout,
@@ -140,7 +139,7 @@ export class Pool {
                 redis: this._useRedis,
                 ...queryOptions
             }
-            const poolMetricOption: MetricOptions = {
+            const poolMetricOption: IMetricOptions = {
                 pool: {
                     id: this.id,
                     name: this.name
@@ -241,7 +240,7 @@ export class Pool {
      * @param sqls array of sql queries
      * @param queryOptions query options like timeout, database etc.
      */
-    public async multiStatementQuery<T extends QueryResult>(sqls: string[], queryOptions: QueryOptions): Promise<T[]> {
+    public async multiStatementQuery<T extends QueryResult>(sqls: string[], queryOptions: IQueryOptions): Promise<T[]> {
         return new Promise((resolve, reject) => {
             queryOptions = {
                 timeout: this._queryTimeout,

@@ -9,7 +9,7 @@ import { Timer } from "../utils/Timer";
 import { Pool } from "./Pool";
 import { Validator } from "./Validator";
 import { LoadFactor } from "./LoadFactor";
-import { ITimerCheckRange, UserPoolSettings } from "../types/PoolSettingsInterfaces";
+import { ITimerCheckRange, IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
 import MetricNames from "../metrics/MetricNames";
 
@@ -52,7 +52,7 @@ export class PoolStatus {
      * @param active default pool active status before status check
      * @param availableConnectionCount max connection count in the pool
      */
-    constructor(pool: Pool, settings: UserPoolSettings, active: boolean, availableConnectionCount: number) {
+    constructor(pool: Pool, settings: IUserPoolSettings, active: boolean, availableConnectionCount: number) {
         this._pool = pool;
 
         this.active = active;

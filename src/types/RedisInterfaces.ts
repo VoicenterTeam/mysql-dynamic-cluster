@@ -1,6 +1,6 @@
 import { BinaryToTextEncoding } from "crypto";
 
-export interface RedisSettings {
+export interface IRedisSettings {
     keyPrefix?: string,
     expire?: number,
     expiryMode?: string,
@@ -9,7 +9,7 @@ export interface RedisSettings {
     clearOnStart?: boolean
 }
 
-export interface DefaultRedisSettings extends RedisSettings {
+export interface IDefaultRedisSettings extends IRedisSettings {
     keyPrefix: string,
     expire: number,
     expiryMode: string,

@@ -4,9 +4,9 @@
 
 import pm2io from '@pm2/io'
 import {
-    Metric,
-    MetricOptions,
-    MetricsRepository,
+    IMetric,
+    IMetricOptions,
+    IMetricsRepository,
     MetricType,
     MetricValue
 } from "../types/MetricsInterfaces";
@@ -19,7 +19,7 @@ import Meter from "@pm2/io/build/main/utils/metrics/meter";
  * Real-time metrics
  */
 class Metrics {
-    private metricsRepository: MetricsRepository = {};
+    private metricsRepository: IMetricsRepository = {};
     private clusterName: string;
     private showKeys: boolean;
 
@@ -39,7 +39,7 @@ class Metrics {
      * @param value the value what need to change
      * @param options extra options for metric like pool name or service name
      */
-    public set(metric: Metric, value: number, options?: MetricOptions) {
+    public set(metric: IMetric, value: number, options?: IMetricOptions) {
         if (!Metrics._isMetricTypeValid(metric, MetricType.METRIC)) return;
 
         this._getMetricValues(metric, options).forEach(metricValue => {
@@ -52,7 +52,7 @@ class Metrics {
      * @param metric metric object
      * @param options extra options for metric like pool name or service name
      */
-    public inc(metric: Metric, options?: MetricOptions) {
+    public inc(metric: IMetric, options?: IMetricOptions) {
         if (!Metrics._isMetricTypeValid(metric, MetricType.COUNTER)) return;
 
         this._getMetricValues(metric, options).forEach(metricValue => {
@@ -65,7 +65,7 @@ class Metrics {
      * @param metric metric object
      * @param options extra options for metric like pool name or service name
      */
-    public dec(metric: Metric, options?: MetricOptions) {
+    public dec(metric: IMetric, options?: IMetricOptions) {
         if (!Metrics._isMetricTypeValid(metric, MetricType.COUNTER)) return;
 
         this._getMetricValues(metric, options).forEach(metricValue => {
@@ -78,7 +78,7 @@ class Metrics {
      * @param metric metric object
      * @param options extra options for metric like pool name or service name
      */
-    public mark(metric: Metric, options?: MetricOptions) {
+    public mark(metric: IMetric, options?: IMetricOptions) {
         if (!Metrics._isMetricTypeValid(metric, MetricType.METER)) return;
 
         this._getMetricValues(metric, options).forEach(metricValue => {
@@ -92,7 +92,7 @@ class Metrics {
      * @param type type what need to compare with current metric
      * @private
      */
-    private static _isMetricTypeValid(metric: Metric, type: MetricType): boolean {
+    private static _isMetricTypeValid(metric: IMetric, type: MetricType): boolean {
         if (metric.type === type) return true;
 
         Logger.error(`Metric type of ${metric.key} is not valid. Should be ${MetricType[type]}`);
@@ -106,8 +106,8 @@ class Metrics {
      * @param options extra options for metric like pool name or service name
      * @private
      */
-    private _generatePrefixes(metric: Metric, options?: MetricOptions, useService: boolean = false): Metric {
-        const newMetric: Metric = {
+    private _generatePrefixes(metric: IMetric, options?: IMetricOptions, useService: boolean = false): IMetric {
+        const newMetric: IMetric = {
             key: `${this.clusterName}_`,
             name: `[${this.clusterName}] `,
             type: metric.type
@@ -132,8 +132,8 @@ class Metrics {
      * @param options extra options for metric like pool name or/and service name
      * @private
      */
-    private _getMetricValues(metric: Metric, options?: MetricOptions): MetricValue[] {
-        const metrics: Metric[] = [];
+    private _getMetricValues(metric: IMetric, options?: IMetricOptions): MetricValue[] {
+        const metrics: IMetric[] = [];
         const metricValues: MetricValue[] = [];
 
         if (options?.service) {
@@ -156,7 +156,7 @@ class Metrics {
      * @param metric metric object
      * @private
      */
-    private _createMetric(metric: Metric): void {
+    private _createMetric(metric: IMetric): void {
         const metricKey = metric.key;
         const metricName = metric.name;
 

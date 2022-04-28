@@ -5,14 +5,14 @@
 import { Redis as RedisLib, Cluster, ValueType, Ok } from "ioredis";
 import Logger from "../utils/Logger";
 import { createHash } from "crypto";
-import { RedisSettings } from "../types/RedisInterfaces";
+import { IRedisSettings } from "../types/RedisInterfaces";
 
 class Redis {
 	private redis: RedisLib | Cluster;
 	private isReady: boolean = false;
-	private redisSettings: RedisSettings;
+	private redisSettings: IRedisSettings;
 
-	init(newRedis: RedisLib | Cluster, clusterName: string, redisSettings: RedisSettings): void {
+	init(newRedis: RedisLib | Cluster, clusterName: string, redisSettings: IRedisSettings): void {
 		this.redis = newRedis;
 		this.redisSettings = redisSettings;
 		this.redisSettings.keyPrefix = `${clusterName}_${this.redisSettings.keyPrefix}`;

@@ -2,19 +2,19 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { GlobalStatusResult, LoadFactorParams } from "../types/PoolInterfaces";
+import { GlobalStatusResult, ILoadFactorParams } from "../types/PoolInterfaces";
 import Logger from "../utils/Logger";
 
 /**
  * Load factor for pools to easily sort them
  */
 export class LoadFactor {
-    private _loadFactors: LoadFactorParams[];
+    private _loadFactors: ILoadFactorParams[];
 
     /**
      * @param loadFactors parameters by which values pools should sort
      */
-    constructor(loadFactors: LoadFactorParams[]) {
+    constructor(loadFactors: ILoadFactorParams[]) {
         this._loadFactors = loadFactors;
     }
 
