@@ -17,3 +17,8 @@ export interface IDefaultRedisSettings extends IRedisSettings {
     encoding: BinaryToTextEncoding,
     clearOnStart: boolean
 }
+
+export interface IRedisData {
+    expired: number,
+    data: any
+}

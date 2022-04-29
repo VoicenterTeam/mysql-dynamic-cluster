@@ -8,7 +8,7 @@ export class QueryTimer {
     private readonly _metric: IMetric;
 
     /**
-     * @param metric metric object
+     * @param metric metric object where to save query time
      */
     constructor(metric: IMetric) {
         this._metric = metric;

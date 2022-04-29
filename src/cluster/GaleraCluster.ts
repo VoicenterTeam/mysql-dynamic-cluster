@@ -16,6 +16,7 @@ import Redis from "../Redis/Redis";
 import { IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
 import ServiceNames from "../utils/ServiceNames";
+import { IRedisData } from "../types/RedisInterfaces";
 
 export class GaleraCluster {
     public connected: boolean = false;
@@ -143,6 +144,28 @@ export class GaleraCluster {
         }
 
         sql = this._formatSQL(sql, values);
+        let redisData: IRedisData = null;
+        if (queryOptions.redis) {
+            const redisLatency = new QueryTimer(MetricNames.redis.latency);
+            redisLatency.start();
+
+            Metrics.inc(MetricNames.redis.uses);
+            const redisResult = await Redis.get(sql);
+
+            redisLatency.end();
+            redisLatency.save();
+
+            if (redisResult) {
+                Logger.debug("Get result of query from redis");
+                redisData = JSON.parse(redisResult);
+                if (redisData.expired > Date.now()) {
+                    return redisData.data;
+                }
+
+                Metrics.inc(MetricNames.redis.expired);
+            }
+        }
+
         const errorList: {
             error: any,
             pool: Pool
@@ -171,6 +194,10 @@ export class GaleraCluster {
         })
 
         Logger.error("All pools have error. Error messages: \n" + errorMessage);
+        if (redisData) {
+            Logger.warn("Use old data from Redis");
+            return redisData.data;
+        }
         throw new Error(errorMessage);
     }
 

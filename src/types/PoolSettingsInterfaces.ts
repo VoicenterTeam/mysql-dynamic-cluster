@@ -19,8 +19,7 @@ interface IPoolSettings {
     timerCheckMultiplier?: number,
     slowQueryTime?: number,
     useRedis?: boolean,
-    redisFactor?: number,
-    redisExpire?: number
+    redisFactor?: number
 }
 
 export interface IGlobalUserPoolSettings extends IPoolSettings {
@@ -32,7 +31,8 @@ export interface IGlobalUserPoolSettings extends IPoolSettings {
 export interface IUserPoolSettings extends IPoolSettings {
     id?: number,
     name?: string,
-    host: string
+    host: string,
+    redisExpire?: number
 }
 
 export interface IDefaultPoolSettings extends IPoolSettings {

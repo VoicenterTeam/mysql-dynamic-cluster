@@ -57,10 +57,10 @@ class Redis {
 		Logger.info("Redis disconnected");
 	}
 
-	async set(key: string, value: ValueType): Promise<Ok | null> {
+	async set(key: string, value: ValueType, queryExpire?: number): Promise<Ok | null> {
 		if (!this.isEnabled()) return null;
 		try {
-			const expire: number = this.redisSettings.expire || 100;
+			const expire: number = queryExpire || this.redisSettings.expire || 100;
 			const expireMode: string = this.redisSettings.expiryMode || 'EX';
 
 			key = this.redisSettings.keyPrefix + this.hash(key);

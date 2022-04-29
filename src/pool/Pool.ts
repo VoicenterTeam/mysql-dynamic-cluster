@@ -12,6 +12,8 @@ import Events from "../utils/Events";
 import { IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
 import { IMetricOptions } from "../types/MetricsInterfaces";
+import Redis from "../Redis/Redis";
+import { IRedisData } from "../types/RedisInterfaces";
 
 // AKA galera node
 export class Pool {
@@ -33,6 +35,8 @@ export class Pool {
     private readonly _queryTimeout: number;
     private readonly _slowQueryTime: number;
     private readonly _useRedis: boolean;
+    private readonly _redisFactor: number;
+    private readonly _redisExpire: number;
 
     private _pool: mysql.Pool;
 
@@ -53,6 +57,8 @@ export class Pool {
         this._queryTimeout = settings.queryTimeout;
         this._slowQueryTime = settings.slowQueryTime;
         this._useRedis = settings.useRedis;
+        this._redisFactor = settings.redisFactor;
+        this._redisExpire = settings.redisExpire;
 
         this.connectionLimit = settings.connectionLimit;
 
@@ -137,6 +143,8 @@ export class Pool {
                 timeout: this._queryTimeout,
                 database: this._database,
                 redis: this._useRedis,
+                redisFactor: this._redisFactor,
+                redisExpire: this._redisExpire,
                 ...queryOptions
             }
             const poolMetricOption: IMetricOptions = {
@@ -198,42 +206,20 @@ export class Pool {
 
                     Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
 
+                    if (queryOptions.redis) {
+                        const redisExpired = new Date().getTime() + queryTimer.get() * 1000 * queryOptions.redisFactor;
+                        const redisData: IRedisData = {
+                            data: result,
+                            expired: redisExpired
+                        }
+                        Redis.set(sql, JSON.stringify(redisData), queryOptions.redisExpire);
+                    }
 
-                    // let redisExpired = new Date().getTime() + queryTimer.get() * 1000 * redisFactor (60);
-                    // let redisData = {
-                    //     data: result,
-                    //     expired: redisExpired
-                    // }
-                    // if (queryOptions.redis) Redis.set(sql, JSON.stringify(result));
                     resolve(result);
                 });
             })
         })
     }
-
-    // #TODO: move redis to cluster
-    // getRedis(useRedis: boolean) {
-    //     if (useRedis) {
-    //         // redis metrics counter
-    //         const redisResult = await Redis.get(sql);
-    //
-    //         // redis latency is query time for redis
-    //         if (redisResult) {
-    //             Logger.debug("Get result of query from redis");
-    //             let redisData = JSON.parse(redisResult);
-    //             if (redisData.expired < Date.now()) {
-    //                 // metrics for redis error
-    //                 try {
-    //                     resolve()
-    //                 } catch (e) {
-    //
-    //                 }
-    //             }
-    //             resolve(JSON.parse(redisData.data));
-    //             return;
-    //         }
-    //     }
-    // }
 
     /**
      * Pool query by mysql transaction

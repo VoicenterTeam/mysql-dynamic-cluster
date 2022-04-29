@@ -76,14 +76,14 @@ const MetricNames = {
         }
     },
     redis: {
-        counter: {
+        uses: {
             key: 'redis_uses',
             name: 'Redis uses',
             type: MetricType.COUNTER
         },
-        errors: {
-            key: 'redis_errors',
-            name: 'Redis errors',
+        expired: {
+            key: 'redis_expired',
+            name: 'Redis expired',
             type: MetricType.COUNTER
         },
         latency: {
