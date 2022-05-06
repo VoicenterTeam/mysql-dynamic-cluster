@@ -132,6 +132,9 @@ export class GaleraCluster {
         let retryCount; // max retry query count after error
         let serviceId = queryOptions?.serviceId;
 
+        Metrics.mark(MetricNames.cluster.queryPerMinute);
+        Metrics.inc(MetricNames.cluster.allQueries);
+
         try {
             if (!serviceId && queryOptions?.serviceName) {
                 serviceId = await this._serviceNames.getID(queryOptions.serviceName);
@@ -140,6 +143,7 @@ export class GaleraCluster {
             activePools = await this._getActivePools(serviceId);
             retryCount = this._maxRetryCount(queryOptions?.maxRetry, activePools.length);
         } catch (e) {
+            Metrics.inc(MetricNames.cluster.errorQueries);
             throw new Error(e);
         }
 
@@ -159,6 +163,7 @@ export class GaleraCluster {
                 Logger.debug("Get result of query from redis");
                 redisData = JSON.parse(redisResult);
                 if (redisData.expired > Date.now()) {
+                    Metrics.inc(MetricNames.cluster.successfulQueries);
                     return redisData.data;
                 }
 
@@ -174,8 +179,9 @@ export class GaleraCluster {
         for (let i = 0; i < retryCount; i++) {
             try {
                 Logger.debug("Query use host: " + activePools[i].host);
-                Metrics.mark(MetricNames.cluster.queryPerMinute);
-                return await this._queryRequest(sql, activePools[i], queryOptions);
+                const res = await this._queryRequest(sql, activePools[i], queryOptions) as T;
+                Metrics.inc(MetricNames.cluster.successfulQueries);
+                return res;
             } catch (e) {
                 errorList.push({
                     error: e,
@@ -196,8 +202,11 @@ export class GaleraCluster {
         Logger.error("All pools have error. Error messages: \n" + errorMessage);
         if (redisData) {
             Logger.warn("Use old data from Redis");
+            Metrics.inc(MetricNames.cluster.successfulQueries);
             return redisData.data;
         }
+
+        Metrics.inc(MetricNames.cluster.errorQueries);
         throw new Error(errorMessage);
     }
 
@@ -210,7 +219,6 @@ export class GaleraCluster {
      */
     private async _queryRequest<T extends QueryResult>(sql: string, pool: Pool, queryOptions: IQueryOptions): Promise<T> {
         try {
-            Metrics.inc(MetricNames.cluster.allQueries);
             const queryTimer = new QueryTimer(MetricNames.cluster.queryTime);
             queryTimer.start();
 
@@ -218,7 +226,7 @@ export class GaleraCluster {
 
             queryTimer.end();
             queryTimer.save();
-            Metrics.inc(MetricNames.cluster.successfulQueries);
+
             // if (queryOptions?.serviceId) {
             //     this._clusterHashing?.updateServiceForNode(queryOptions?.serviceId, pool.id);
             // }
@@ -227,7 +235,6 @@ export class GaleraCluster {
             // if (queryOptions?.serviceId) {
             //     this._clusterHashing?.updateServiceForNode(queryOptions?.serviceId, pool.id);
             // }
-            Metrics.inc(MetricNames.cluster.errorQueries);
             throw new Error("Query error: " + e.message);
         }
     }
