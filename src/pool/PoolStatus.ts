@@ -82,12 +82,11 @@ export class PoolStatus {
      * Check pool status
      */
     public async checkStatus() {
+        const queryTimer = new QueryTimer(MetricNames.pool.queryTime);
         try {
             if (!this.active) return;
-            const queryTimer = new QueryTimer(MetricNames.pool.queryTime);
 
             Logger.debug("checking pool status in host: " + this._pool.host);
-
             queryTimer.start();
 
             const result = await this._pool.query(`SHOW GLOBAL STATUS;`) as GlobalStatusResult[];
@@ -103,6 +102,10 @@ export class PoolStatus {
             this.nextCheckStatus()
         } catch (err) {
             Logger.error("Something wrong while checking status in host: " + this._pool.host + ".\n Message: " + err.message);
+
+            queryTimer.end();
+            this._queryTime = queryTimer.get();
+
             this.nextCheckStatus(true)
         }
     }

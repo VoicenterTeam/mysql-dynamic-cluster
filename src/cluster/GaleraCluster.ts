@@ -218,8 +218,8 @@ export class GaleraCluster {
      * @private
      */
     private async _queryRequest<T extends QueryResult>(sql: string, pool: Pool, queryOptions: IQueryOptions): Promise<T> {
+        const queryTimer = new QueryTimer(MetricNames.cluster.queryTime);
         try {
-            const queryTimer = new QueryTimer(MetricNames.cluster.queryTime);
             queryTimer.start();
 
             const result = await pool.query(sql, queryOptions) as T;
@@ -235,6 +235,8 @@ export class GaleraCluster {
             // if (queryOptions?.serviceId) {
             //     this._clusterHashing?.updateServiceForNode(queryOptions?.serviceId, pool.id);
             // }
+            queryTimer.end();
+            queryTimer.save();
             throw new Error("Query error: " + e.message);
         }
     }

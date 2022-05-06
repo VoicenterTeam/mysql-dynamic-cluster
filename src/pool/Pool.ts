@@ -169,12 +169,16 @@ export class Pool {
             this._pool.getConnection((err, conn) => {
                 if (err) {
                     Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
+                    queryTimer.end();
+                    queryTimer.save(poolMetricOption);
                     conn?.release();
                     reject(err);
                 }
 
                 if (!conn) {
                     Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
+                    queryTimer.end();
+                    queryTimer.save(poolMetricOption);
                     conn?.release();
                     reject(new Error("Can't find connection. Maybe it was unexpectedly closed."));
                 }
@@ -184,6 +188,8 @@ export class Pool {
                 conn?.changeUser({ database: queryOptions.database }, (error) => {
                     if (error) {
                         Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
+                        queryTimer.end();
+                        queryTimer.save(poolMetricOption);
                         conn.release();
                         reject(error);
                     }
@@ -193,6 +199,8 @@ export class Pool {
                 conn?.query({ sql, timeout: queryOptions.timeout }, (error, result: T) => {
                     if (error) {
                         Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
+                        queryTimer.end();
+                        queryTimer.save(poolMetricOption);
                         conn.release();
                         reject(error);
                     }
