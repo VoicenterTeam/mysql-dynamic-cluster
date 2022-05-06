@@ -34,7 +34,7 @@ export class QueryTimer {
      * @param options extra options for metric like pool name or service name
      */
     public save(options?: IMetricOptions): void {
-        Metrics.set(this._metric, this._queryTime, options);
+        Metrics.update(this._metric, this._queryTime, options);
     }
 
     /**

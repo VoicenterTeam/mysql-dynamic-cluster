@@ -3,17 +3,13 @@
  */
 
 import pm2io from '@pm2/io'
-import {
-    IMetric,
-    IMetricOptions,
-    IMetricsRepository,
-    MetricType,
-    MetricValue
-} from "../types/MetricsInterfaces";
+import { IMetric, IMetricOptions, IMetricsRepository, MetricType, MetricValue } from "../types/MetricsInterfaces";
 import Logger from "../utils/Logger";
 import Gauge from "@pm2/io/build/main/utils/metrics/gauge";
 import Counter from "@pm2/io/build/main/utils/metrics/counter";
 import Meter from "@pm2/io/build/main/utils/metrics/meter";
+import { MetricMeasurements } from "@pm2/io/build/main/services/metrics";
+import Histogram from "@pm2/io/build/main/utils/metrics/histogram";
 
 /**
  * Real-time metrics
@@ -83,6 +79,14 @@ class Metrics {
 
         this._getMetricValues(metric, options).forEach(metricValue => {
             (metricValue as Meter).mark();
+        })
+    }
+
+    public update(metric: IMetric, value: number, options?: IMetricOptions) {
+        if (!Metrics._isMetricTypeValid(metric, MetricType.HISTOGRAM)) return;
+
+        this._getMetricValues(metric, options).forEach(metricValue => {
+            (metricValue as Histogram).update(value);
         })
     }
 
@@ -174,6 +178,12 @@ class Metrics {
             case MetricType.METER:
                 this.metricsRepository[metricKey] = pm2io.meter({
                     name: metricName
+                })
+                break;
+            case MetricType.HISTOGRAM:
+                this.metricsRepository[metricKey] = pm2io.histogram({
+                    name: metricName,
+                    measurement: MetricMeasurements.mean
                 })
                 break;
             default:

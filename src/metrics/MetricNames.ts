@@ -40,7 +40,7 @@ const MetricNames = {
         queryTime: {
             key: 'cluster_query_time',
             name: 'Cluster query time',
-            type: MetricType.METRIC
+            type: MetricType.HISTOGRAM
         },
         queryPerMinute: {
             key: 'cluster_query_per_minute',
@@ -67,7 +67,7 @@ const MetricNames = {
         queryTime: {
             key: 'pool_query_time',
             name: 'Pool query time',
-            type: MetricType.METRIC
+            type: MetricType.HISTOGRAM
         },
         queryPerMinute: {
             key: 'pool_query_per_minute',
@@ -89,7 +89,7 @@ const MetricNames = {
         latency: {
             key: 'redis_latency',
             name: 'Redis latency',
-            type: MetricType.METRIC
+            type: MetricType.HISTOGRAM
         }
     }
 }

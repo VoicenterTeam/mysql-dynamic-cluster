@@ -4,13 +4,15 @@
 import Gauge from "@pm2/io/build/main/utils/metrics/gauge";
 import Meter from "@pm2/io/build/main/utils/metrics/meter";
 import Counter from "@pm2/io/build/main/utils/metrics/counter";
+import Histogram from "@pm2/io/build/main/utils/metrics/histogram";
 
-export type MetricValue = Gauge | Meter | Counter;
+export type MetricValue = Gauge | Meter | Counter | Histogram;
 
 export enum MetricType {
     METRIC,
     METER,
-    COUNTER
+    COUNTER,
+    HISTOGRAM
 }
 
 export interface IMetricGroup {
