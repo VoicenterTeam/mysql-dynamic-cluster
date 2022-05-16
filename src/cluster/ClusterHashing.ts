@@ -11,7 +11,7 @@ import { join, parse } from "path";
 import { IClusterHashingSettings } from "../types/ClusterHashingInterfaces";
 
 export class ClusterHashing {
-    public serviceNodeMap: IServiceNodeMap;
+    public serviceNodeMap: Map<number, number> = new Map<number, number>(); // key: serviceID; value: nodeID
 
     private _cluster: GaleraCluster;
     private _timer: Timer;
@@ -54,8 +54,8 @@ export class ClusterHashing {
      */
     private async _createDB() {
         try {
-            // const extraPath = '';
-            const extraPath = '../';
+            const extraPath = '';
+            // const extraPath = '../';
             const sqlLocations: string[] = [
                 extraPath + '../../assets/sql/create_hashing_database/tables/',
                 extraPath + '../../assets/sql/create_hashing_database/routines/'
@@ -101,40 +101,43 @@ export class ClusterHashing {
     private async _isDatabaseCompletelyCreated(pathToSqls: string[]): Promise<boolean> {
         try {
             Logger.debug(`Checking if database ${this._database} completely created for hashing...`);
-            const res: any[] = await this._cluster.pools[0].query(`show databases where \`Database\` = '${this._database}';`);
-            if (res.length) {
-                const sqlFileNames: string[] = [];
-                let countCorrectlyCreated: number = 0;
+            const res: any[] = await this._cluster.query(
+                `show databases where \`Database\` = '${this._database}';`,
+                null,
+                { maxRetry: 1 }
+            );
 
-                pathToSqls.forEach(path => {
-                    readdirSync(join(__dirname, path)).forEach(filename => {
-                        sqlFileNames.push(parse(filename).name);
-                    });
-                })
+            if (res.length < 1) return false;
 
-                const resultTable: any[] = await this._cluster.query(
-                    `show table status from \`${this._database}\`;`,
-                    null,
-                    { maxRetry: 1 }
-                );
-                const resultFunc: any[] = await this._cluster.query(
-                    `show function status WHERE Db = '${this._database}';`,
-                    null,
-                    { maxRetry: 1 }
-                );
-                const resultProc: any[] = await this._cluster.query(
-                    `show procedure status WHERE Db = '${this._database}';`,
-                    null,
-                    { maxRetry: 1 }
-                );
-                [...resultTable, ...resultFunc, ...resultProc].forEach(elem => {
-                    if (sqlFileNames.includes(elem.Name)) countCorrectlyCreated++;
-                })
+            const sqlFileNames: string[] = [];
+            let countCorrectlyCreated: number = 0;
 
-                if (countCorrectlyCreated === sqlFileNames.length) return true;
-            }
+            pathToSqls.forEach(path => {
+                readdirSync(join(__dirname, path)).forEach(filename => {
+                    sqlFileNames.push(parse(filename).name);
+                });
+            })
 
-            return false;
+            const resultTable: any[] = await this._cluster.query(
+                `show table status from \`${this._database}\`;`,
+                null,
+                { maxRetry: 1 }
+            );
+            const resultFunc: any[] = await this._cluster.query(
+                `show function status WHERE Db = '${this._database}';`,
+                null,
+                { maxRetry: 1 }
+            );
+            const resultProc: any[] = await this._cluster.query(
+                `show procedure status WHERE Db = '${this._database}';`,
+                null,
+                { maxRetry: 1 }
+            );
+            [...resultTable, ...resultFunc, ...resultProc].forEach(elem => {
+                if (sqlFileNames.includes(elem.Name)) countCorrectlyCreated++;
+            })
+
+            return countCorrectlyCreated === sqlFileNames.length;
         } catch (e) {
             throw e;
         }
@@ -183,7 +186,8 @@ export class ClusterHashing {
             {
                 database: this._database
             });
-            this.serviceNodeMap = result[0]["FN_GetServiceNodeMapping()"] as IServiceNodeMap;
+            const res: IServiceNodeMap = result[0].Result as IServiceNodeMap;
+            console.log(res);
 
             this._nextCheckHashing()
         } catch (err) {

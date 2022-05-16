@@ -30,12 +30,16 @@ export class GaleraCluster {
     private readonly _serviceNames: ServiceNames;
     private readonly _errorRetryCount: number; // retry count after query error
 
+    private readonly _clusterName: string;
+    private readonly _nullServiceName: string = "mdc"
+
     /**
      * @param userSettings global user settings
      */
     constructor(userSettings: IUserSettings) {
         Logger.debug("Configuring cluster...");
 
+        this._clusterName = userSettings.clusterName;
         this._errorRetryCount = userSettings.globalPoolSettings.errorRetryCount;
         const poolIds: number[] = this._sortPoolIds(userSettings.hosts);
 
@@ -46,12 +50,12 @@ export class GaleraCluster {
             }
 
             this._pools.push(
-                new Pool(poolSettings, userSettings.clusterName)
+                new Pool(poolSettings, this._clusterName)
             )
         })
 
         this._serviceNames = new ServiceNames(this, userSettings.serviceMetrics);
-        this._clusterHashing = new ClusterHashing(this, userSettings.clusterName, userSettings.clusterHashing);
+        this._clusterHashing = new ClusterHashing(this, this._clusterName, userSettings.clusterHashing);
 
         Logger.info("Cluster configuration finished");
     }
@@ -139,7 +143,11 @@ export class GaleraCluster {
             if (!serviceId && queryOptions?.serviceName) {
                 serviceId = await this._serviceNames.getID(queryOptions.serviceName);
                 queryOptions.serviceId = serviceId;
+            } else if (!serviceId) {
+                queryOptions.serviceId = 0;
+                queryOptions.serviceName = `${this._clusterName}_${this._nullServiceName}`;
             }
+
             activePools = await this._getActivePools(serviceId);
             retryCount = this._maxRetryCount(queryOptions?.maxRetry, activePools.length);
         } catch (e) {
