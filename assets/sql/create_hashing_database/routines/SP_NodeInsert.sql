@@ -24,5 +24,5 @@ BEGIN
     end if;
     INSERT INTO node (node_id, node_name, ip, port)
     VALUES (_ID, _Name, _IP, _Port)
-    ON DUPLICATE KEY UPDATE node_name=_Name, ip=_IP, port=_Port;
+    ON DUPLICATE KEY UPDATE node_name = _Name, ip = _IP, port = _Port;
 END;
