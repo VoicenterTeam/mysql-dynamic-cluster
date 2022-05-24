@@ -50,7 +50,7 @@ const cfg = {
      * REGULAR - show all information instead debug
      * QUIET - show only warning and errors
      */
-    logLevel: galeraCluster.LOGLEVEL.FULL,
+    // logLevel: galeraCluster.LOGLEVEL.FULL,
     // showMetricKeys: true,
     useAmqpLogger: true,
     useConsoleLogger: true,
@@ -68,11 +68,6 @@ cluster.on('connected', () => {
 
 async function test() {
     await cluster.connect();
-    /**
-     * Enable hashing if needed.
-     * Recommend at first running on a server use await for completely create database for hashing
-     */
-    await cluster.enableHashing();
 
     try {
         const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`, null, { redis: true });

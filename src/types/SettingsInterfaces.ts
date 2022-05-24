@@ -11,6 +11,7 @@ import { IDefaultServiceMetricsSettings, IServiceMetricsSettings } from "./Metri
 
 interface ISettings {
     serviceMetrics?: IServiceMetricsSettings,
+    useClusterHashing?: boolean,
     clusterHashing?: IClusterHashingSettings,
     redisSettings?: IRedisSettings,
     showMetricKeys?: boolean,
@@ -30,6 +31,7 @@ export interface IUserSettings extends ISettings {
 export interface IDefaultSettings extends ISettings {
     globalPoolSettings: IDefaultPoolSettings,
     serviceMetrics: IDefaultServiceMetricsSettings,
+    useClusterHashing: boolean,
     clusterHashing: IDefaultClusterHashingSettings,
     showMetricKeys: boolean,
     useAmqpLogger: boolean,

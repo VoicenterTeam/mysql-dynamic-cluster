@@ -8,7 +8,7 @@ import { Timer } from "../utils/Timer";
 import { IServiceNodeMap } from "../types/PoolInterfaces";
 import { readFileSync, readdirSync }  from 'fs'
 import { join, parse } from "path";
-import { IClusterHashingSettings } from "../types/ClusterHashingInterfaces";
+import { IClusterHashingSettings, ISQLLocations } from "../types/ClusterHashingInterfaces";
 
 export class ClusterHashing {
     public serviceNodeMap: Map<number, number> = new Map<number, number>(); // key: serviceID; value: nodeID
@@ -19,6 +19,9 @@ export class ClusterHashing {
     // Next time for hashing check
     private readonly _nextCheckTime: number;
     private readonly _database: string;
+    private readonly _databaseVersion: number = 1;
+
+    // TODO: cluster hashing db version. Change created status
 
     /**
      * @param cluster cluster for what hashing data
@@ -54,14 +57,15 @@ export class ClusterHashing {
      */
     private async _createDB() {
         try {
-            const extraPath = '';
-            // const extraPath = '../';
-            const sqlLocations: string[] = [
-                extraPath + '../../assets/sql/create_hashing_database/tables/',
-                extraPath + '../../assets/sql/create_hashing_database/routines/'
-            ];
+            // const extraPath = '';
+            const extraPath = '../';
+            const sqlLocations: ISQLLocations = {
+                tables: extraPath + '../../assets/sql/create_hashing_database/tables/',
+                routines: extraPath + '../../assets/sql/create_hashing_database/routines/',
+                metadata: extraPath + '../../assets/sql/create_hashing_database/metadata/'
+            }
 
-            if (await this._isDatabaseCompletelyCreated(sqlLocations)) {
+            if (await this._isDatabaseCreated()) {
                 Logger.info(`Database ${this._database} has created for hashing`);
                 return;
             }
@@ -70,24 +74,23 @@ export class ClusterHashing {
             await this._cluster.pools[0].query(`CREATE SCHEMA IF NOT EXISTS \`${this._database}\` COLLATE utf8_general_ci;`);
 
             const sqls: string[] = [];
-            for (const path of sqlLocations) {
-                for ( const sql of this._readFilesInDir( join(__dirname, path) ) ) {
-                    sqls.push(sql);
-                }
-            }
+            sqls.push( ...this._readFilesInDir(join(__dirname, sqlLocations.tables)).fileContents );
 
-            const sqlsDrop = [
-                `DROP PROCEDURE IF EXISTS FN_GetServiceNodeMapping;`,
-                `DROP PROCEDURE IF EXISTS SP_NodeInsert;`,
-                `DROP PROCEDURE IF EXISTS SP_NodeServiceUpdate;`,
-                `DROP PROCEDURE IF EXISTS SP_RemoveNode;`,
-                `DROP PROCEDURE IF EXISTS SP_RemoveService;`
-            ]
+            const routinesSqls = this._readFilesInDir(join(__dirname, sqlLocations.routines));
+            sqls.push( ...routinesSqls.fileContents );
+
+            const sqlsMetadata: string[] = this._readFilesInDir(join(__dirname, sqlLocations.metadata)).fileContents;
+
+            const sqlsDrop: string[] = [];
+            routinesSqls.fileNames.forEach(name => {
+                sqlsDrop.push(`DROP PROCEDURE IF EXISTS ${name};`);
+            });
 
             await this._cluster.pools[0].multiStatementQuery(sqlsDrop, { database: this._database });
             await this._cluster.pools[0].multiStatementQuery(sqls, { database: this._database });
+            await this._cluster.pools[0].multiStatementQuery(sqlsMetadata, { database: this._database });
 
-            Logger.info(`Database ${this._database} completely created for hashing`);
+            Logger.info(`Database ${this._database} created for hashing`);
         } catch (e) {
             Logger.error(e.message);
         }
@@ -95,52 +98,34 @@ export class ClusterHashing {
 
     /**
      * Check if database for hashing completely created
-     * @param pathToSqls path to folders with sql files
      * @private
      */
-    private async _isDatabaseCompletelyCreated(pathToSqls: string[]): Promise<boolean> {
+    private async _isDatabaseCreated(): Promise<boolean> {
         try {
-            Logger.debug(`Checking if database ${this._database} completely created for hashing...`);
-            const res: any[] = await this._cluster.query(
+            Logger.debug(`Checking if database ${this._database} created for hashing...`);
+            const resDb: any[] = await this._cluster.query(
                 `show databases where \`Database\` = '${this._database}';`,
                 null,
                 { maxRetry: 1 }
             );
 
-            if (res.length < 1) return false;
+            if (resDb.length < 1) return false;
 
-            const sqlFileNames: string[] = [];
-            let countCorrectlyCreated: number = 0;
-
-            pathToSqls.forEach(path => {
-                readdirSync(join(__dirname, path)).forEach(filename => {
-                    sqlFileNames.push(parse(filename).name);
-                });
-            })
-
-            const resultTable: any[] = await this._cluster.query(
-                `show table status from \`${this._database}\`;`,
+            const resTable: any[] = await this._cluster.query(
+                `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = "metadata";`,
                 null,
                 { maxRetry: 1 }
             );
-            const resultFunc: any[] = await this._cluster.query(
-                `show function status WHERE Db = '${this._database}';`,
-                null,
-                { maxRetry: 1 }
-            );
-            const resultProc: any[] = await this._cluster.query(
-                `show procedure status WHERE Db = '${this._database}';`,
-                null,
-                { maxRetry: 1 }
-            );
-            [...resultTable, ...resultFunc, ...resultProc].forEach(elem => {
-                if (sqlFileNames.includes(elem.Name)) countCorrectlyCreated++;
-            })
 
-            return countCorrectlyCreated === sqlFileNames.length;
+            if (resTable.length < 1) return false;
+
         } catch (e) {
             throw e;
         }
+    }
+
+    private async _isDatabaseVersionEquals(): Promise<boolean> {
+        return false;
     }
 
     /**
@@ -148,13 +133,16 @@ export class ClusterHashing {
      * @param dirname path to folder
      * @private
      */
-    private _readFilesInDir(dirname: string): string[] {
-        const fileNames: string[] = readdirSync(dirname);
+    private _readFilesInDir(dirname: string): { fileNames: string[], fileContents: string[] } {
+        const fullFileNames: string[] = readdirSync(dirname);
+        const fileNames: string[] = [];
         const fileContents: string[] = [];
-        fileNames.forEach(filename => {
+        fullFileNames.forEach(filename => {
             fileContents.push(readFileSync(dirname + filename).toString());
+            fileNames.push(parse(filename).name);
         })
-        return fileContents;
+
+        return { fileNames, fileContents };
     }
 
     /**

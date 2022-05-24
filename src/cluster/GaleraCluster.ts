@@ -26,6 +26,7 @@ export class GaleraCluster {
         return this._pools;
     }
 
+    private readonly _useClusterHashing: boolean;
     private readonly _clusterHashing: ClusterHashing;
     private readonly _serviceNames: ServiceNames;
     private readonly _errorRetryCount: number; // retry count after query error
@@ -39,6 +40,7 @@ export class GaleraCluster {
     constructor(userSettings: IUserSettings) {
         Logger.debug("Configuring cluster...");
 
+        this._useClusterHashing = userSettings.useClusterHashing;
         this._clusterName = userSettings.clusterName;
         this._errorRetryCount = userSettings.globalPoolSettings.errorRetryCount;
         const poolIds: number[] = this._sortPoolIds(userSettings.hosts);
@@ -78,25 +80,31 @@ export class GaleraCluster {
      * Connect all cluster pools what created from host information in config
      */
     public async connect(): Promise<void> {
-        Logger.debug("Connecting all pools");
-        this._pools.forEach((pool) => {
-            pool.connect().then(() => {
-                if (this.connected) return;
+        return new Promise((resolve, reject) => {
+            Logger.debug("Connecting all pools");
+            this._pools.forEach((pool) => {
+                pool.connect().then(async () => {
+                    if (this.connected) return;
 
-                this.connected = true;
-                Events.emit('connected');
-                Logger.info('Cluster connected');
-                return;
-            }).catch(err => {
-                Logger.error(err.message);
-            });
+                    this.connected = true;
+                    if (this._useClusterHashing) await this._enableHashing();
+
+                    Events.emit('connected');
+                    Logger.info('Cluster connected');
+
+                    resolve();
+                }).catch(err => {
+                    Logger.error(err.message);
+                    reject(err.message);
+                });
+            })
         })
     }
 
     /**
      * Enable hashing for cluster
      */
-    public async enableHashing() {
+    private async _enableHashing() {
         await this._clusterHashing.connect();
         Events.emit('hashing_created');
         Logger.info("Cluster hashing enabled");

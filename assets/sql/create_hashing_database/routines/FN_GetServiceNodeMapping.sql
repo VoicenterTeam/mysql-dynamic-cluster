@@ -2,6 +2,11 @@ create
     definer = root@localhost function FN_GetServiceNodeMapping() returns json
 BEGIN
     RETURN (
-        SELECT JSON_OBJECTAGG(ns.service_id, ns.node_id) FROM node_services ns AS Result;
+        SELECT JSON_OBJECTAGG(
+            JSON_OBJECT(
+                "ServiceID", ns.service_id,
+                "NodeID", ns.node_id,
+            )
+        ) FROM node_services ns;
     );
 END;

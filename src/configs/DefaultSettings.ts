@@ -14,6 +14,7 @@ const defaultSettings: IDefaultSettings = {
     database: 'swagger_realtime',
     table: 'Service'
   },
+  useClusterHashing: true,
   clusterHashing: {
     nextCheckTime: 5000,
     dbName: "mysql_dynamic_cluster"
