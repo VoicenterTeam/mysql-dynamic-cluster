@@ -170,12 +170,12 @@ export class ClusterHashing {
             if (!this._timer.active) return;
 
             Logger.debug("checking async status in cluster");
-            const result = await this._cluster.query(`SELECT FN_GetServiceNodeMapping();`, null,
+            const result = await this._cluster.query(`SELECT FN_GetServiceNodeMapping() AS Result;`, null,
             {
                 database: this._database
             });
-            const res: IServiceNodeMap = result[0].Result as IServiceNodeMap;
-            console.log(res);
+            console.log(result);
+            const res: IServiceNodeMap[] = result[0].Result as IServiceNodeMap[];
 
             this._nextCheckHashing()
         } catch (err) {

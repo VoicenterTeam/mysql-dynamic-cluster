@@ -46,5 +46,6 @@ export interface IQueryOptions {
 }
 
 export interface IServiceNodeMap {
-    [param: string]: number
+    ServiceID: number,
+    NodeID: number
 }
