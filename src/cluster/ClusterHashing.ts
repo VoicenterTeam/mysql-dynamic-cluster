@@ -32,7 +32,7 @@ export class ClusterHashing {
         this._nextCheckTime = options.nextCheckTime;
         this._database = `${clusterName}_${options.dbName}`;
 
-        this._timer = new Timer(this.checkHashing.bind(this));
+        this._timer = new Timer(this._checkHashing.bind(this));
         Logger.debug("Cluster hashing configured");
     }
 
@@ -52,10 +52,44 @@ export class ClusterHashing {
             Logger.info(`Database ${this._database} created for hashing`);
 
             await this._insertNodes();
-            this.checkHashing();
+            this._checkHashing();
         } catch (err) {
             throw err;
         }
+    }
+
+    /**
+     * Stop timer for hashing check
+     */
+    public stop() {
+        this._timer.dispose();
+        Logger.info("Checking hashing in the cluster stopped");
+    }
+
+    /**
+     * Update node for service in db
+     * @param serviceId service what need to hashing
+     * @param nodeId pool where hashing data
+     */
+    public async updateNodeForService(serviceId: number, nodeId: number) {
+        try {
+            await this._cluster.query('CALL SP_NodeServiceUpdate(?, ?);', [serviceId, nodeId], {
+                maxRetry: 1,
+                database: this._database
+            });
+
+            this.serviceNodeMap.set(serviceId, nodeId);
+        } catch (e) {
+            Logger.error(e.message);
+        }
+    }
+
+    /**
+     * Get node / pool from hashing by service ID
+     * @param serviceId service ID
+     */
+    public getNodeByService(serviceId: number): number {
+        return this.serviceNodeMap.get(serviceId);
     }
 
     /**
@@ -155,6 +189,7 @@ export class ClusterHashing {
             try {
                 this._cluster.query('CALL SP_NodeInsert( ? , ? , ? , ? );', [pool.id, pool.name, pool.host, pool.port],
                 {
+                    maxRetry: 1,
                     database: this._database
                 });
             } catch (e) {
@@ -166,7 +201,7 @@ export class ClusterHashing {
     /**
      * Update hashing data from db
      */
-    public async checkHashing() {
+    private async _checkHashing() {
         try {
             if (!this._timer.active) return;
 
@@ -193,30 +228,5 @@ export class ClusterHashing {
      */
     private _nextCheckHashing() {
         this._timer.start(this._nextCheckTime);
-    }
-
-    /**
-     * Stop timer for hashing check
-     */
-    public stop() {
-        this._timer.dispose();
-        Logger.info("Checking hashing in the cluster stopped");
-    }
-
-    /**
-     * Update node for service in db
-     * @param serviceId service what need to hashing
-     * @param nodeId pool where hashing data
-     */
-    public async updateNodeForService(serviceId: number, nodeId: number) {
-        try {
-            await this._cluster.query('CALL SP_NodeServiceUpdate(?, ?);', [nodeId, serviceId], {
-                database: this._database
-            });
-
-            this.serviceNodeMap.set(serviceId, nodeId);
-        } catch (e) {
-            Logger.error(e.message);
-        }
     }
 }

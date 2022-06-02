@@ -70,7 +70,7 @@ describe("Cluster hashing", () => {
         await cluster.connect();
 
         const clusterHashing = new ClusterHashing(cluster);
-        await clusterHashing.checkHashing();
+        await clusterHashing._checkHashing();
         const result1: IServiceNodeMap = clusterHashing.serviceNodeMap;
         clusterHashing.stop();
         const result2: IServiceNodeMap = (await cluster.query(`SELECT FN_GetServiceNodeMapping();`))[0]["FN_GetServiceNodeMapping()"] as IServiceNodeMap;

@@ -158,7 +158,8 @@ export class GaleraCluster {
             if (!serviceId && queryOptions?.serviceName) {
                 serviceId = await this._serviceNames.getID(queryOptions.serviceName);
                 queryOptions.serviceId = serviceId;
-            } else if (!serviceId) {
+            }
+            if (!serviceId) {
                 queryOptions.serviceId = 0;
                 queryOptions.serviceName = `${this._clusterName}_${this._nullServiceName}`;
             }
@@ -250,14 +251,11 @@ export class GaleraCluster {
             queryTimer.end();
             queryTimer.save();
 
-            // if (queryOptions?.serviceId) {
-            //     this._clusterHashing?.updateServiceForNode(queryOptions?.serviceId, pool.id);
-            // }
+            if (queryOptions?.serviceId && this._clusterHashingConnected) {
+                await this._clusterHashing?.updateNodeForService(queryOptions?.serviceId, pool.id);
+            }
             return result;
         } catch (e) {
-            // if (queryOptions?.serviceId) {
-            //     this._clusterHashing?.updateServiceForNode(queryOptions?.serviceId, pool.id);
-            // }
             queryTimer.end();
             queryTimer.save();
             throw new Error("Query error: " + e.message);
@@ -307,13 +305,22 @@ export class GaleraCluster {
      * @private
      */
     private async _getActivePools(serviceId?: number) : Promise<Pool[]> {
-        const activePools: Pool[] = this._pools.filter(pool => {
-            // if (serviceId && !pool.status.isValid) {
-            //     this._clusterHashing?.updateServiceForNode(serviceId, pool.id);
-            // }
-            return pool.status.isValid;
+        let activePools: Pool[];
+        let poolIdService: number = -1;
+
+        if (serviceId && this._clusterHashingConnected) {
+            poolIdService = this._clusterHashing.getNodeByService(serviceId);
+        }
+
+        activePools = this._pools.filter(pool => {
+            return pool.status.isValid && pool.id !== poolIdService;
         })
         activePools.sort((a, b) => a.status.loadScore - b.status.loadScore)
+
+        if (poolIdService >= 0) {
+            const servicePool = this._pools.find(pool => pool.id === poolIdService);
+            if (servicePool) activePools.unshift(servicePool);
+        }
 
         if (activePools.length < 1) {
             throw new Error("There is no pool that satisfies the parameters");
