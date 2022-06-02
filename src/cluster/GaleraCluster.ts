@@ -34,6 +34,8 @@ export class GaleraCluster {
     private readonly _clusterName: string;
     private readonly _nullServiceName: string = "mdc"
 
+    private _clusterHashingConnected: boolean = false;
+
     /**
      * @param userSettings global user settings
      */
@@ -105,9 +107,14 @@ export class GaleraCluster {
      * Enable hashing for cluster
      */
     private async _enableHashing() {
-        await this._clusterHashing.connect();
-        Events.emit('hashing_created');
-        Logger.info("Cluster hashing enabled");
+        try {
+            await this._clusterHashing.connect();
+            this._clusterHashingConnected = true;
+            Events.emit('hashing_created');
+            Logger.info("Cluster hashing enabled");
+        } catch (e) {
+            Logger.error(e.message);
+        }
     }
 
     /**

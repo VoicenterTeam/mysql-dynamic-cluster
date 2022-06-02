@@ -21,8 +21,6 @@ export class ClusterHashing {
     private readonly _database: string;
     private readonly _databaseVersion: number = 1;
 
-    // TODO: cluster hashing db version. Change created status
-
     /**
      * @param cluster cluster for what hashing data
      * @param clusterName cluster name used for prefix
@@ -43,11 +41,20 @@ export class ClusterHashing {
      */
     public async connect() {
         try {
-            await this._createDB();
+            if (!await this._isDatabaseVersionEquals()) {
+                await this._cluster.query(
+                    `DROP SCHEMA IF EXISTS ${this._database};`,
+                    null,
+                    {maxRetry: 1}
+                );
+                await this._createDB();
+            }
+            Logger.info(`Database ${this._database} created for hashing`);
+
             await this._insertNodes();
             this.checkHashing();
         } catch (err) {
-            Logger.error(err.message);
+            throw err;
         }
     }
 
@@ -63,11 +70,6 @@ export class ClusterHashing {
                 tables: extraPath + '../../assets/sql/create_hashing_database/tables/',
                 routines: extraPath + '../../assets/sql/create_hashing_database/routines/',
                 metadata: extraPath + '../../assets/sql/create_hashing_database/metadata/'
-            }
-
-            if (await this._isDatabaseCreated()) {
-                Logger.info(`Database ${this._database} has created for hashing`);
-                return;
             }
 
             Logger.debug(`Creating database ${this._database} and procedures for hashing...`);
@@ -90,19 +92,22 @@ export class ClusterHashing {
             await this._cluster.pools[0].multiStatementQuery(sqls, { database: this._database });
             await this._cluster.pools[0].multiStatementQuery(sqlsMetadata, { database: this._database });
 
-            Logger.info(`Database ${this._database} created for hashing`);
+            await this._cluster.query(
+                `INSERT INTO metadata (version) VALUES (${this._databaseVersion});`,
+                null,
+                {maxRetry: 1, database: this._database}
+            );
         } catch (e) {
-            Logger.error(e.message);
+            throw e;
         }
     }
 
     /**
-     * Check if database for hashing completely created
+     * Check if database version is the same in the server
      * @private
      */
-    private async _isDatabaseCreated(): Promise<boolean> {
+    private async _isDatabaseVersionEquals(): Promise<boolean> {
         try {
-            Logger.debug(`Checking if database ${this._database} created for hashing...`);
             const resDb: any[] = await this._cluster.query(
                 `show databases where \`Database\` = '${this._database}';`,
                 null,
@@ -111,21 +116,17 @@ export class ClusterHashing {
 
             if (resDb.length < 1) return false;
 
-            const resTable: any[] = await this._cluster.query(
-                `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = "metadata";`,
+            const res = await this._cluster.query(
+                `SELECT version FROM metadata;`,
                 null,
-                { maxRetry: 1 }
+                {maxRetry: 1, database: this._database}
             );
-
-            if (resTable.length < 1) return false;
-
+            const serverVersion: number = res[0]?.version;
+            return serverVersion === this._databaseVersion;
         } catch (e) {
-            throw e;
+            Logger.error(e.message);
+            return false;
         }
-    }
-
-    private async _isDatabaseVersionEquals(): Promise<boolean> {
-        return false;
     }
 
     /**
@@ -174,8 +175,10 @@ export class ClusterHashing {
             {
                 database: this._database
             });
-            console.log(result);
             const res: IServiceNodeMap[] = result[0].Result as IServiceNodeMap[];
+            res?.forEach(obj => {
+                this.serviceNodeMap.set(obj.ServiceID, obj.NodeID);
+            })
 
             this._nextCheckHashing()
         } catch (err) {
@@ -201,13 +204,19 @@ export class ClusterHashing {
     }
 
     /**
-     * Update data in db for hashing
+     * Update node for service in db
      * @param serviceId service what need to hashing
-     * @param nodeId pool which hashing data
+     * @param nodeId pool where hashing data
      */
-    public async updateServiceForNode(serviceId: number, nodeId: number) {
-        await this._cluster.query('CALL SP_NodeServiceUpdate(?, ?);', [nodeId, serviceId], {
-            database: this._database
-        });
+    public async updateNodeForService(serviceId: number, nodeId: number) {
+        try {
+            await this._cluster.query('CALL SP_NodeServiceUpdate(?, ?);', [nodeId, serviceId], {
+                database: this._database
+            });
+
+            this.serviceNodeMap.set(serviceId, nodeId);
+        } catch (e) {
+            Logger.error(e.message);
+        }
     }
 }
