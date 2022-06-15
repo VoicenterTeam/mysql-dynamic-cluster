@@ -11,8 +11,9 @@ import { join, parse } from "path";
 import { IClusterHashingSettings, ISQLLocations } from "../types/ClusterHashingInterfaces";
 
 export class ClusterHashing {
-    public serviceNodeMap: Map<number, number> = new Map<number, number>(); // key: serviceID; value: nodeID
+    public connected: boolean = false;
 
+    private _serviceNodeMap: Map<number, number> = new Map<number, number>(); // key: serviceID; value: nodeID
     private _cluster: GaleraCluster;
     private _timer: Timer;
 
@@ -53,6 +54,7 @@ export class ClusterHashing {
 
             await this._insertNodes();
             this._checkHashing();
+            this.connected = true;
         } catch (err) {
             throw err;
         }
@@ -63,6 +65,7 @@ export class ClusterHashing {
      */
     public stop() {
         this._timer.dispose();
+        this.connected = false;
         Logger.info("Checking hashing in the cluster stopped");
     }
 
@@ -78,7 +81,7 @@ export class ClusterHashing {
                 database: this._database
             });
 
-            this.serviceNodeMap.set(serviceId, nodeId);
+            this._serviceNodeMap.set(serviceId, nodeId);
         } catch (e) {
             Logger.error(e.message);
         }
@@ -89,7 +92,7 @@ export class ClusterHashing {
      * @param serviceId service ID
      */
     public getNodeByService(serviceId: number): number {
-        return this.serviceNodeMap.get(serviceId);
+        return this._serviceNodeMap.get(serviceId);
     }
 
     /**
@@ -107,7 +110,7 @@ export class ClusterHashing {
             }
 
             Logger.debug(`Creating database ${this._database} and procedures for hashing...`);
-            await this._cluster.pools[0].query(`CREATE SCHEMA IF NOT EXISTS \`${this._database}\` COLLATE utf8_general_ci;`);
+            await this._cluster.query(`CREATE SCHEMA IF NOT EXISTS \`${this._database}\` COLLATE utf8_general_ci;`, null, { maxRetry: 1 });
 
             const sqls: string[] = [];
             sqls.push( ...this._readFilesInDir(join(__dirname, sqlLocations.tables)).fileContents );
@@ -212,7 +215,7 @@ export class ClusterHashing {
             });
             const res: IServiceNodeMap[] = result[0].Result as IServiceNodeMap[];
             res?.forEach(obj => {
-                this.serviceNodeMap.set(obj.ServiceID, obj.NodeID);
+                this._serviceNodeMap.set(obj.ServiceID, obj.NodeID);
             })
 
             this._nextCheckHashing()

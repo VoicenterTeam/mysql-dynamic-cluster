@@ -6,19 +6,17 @@ export interface ITimerCheckRange {
 }
 
 interface IPoolSettings {
-    port?: string,
     user?: string,
     password?: string,
     database?: string,
-    queryTimeout?: number,
+    port?: string,
     connectionLimit?: number,
-    errorRetryCount?: number,
+    queryTimeout?: number,
     validators?: IValidatorParams[],
     loadFactors?: ILoadFactorParams[],
     timerCheckRange?: ITimerCheckRange, // Time in ms
     timerCheckMultiplier?: number,
     slowQueryTime?: number,
-    useRedis?: boolean,
     redisFactor?: number
 }
 
@@ -39,12 +37,10 @@ export interface IDefaultPoolSettings extends IPoolSettings {
     port: string,
     queryTimeout: number,
     connectionLimit: number,
-    errorRetryCount: number,
     validators: IValidatorParams[],
     loadFactors: ILoadFactorParams[],
     timerCheckRange: ITimerCheckRange, // Time in ms
     timerCheckMultiplier: number,
     slowQueryTime: number,
-    useRedis: boolean,
     redisFactor: number
 }

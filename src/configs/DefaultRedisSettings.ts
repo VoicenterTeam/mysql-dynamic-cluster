@@ -5,11 +5,11 @@
 import { IDefaultRedisSettings } from "../types/RedisInterfaces";
 
 const DefaultRedisSettings: IDefaultRedisSettings = {
+    keyPrefix: "mdc:",
+    expire: 1_000_000,
+    expiryMode: "EX",
     algorithm: "md5",
     encoding: "base64",
-    keyPrefix: "mdc:",
-    expiryMode: "EX",
-    expire: 1_000_000,
     clearOnStart: false
 }
 

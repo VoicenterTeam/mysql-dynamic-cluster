@@ -21,7 +21,11 @@ import { IRedisData } from "../types/RedisInterfaces";
 export class GaleraCluster {
     public connected: boolean = false;
 
-    private _pools: Pool[] = [];
+    private readonly _pools: Pool[] = [];
+    /**
+     * Get all pools
+     * @internal
+     */
     public get pools(): Pool[] {
         return this._pools;
     }
@@ -30,11 +34,10 @@ export class GaleraCluster {
     private readonly _clusterHashing: ClusterHashing;
     private readonly _serviceNames: ServiceNames;
     private readonly _errorRetryCount: number; // retry count after query error
+    private readonly _useRedis: boolean;
 
     private readonly _clusterName: string;
     private readonly _nullServiceName: string = "mdc"
-
-    private _clusterHashingConnected: boolean = false;
 
     /**
      * @param userSettings global user settings
@@ -44,7 +47,8 @@ export class GaleraCluster {
 
         this._useClusterHashing = userSettings.useClusterHashing;
         this._clusterName = userSettings.clusterName;
-        this._errorRetryCount = userSettings.globalPoolSettings.errorRetryCount;
+        this._errorRetryCount = userSettings.errorRetryCount;
+        this._useRedis = userSettings.useRedis;
         const poolIds: number[] = this._sortPoolIds(userSettings.hosts);
 
         userSettings.hosts.forEach(poolSettings => {
@@ -109,7 +113,6 @@ export class GaleraCluster {
     private async _enableHashing() {
         try {
             await this._clusterHashing.connect();
-            this._clusterHashingConnected = true;
             Events.emit('hashing_created');
             Logger.info("Cluster hashing enabled");
         } catch (e) {
@@ -147,6 +150,12 @@ export class GaleraCluster {
      * @param queryOptions params for configure query
      */
     public async query<T extends QueryResult>(sql: string, values?: QueryValues, queryOptions?: IQueryOptions): Promise<T> {
+        queryOptions = {
+            redis: this._useRedis,
+            maxRetry: this._errorRetryCount,
+            ...queryOptions
+        }
+
         let activePools: Pool[]; // available pools for query what passed the validator
         let retryCount; // max retry query count after error
         let serviceId = queryOptions?.serviceId;
@@ -165,7 +174,7 @@ export class GaleraCluster {
             }
 
             activePools = await this._getActivePools(serviceId);
-            retryCount = this._maxRetryCount(queryOptions?.maxRetry, activePools.length);
+            retryCount = this._maxRetryCount(queryOptions.maxRetry, activePools.length);
         } catch (e) {
             Metrics.inc(MetricNames.cluster.errorQueries);
             throw new Error(e);
@@ -251,7 +260,7 @@ export class GaleraCluster {
             queryTimer.end();
             queryTimer.save();
 
-            if (queryOptions?.serviceId && this._clusterHashingConnected) {
+            if (queryOptions?.serviceId && this._clusterHashing.connected) {
                 await this._clusterHashing?.updateNodeForService(queryOptions?.serviceId, pool.id);
             }
             return result;
@@ -308,7 +317,7 @@ export class GaleraCluster {
         let activePools: Pool[];
         let poolIdService: number = -1;
 
-        if (serviceId && this._clusterHashingConnected) {
+        if (serviceId && this._clusterHashing.connected) {
             poolIdService = this._clusterHashing.getNodeByService(serviceId);
         }
 

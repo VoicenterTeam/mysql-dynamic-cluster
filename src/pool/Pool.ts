@@ -34,7 +34,6 @@ export class Pool {
     private readonly _database: string;
     private readonly _queryTimeout: number;
     private readonly _slowQueryTime: number;
-    private readonly _useRedis: boolean;
     private readonly _redisFactor: number;
     private readonly _redisExpire: number;
 
@@ -56,7 +55,6 @@ export class Pool {
         this._database = settings.database;
         this._queryTimeout = settings.queryTimeout;
         this._slowQueryTime = settings.slowQueryTime;
-        this._useRedis = settings.useRedis;
         this._redisFactor = settings.redisFactor;
         this._redisExpire = settings.redisExpire;
 
@@ -86,7 +84,7 @@ export class Pool {
 
         if (this.status.isValid) {
             Logger.info('Pool is connected');
-            Events.emit('pool_connected');
+            Events.emit('pool_connected', this.id);
         } else {
             throw new Error("pool in host " + this.host + " is not valid");
         }
@@ -100,18 +98,18 @@ export class Pool {
         this._pool.on("connection", (connection) => {
             this.status.availableConnectionCount--;
             Logger.debug("Open connection");
-            Events.emit('connection', connection);
+            Events.emit('connection', connection, this.id);
         })
 
         this._pool.on("release", (connection) => {
             this.status.availableConnectionCount++;
             Logger.debug("Connection closed");
-            Events.emit('release', connection);
+            Events.emit('release', connection, this.id);
         })
 
         this._pool.on('acquire', (connection) => {
             Logger.debug("Connection is acquire");
-            Events.emit('acquire', connection);
+            Events.emit('acquire', connection, this.id);
         })
     }
 
@@ -127,7 +125,7 @@ export class Pool {
         });
         this.status.active = false;
         this.status.stopTimerCheck();
-        Events.emit('pool_disconnected');
+        Events.emit('pool_disconnected', this.id);
 
         Logger.info("pool named " + this.name + " closed");
     }
@@ -142,7 +140,6 @@ export class Pool {
             queryOptions = {
                 timeout: this._queryTimeout,
                 database: this._database,
-                redis: this._useRedis,
                 redisFactor: this._redisFactor,
                 redisExpire: this._redisExpire,
                 ...queryOptions

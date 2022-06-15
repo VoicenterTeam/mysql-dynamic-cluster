@@ -10,6 +10,9 @@ import { IDefaultPoolSettings, IGlobalUserPoolSettings, IUserPoolSettings } from
 import { IDefaultServiceMetricsSettings, IServiceMetricsSettings } from "./MetricsInterfaces";
 
 interface ISettings {
+    redis?: Redis | Cluster,
+    errorRetryCount?: number,
+    useRedis?: boolean,
     serviceMetrics?: IServiceMetricsSettings,
     useClusterHashing?: boolean,
     clusterHashing?: IClusterHashingSettings,
@@ -24,12 +27,14 @@ interface ISettings {
 export interface IUserSettings extends ISettings {
     clusterName: string,
     hosts: IUserPoolSettings[],
-    globalPoolSettings: IGlobalUserPoolSettings,
-    redis?: Redis | Cluster
+    globalPoolSettings: IGlobalUserPoolSettings
 }
 
 export interface IDefaultSettings extends ISettings {
     globalPoolSettings: IDefaultPoolSettings,
+    redis: Redis | Cluster,
+    errorRetryCount: number,
+    useRedis: boolean,
     serviceMetrics: IDefaultServiceMetricsSettings,
     useClusterHashing: boolean,
     clusterHashing: IDefaultClusterHashingSettings,

@@ -9,12 +9,12 @@ type Operator = '>' | '<' | '=' | 'Like';
 // Cluster events
 export type ClusterEvent = 'connected' |
                             'disconnected' |
+                            'hashing_created' |
                             'acquire' |
                             'connection' |
                             'release' |
                             'pool_connected' |
-                            'pool_disconnected' |
-                            'hashing_created';
+                            'pool_disconnected';
 
 // Database global status result
 export type GlobalStatusResult = { Variable_name: string, Value: string }

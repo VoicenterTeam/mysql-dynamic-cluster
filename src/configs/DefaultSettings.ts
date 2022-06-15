@@ -7,9 +7,13 @@ import { AmqpLoggerConfig } from './AmqpLoggerConfig';
 import { LOGLEVEL } from "../types/AmqpInterfaces";
 import DefaultRedisSettings from "./DefaultRedisSettings";
 import DefaultPoolSettings from "./DefaultPoolSettings";
+import RedisLib from 'ioredis';
 
 const defaultSettings: IDefaultSettings = {
   globalPoolSettings: DefaultPoolSettings,
+  redis: new RedisLib(),
+  errorRetryCount: 2,
+  useRedis: true,
   serviceMetrics: {
     database: 'swagger_realtime',
     table: 'Service'
@@ -20,11 +24,11 @@ const defaultSettings: IDefaultSettings = {
     dbName: "mysql_dynamic_cluster"
   },
   showMetricKeys: false,
-  logLevel: LOGLEVEL.REGULAR,
-  useAmqpLogger: true,
   useConsoleLogger: true,
+  useAmqpLogger: true,
+  amqpLoggerSettings: AmqpLoggerConfig,
   redisSettings: DefaultRedisSettings,
-  amqpLoggerSettings: AmqpLoggerConfig
+  logLevel: LOGLEVEL.QUIET
 }
 Object.freeze(defaultSettings);
 
