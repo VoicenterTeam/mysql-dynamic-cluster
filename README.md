@@ -156,7 +156,11 @@ Exported library params
 </table>
 
 ## Functions
-Creating the cluster and initialize with [user settings](#user-settings).
+### createPoolCluster
+Creating the cluster and initialize with [user settings](#user-settings) <br>
+Params:
+1. [Cluster configuration](#user-settings) to configure library
+
 ```javascript
 galeraCluster.createPoolCluster({
    hosts: [
@@ -170,26 +174,37 @@ galeraCluster.createPoolCluster({
 })
 ```
 
-Connecting to all databases passed in [user settings](#user-settings)
+### connect
+Connecting to all database pools passed in [user settings](#user-settings)
 ```javascript
 cluster.connect()
 ```
 
-Disconnecting from all databases
+### disconnect
+Disconnecting from all database pools
 ```javascript
 cluster.disconnect()
 ```
 
-Connecting to [events](#connect-to-events)
+### on
+Connecting to [events](#connect-to-events) <br>
+Params:
+1. Name of event
+2. Callback when event is emitted
+
 ```javascript
 cluster.on('connected', () => {
     console.log("Some stuff after an event emitted")
 })
 ```
 
+### query
 Request to the database. Cluster automatically select best database node (pool) for quick result by filter and sort it. Pools configured in [user settings](#user-settings)  <br>
-**Query values** can be one of this structure: `string | any[] | { [paramName: string]: any }`. Similar to [mysql2](https://www.npmjs.com/package/mysql2) query values  
-You can also pass [query options](#query-options) to configure only this request
+Params:
+1. **Query string** - request to the database
+2. **Query values** - values used in query string. Can be one of this structure: `string | any[] | { [paramName: string]: any }`. Similar to [mysql2](https://www.npmjs.com/package/mysql2) query values  
+3. [Query options](#query-options) - configuration only for this request
+
 ```javascript
 cluster.query(`SELECT SLEEP(?)`, [100], { redis: true })
 ```
