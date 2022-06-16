@@ -1,5 +1,5 @@
 # mysql-dynamic-cluster
-> Galera cluster with implementation of dynamic choose mysql server for queries, caching, hashing it and metrics
+Galera cluster with implementation of dynamic choose mysql server for queries, caching, hashing it and metrics
 
 ## Features
 1. **Pool checks** by 2 points:
@@ -31,68 +31,41 @@ $ npm i @voicenter-team/mysql-dynamic-cluster
 
 ## How to use
 ### Configure cluster
-This is just main settings what need to configure cluster.
+This is just main settings what necessary to configure cluster.
 More detail about user settings [here](#user-settings)
 ```javascript
 const cfg = {
-    // configuration for each pool. 2 pools are minimum
+    clusterName: 'demo',
+    // Configuration for each pool. At least 2 pools are recommended
     hosts: [
         {
-            host: "192.168.0.1", // required
-            // This settings is not required. It configure settings for each pool
-            name: "test1", // name to set to the pool
+            host: "192.168.0.1",
+            name: "demo1",
+            /**
+             * You can reconfigure global parameters for current pool
+             */
             queryTimeout: 5000,
-            // connect to db only for this pool
-            user: "admin",
-            password: "password",
-            database: "test_db"
+            user: "user_current",
+            password: "password_current",
+            database: "db_name_current"
         },
         {
-            id: 10, // id to set to the pool. Not required
+            /**
+             * ID is automatically generated, but if you set the id at least for one pool 
+             * then other pools will be generated with a higher id 
+             * started from the highest manually set id
+             */
+            id: 10,
             host: "192.168.0.2"
         }
     ],
-    // Configure global settings for all pools
-    user: "admin",
-    password: "password_global",
-    database: "global_db",
-    /**
-     * Validators to set that pool is valid and ready for work
-     * key - variable_name in mysql global status
-     * operator - operator to compare (=, <, >). For text only '=' or 'Like'
-     * value - what value must be to complete pool check
-     */
-    validators: [
-        { key: 'wsrep_ready', operator: '=', value: 'ON' },
-        { key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' },
-        { key: 'available_connection_count', operator: '>', value: 50 }
-    ],
-    /**
-     * Load factors to sort the pools depends on load
-     * key - variable_name in mysql global status
-     * multiplier - multiply value of corresponding variable_name in mysql global status selected by key
-     */
-    loadFactors: [
-        { key: 'Connections', multiplier: 2 },
-        { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
-    ],
-    /**
-     * Level for logger. Default QUIET
-     * FULL - show all log information
-     * REGULAR - show all information instead debug
-     * QUIET - show only warning and errors
-     */
-    logLevel: LOGLEVEL.FULL,
-   /**
-    * Redis object created by `ioredis` library
-    * To enable redis pass some value othervise it's disabled
-    */
-   redis: new Redis(),
-   /**
-    * Enabling amqp logger
-    * Default: false
-    */
-   useAmqpLogger: false
+    // Configuration for all pools
+    globalPoolSettings: {
+        user: "user",
+        password: "password",
+        database: "db_name"
+    },
+    logLevel: LOGLEVEL.FULL
 }
 ```
 
@@ -136,10 +109,10 @@ Exported library params
             <td>Status of cluster</td>
             <td>boolean</td>
             <td>
-               <b>True</b> - cluster completely created <br>
-               <b>False</b> - not connected yet or had some errors
+               <b>true</b> - cluster completely created <br>
+               <b>false</b> - not connected yet or had some errors
             </td>
-            <td>False</td>
+            <td>false</td>
         </tr>
         <tr>
             <td>LOGLEVEL</td>
@@ -150,7 +123,7 @@ Exported library params
                <b>REGULAR</b> - all information instead debug <br>
                <b>FULL</b> - all log information <br>
             </td>
-            <td>QUIET</td>
+            <td>REGULAR</td>
         </tr>
     </tbody>
 </table>
@@ -358,7 +331,7 @@ Settings to configure library
         </tr>
         <tr>
             <td>useConsoleLogger</td>
-            <td>Enable console logger</td>
+            <td>Enable console logger in this library</td>
             <td>false</td>
             <td>boolean</td>
             <td>-</td>
@@ -412,9 +385,7 @@ General pool settings which inherited by [user pool settings](#user-pool-setting
             <td>port</td>
             <td>Port to connect to database</td>
             <td>false</td>
-            <td>
-               string
-            </td>
+            <td>number</td>
             <td>-</td>
             <td>3306</td>
         </tr>
@@ -422,9 +393,7 @@ General pool settings which inherited by [user pool settings](#user-pool-setting
             <td>connectionLimit</td>
             <td>Connection limit in 1 database</td>
             <td>false</td>
-            <td>
-               number
-            </td>
+            <td>number</td>
             <td>-</td>
             <td>100</td>
         </tr>
@@ -438,15 +407,13 @@ General pool settings which inherited by [user pool settings](#user-pool-setting
         </tr>
         <tr>
             <td>validators</td>
-            <td>Validator params to check if pool is valid (pool status)</td>
+            <td>Validator params to check if pool is valid (pool status) and ready for work</td>
             <td>false</td>
+            <td>Array of objects</td>
             <td>
-               Array of objects 
-            </td>
-            <td>
-                <b>key</b> - name of mysql global status <br>
-                <b>operator</b> - operator to check with value. Exist: `=`, `<`, `>`, `Like`. `Like` is not strict equal check <br>
-                <b>value</b> - value to check with <br>
+                <b>key</b> - name (variable_name) of mysql global status <br>
+                <b>operator</b> - operator to check with value. Exist: `=`, `<`, `>`, `Like`. For text only `=` or `Like` operator. `Like` is not strict equal check. <br>
+                <b>value</b> - value what must be to complete pool check <br>
             </td>
             <td>
 
@@ -461,13 +428,11 @@ General pool settings which inherited by [user pool settings](#user-pool-setting
         </tr>
         <tr>
             <td>loadFactors</td>
-            <td>Load factor params to count pool score</td>
+            <td>Load factor params to count pool score by load. Using to sort pools</td>
             <td>false</td>
+            <td>Array of objects</td>
             <td>
-               Array of objects 
-            </td>
-            <td>
-                <b>key</b> - name of mysql global status <br>
+                <b>key</b> - name (variable_name) of mysql global status <br>
                 <b>multiplier</b> - multiplies the result to achieve the corresponding pool score <br>
             </td>
             <td>
@@ -484,9 +449,7 @@ General pool settings which inherited by [user pool settings](#user-pool-setting
             <td>timerCheckRange</td>
             <td>Time range for next check pool status and pool score</td>
             <td>false</td>
-            <td>
-               Object
-            </td>
+            <td>Object</td>
             <td>
                 <b>start</b> - min time <br>
                 <b>end</b> - max time
@@ -546,27 +509,21 @@ Used in [user settings](#user-settings)
             <td>user</td>
             <td>Username to connect to database</td>
             <td>true</td>
-            <td>
-               string
-            </td>
+            <td>string</td>
             <td>-</td>
         </tr>
         <tr>
             <td>password</td>
             <td>Password to connect to database</td>
             <td>true</td>
-            <td>
-               string
-            </td>
+            <td>string</td>
             <td>-</td>
         </tr>
         <tr>
             <td>database</td>
             <td>Default database name to connect</td>
             <td>true</td>
-            <td>
-               string
-            </td>
+            <td>string</td>
             <td>-</td>
         </tr>
     </tbody>
@@ -591,54 +548,42 @@ Used in [user settings](#user-settings)
             <td>host</td>
             <td>Host to database</td>
             <td>true</td>
-            <td>
-               string
-            </td>
+            <td>string</td>
             <td>-</td>
         </tr>
         <tr>
             <td>id</td>
             <td>ID for pool</td>
             <td>false</td>
-            <td>
-               number
-            </td>
-            <td>Automatically generated. If you set the id for 1 pool then other pools will be generated with higher id</td>
+            <td>number</td>
+            <td>Automatically generated, but if you set the id at least for one pool then other pools will be generated with a higher id started from the highest manually set id</td>
         </tr>
         <tr>
             <td>name</td>
             <td>Custom name for pool</td>
             <td>false</td>
-            <td>
-               string
-            </td>
+            <td>string</td>
             <td>Automatically generated from host and port</td>
         </tr>
         <tr>
             <td>user</td>
             <td>Username to connect to database</td>
             <td>false</td>
-            <td>
-               string
-            </td>
+            <td>string</td>
             <td>Set in global pool settings</td>
         </tr>
         <tr>
             <td>password</td>
             <td>Password to connect to database</td>
             <td>false</td>
-            <td>
-               string
-            </td>
+            <td>string</td>
             <td>Set in global pool settings</td>
         </tr>
         <tr>
             <td>database</td>
             <td>Default database name to connect</td>
             <td>false</td>
-            <td>
-               string
-            </td>
+            <td>string</td>
             <td>Set in global pool settings</td>
         </tr>
         <tr>
@@ -1036,7 +981,7 @@ Used in [user settings](#user-settings)
 ### Query options
 Reconfigure for current one query only. <br>
 All parameters are **not required**. Default parameters are set using [pool settings](#pool-settings), [cluster settings](#user-settings) and [redis settings](#redis-settings) <br>
-Used in each [query](#functions)
+Used in each [query](#query)
 
 <table>
     <thead>
@@ -1165,9 +1110,13 @@ cluster.on('pool_disconnected', (poolId) => {
 Demo file `index.js` for how to use the library in `demo` folder. Build the project to run it
 
 ## Build
-### Clone repo and install dependencies
+### Clone repository
 ```bash
 $ git clone https://github.com/VoicenterTeam/mysql-dynamic-cluster.git
+```
+
+### Install dependencies
+```bash
 $ npm install
 ```
 
@@ -1186,7 +1135,7 @@ $ npm run start
 ```
 
 ## Tests
-All unit tests in `tests` folder. Test created using `jest` library.  
+All unit tests in `tests` folder. Test created using [jest](https://www.npmjs.com/package/jest) library.  
 To run all tests use script:
 ```bash
 $ npm run test

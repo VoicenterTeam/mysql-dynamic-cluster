@@ -7,19 +7,32 @@ require('dotenv').config()
 const RedisLib = require('ioredis');
 
 const cfg = {
-    // configuration for each pool. 2 pools are minimum
     clusterName: 'demo',
+    // Configuration for each pool. At least 2 pools are recommended
     hosts: [
         {
-            host: process.env.DB_HOST2
+            host: process.env.DB_HOST2,
+            name: "demo1",
+            /**
+             * You can reconfigure global parameters for current pool
+             */
+            // queryTimeout: 5000,
+            // user: "user_current",
+            // password: "password_current",
+            // database: "db_name_current"
         },
         {
+            /**
+             * ID is automatically generated, but if you set the id at least for one pool
+             * then other pools will be generated with a higher id
+             * started from the highest manually set id
+             */
             id: 10,
             host: process.env.DB_HOST3
         }
     ],
+    // Configure global settings for all pools
     globalPoolSettings: {
-        // Configure global settings for all pools
         user: process.env.DB_USERNAME,
         password: process.env.DB_PASSWORD,
         database: process.env.DB_DATABASE,
@@ -44,6 +57,10 @@ const cfg = {
             { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
         ],
     },
+    // showMetricKeys: true,
+    // useAmqpLogger: false,
+    // useConsoleLogger: false,
+    // redis: new RedisLib(),
     /**
      * Level for logger. Default REGULAR
      * FULL - show all log information
@@ -51,10 +68,6 @@ const cfg = {
      * QUIET - show only warning and errors
      */
     // logLevel: galeraCluster.LOGLEVEL.FULL,
-    // showMetricKeys: true,
-    useAmqpLogger: true,
-    useConsoleLogger: true,
-    redis: new RedisLib()
 }
 
 const cluster = galeraCluster.createPoolCluster(cfg);
@@ -70,15 +83,15 @@ async function test() {
     await cluster.connect();
 
     try {
-        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`, null, { redis: true });
+        const res = await cluster.query(`SHOW GLOBAL STATUS;`, null, { redis: true });
         console.log(res[0]);
     } catch (e) {
         console.log(e.message);
     }
 
     try {
-        const res = await cluster.query(`SELECT * from officering_api_doc.MethodType`, null, { redis: true });
-        console.log(res[0].MethodTypeName);
+        const res = await cluster.query(`SHOW GLOBAL STATUS;`, null, { redis: true });
+        console.log(res[0].Variable_name);
 
         // cluster.disconnect();
     } catch (e) {
