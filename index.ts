@@ -28,5 +28,6 @@ function init(userSettings: IUserSettings): void {
 
 export {
     createPoolCluster,
-    LOGLEVEL
+    LOGLEVEL,
+    IUserSettings
 };
