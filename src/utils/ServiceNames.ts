@@ -33,7 +33,11 @@ export default class ServiceNames {
             const res = await this._cluster.query(
                 `SELECT ServiceID AS Result FROM ${this._table} WHERE ServiceName LIKE '${serviceName}';`,
                 null,
-                { database: this._database, maxRetry: 1 }
+                {
+                    maxRetry: 1,
+                    database: this._database,
+                    redis: false
+                }
             ) as ServiceNameResult[];
 
             if (res.length <= 0) {

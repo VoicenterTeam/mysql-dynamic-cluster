@@ -46,7 +46,10 @@ export class ClusterHashing {
                 await this._cluster.query(
                     `DROP SCHEMA IF EXISTS ${this._database};`,
                     null,
-                    {maxRetry: 1}
+                    {
+                        maxRetry: 1,
+                        redis: false
+                    }
                 );
                 await this._createDB();
             }
@@ -78,7 +81,8 @@ export class ClusterHashing {
         try {
             await this._cluster.query('CALL SP_NodeServiceUpdate(?, ?);', [serviceId, nodeId], {
                 maxRetry: 1,
-                database: this._database
+                database: this._database,
+                redis: false
             });
 
             this._serviceNodeMap.set(serviceId, nodeId);
@@ -110,7 +114,7 @@ export class ClusterHashing {
             }
 
             Logger.debug(`Creating database ${this._database} and procedures for hashing...`);
-            await this._cluster.query(`CREATE SCHEMA IF NOT EXISTS \`${this._database}\` COLLATE utf8_general_ci;`, null, { maxRetry: 1 });
+            await this._cluster.query(`CREATE SCHEMA IF NOT EXISTS \`${this._database}\` COLLATE utf8_general_ci;`, null, { maxRetry: 1, redis: false });
 
             const sqls: string[] = [];
             sqls.push( ...this._readFilesInDir(join(__dirname, sqlLocations.tables)).fileContents );
@@ -132,7 +136,11 @@ export class ClusterHashing {
             await this._cluster.query(
                 `INSERT INTO metadata (version) VALUES (${this._databaseVersion});`,
                 null,
-                {maxRetry: 1, database: this._database}
+                {
+                    maxRetry: 1,
+                    database: this._database,
+                    redis: false
+                }
             );
         } catch (e) {
             throw e;
@@ -148,7 +156,10 @@ export class ClusterHashing {
             const resDb: any[] = await this._cluster.query(
                 `show databases where \`Database\` = '${this._database}';`,
                 null,
-                { maxRetry: 1 }
+                {
+                    maxRetry: 1,
+                    redis: false
+                }
             );
 
             if (resDb.length < 1) return false;
@@ -156,7 +167,11 @@ export class ClusterHashing {
             const res = await this._cluster.query(
                 `SELECT version FROM metadata;`,
                 null,
-                {maxRetry: 1, database: this._database}
+                {
+                    maxRetry: 1,
+                    database: this._database,
+                    redis: false
+                }
             );
             const serverVersion: number = res[0]?.version;
             return serverVersion === this._databaseVersion;
@@ -193,7 +208,8 @@ export class ClusterHashing {
                 this._cluster.query('CALL SP_NodeInsert( ? , ? , ? , ? );', [pool.id, pool.name, pool.host, pool.port],
                 {
                     maxRetry: 1,
-                    database: this._database
+                    database: this._database,
+                    redis: false
                 });
             } catch (e) {
                 Logger.error(e.message);
@@ -211,7 +227,9 @@ export class ClusterHashing {
             Logger.debug("checking async status in cluster");
             const result = await this._cluster.query(`SELECT FN_GetServiceNodeMapping() AS Result;`, null,
             {
-                database: this._database
+                maxRetry: 1,
+                database: this._database,
+                redis: false
             });
             const res: IServiceNodeMap[] = result[0].Result as IServiceNodeMap[];
             res?.forEach(obj => {

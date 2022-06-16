@@ -28,7 +28,7 @@ const defaultSettings: IDefaultSettings = {
   useAmqpLogger: true,
   amqpLoggerSettings: AmqpLoggerConfig,
   redisSettings: DefaultRedisSettings,
-  logLevel: LOGLEVEL.QUIET
+  logLevel: LOGLEVEL.REGULAR
 }
 Object.freeze(defaultSettings);
 

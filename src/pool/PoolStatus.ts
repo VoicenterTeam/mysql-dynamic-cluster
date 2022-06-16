@@ -89,7 +89,7 @@ export class PoolStatus {
             Logger.debug("checking pool status in host: " + this._pool.host);
             queryTimer.start();
 
-            const result = await this._pool.query(`SHOW GLOBAL STATUS;`) as GlobalStatusResult[];
+            const result = await this._pool.query(`SHOW GLOBAL STATUS;`, { redis: false }) as GlobalStatusResult[];
 
             queryTimer.end();
             this._queryTime = queryTimer.get();
