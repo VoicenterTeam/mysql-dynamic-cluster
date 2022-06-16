@@ -91,6 +91,7 @@ test();
 ```
 
 ## How to run metrics
+For metrics, we use [pm2](https://www.npmjs.com/package/@pm2/io) and recommend to have some knowledge about it. You can find documentation [here](https://pm2.keymetrics.io/docs/usage/process-management/) <br>
 Just for testing library you can skip [configuration file](#create-configuration-for-pm2) part and use existed one
 
 ### Create configuration for pm2
