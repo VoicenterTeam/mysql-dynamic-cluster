@@ -25,7 +25,7 @@ export class Pool {
     public readonly id: number;
     public readonly name: string;
     public readonly host: string;
-    public readonly port: string;
+    public readonly port: number;
     // max connection count in pool
     public readonly connectionLimit: number;
 

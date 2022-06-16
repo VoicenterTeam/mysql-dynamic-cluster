@@ -9,7 +9,7 @@ interface IPoolSettings {
     user?: string,
     password?: string,
     database?: string,
-    port?: string,
+    port?: number,
     connectionLimit?: number,
     queryTimeout?: number,
     validators?: IValidatorParams[],
@@ -34,7 +34,7 @@ export interface IUserPoolSettings extends IPoolSettings {
 }
 
 export interface IDefaultPoolSettings extends IPoolSettings {
-    port: string,
+    port: number,
     queryTimeout: number,
     connectionLimit: number,
     validators: IValidatorParams[],

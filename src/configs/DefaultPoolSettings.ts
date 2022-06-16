@@ -5,7 +5,7 @@
 import { IDefaultPoolSettings } from "../types/PoolSettingsInterfaces";
 
 const DefaultPoolSettings: IDefaultPoolSettings = {
-    port: "3306",
+    port: 3306,
     connectionLimit: 100,
     validators: [
         { key: 'wsrep_ready', operator: '=', value: 'ON' },
