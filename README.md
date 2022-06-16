@@ -76,15 +76,16 @@ const galeraCluster = require('@voicenter-team/mysql-dynamic-cluster');
 const cluster = galeraCluster.createPoolCluster(cfg);
 
 async function test() {
-   await cluster.connect();
+    await cluster.connect();
 
-   try {
-      const result = await cluster.query(`SELECT SLEEP(5);`);
-   } catch (e){
-      console.log(e.message);
-   }
+    try {
+        const res = await cluster.query(`SHOW GLOBAL STATUS;`);
+        console.log(res[0]);
+    } catch (e) {
+        console.log(e.message);
+    }
 
-   await cluster.disconnect();
+    await cluster.disconnect();
 }
 
 test();
