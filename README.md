@@ -90,6 +90,41 @@ async function test() {
 test();
 ```
 
+## How to run metrics
+Just for testing library you can skip [configuration file](#create-configuration-for-pm2) part and use existed one
+
+### Create configuration for pm2
+Create copy of `ecosystem.config.js` or create new one using it as template.
+
+### Run using pm2
+```bash
+$ pm2 start .\ecosystem.config.js
+```
+
+### Open metrics
+It will show all logs and metrics on the console filtered by running projects in realtime
+```bash
+$ pm2 monit
+```
+
+To see metrics and all information about project just for one time
+```bash
+$ pm2 info [id]
+```
+
+You can check `id` in the first column using
+```bash
+$ pm2 ls
+```
+
+### Connect to pm2 GUI
+Create bucket and name it [here](https://app.pm2.io/). Then you can get private and public keys from your dashboard by clicking to the `connect` button
+```bash
+$ pm2 link [private] [public]
+```
+
+After [running the project](#run-using-pm2) using `pm2`, dashboard will automatically update
+
 ## Params
 Exported library params
 
@@ -184,7 +219,7 @@ cluster.query(`SELECT SLEEP(?)`, [100], { redis: true })
 
 ## Configs
 ### User settings
-Settings to configure library
+Settings to [configure library](#configure-cluster)
 
 <table>
     <thead>
