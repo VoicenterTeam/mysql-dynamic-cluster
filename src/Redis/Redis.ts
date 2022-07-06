@@ -17,10 +17,11 @@ class Redis {
 		this.redisSettings = redisSettings;
 		this.redisSettings.keyPrefix = `${clusterName}_${this.redisSettings.keyPrefix}`;
 		this.connectEvents();
-		Logger.debug("Initialized Redis");
+		Logger.info("Initialized Redis");
 	}
 
 	private clearAll(): void {
+		if(!this.redis) return;
 		this.redis?.keys(this.redisSettings.keyPrefix + "*").then((keys) => {
 			const pipeline = this.redis.pipeline();
 			keys.forEach((key) => {

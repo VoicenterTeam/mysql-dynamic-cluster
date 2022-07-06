@@ -23,7 +23,7 @@ function init(userSettings: IUserSettings): void {
 
     Metrics.init(userSettings.clusterName, userSettings.showMetricKeys);
     Redis.init(userSettings.redis, userSettings.clusterName, userSettings.redisSettings);
-    Logger.info("Initialized app");
+    Logger.info("Library initialized");
 }
 
 export {
