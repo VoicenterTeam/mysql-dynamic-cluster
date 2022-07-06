@@ -24,7 +24,7 @@ Galera cluster with implementation of dynamic choose mysql server for queries, c
 - [typescript](https://www.npmjs.com/package/typescript)
 
 ## Install
-Download project from npm
+Download project from [npm](https://www.npmjs.com/package/@voicenter-team/mysql-dynamic-cluster)
 ```bash
 $ npm i @voicenter-team/mysql-dynamic-cluster
 ```
