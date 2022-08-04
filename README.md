@@ -33,6 +33,8 @@ $ npm i @voicenter-team/mysql-dynamic-cluster
 ### Configure cluster
 This is just main settings what necessary to configure cluster.
 More detail about user settings [here](#user-settings)
+
+Default AMQP Logger settings you can find [here](#amqp-settings)
 ```javascript
 const cfg = {
     clusterName: 'demo',
@@ -44,10 +46,11 @@ const cfg = {
             /**
              * You can reconfigure global parameters for current pool
              */
-            queryTimeout: 5000,
-            user: "user_current",
-            password: "password_current",
-            database: "db_name_current"
+            // port: 4608,
+            // queryTimeout: 5000,
+            // user: "user_current",
+            // password: "password_current",
+            // database: "db_name_current"
         },
         {
             /**
@@ -63,8 +66,20 @@ const cfg = {
     globalPoolSettings: {
         user: "user",
         password: "password",
-        database: "db_name"
+        database: "db_name",
+        validators: [
+            { key: 'wsrep_ready', operator: '=', value: 'ON' },
+            { key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' },
+            { key: 'available_connection_count', operator: '>', value: 50 }
+        ],
+        loadFactors: [
+            { key: 'Connections', multiplier: 2 },
+            { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
+        ],
     },
+    redis: new RedisLib(),
+    useAmqpLogger: true,
+    // amqpLoggerSettings: amqpSettings, // default amqp settings
     logLevel: LOGLEVEL.FULL
 }
 ```
@@ -169,19 +184,10 @@ Exported library params
 ### createPoolCluster
 Creating the cluster and initialize with [user settings](#user-settings) <br>
 Params:
-1. [Cluster configuration](#user-settings) to configure library
+1. [Cluster configuration](#user-settings) to configure library. Example configuration [here](#configure-cluster)
 
 ```javascript
-galeraCluster.createPoolCluster({
-   hosts: [
-      {
-         host: "192.168.0.1",
-      }
-   ],
-   user: "admin",
-   password: "password_global",
-   database: "global_db",
-})
+galeraCluster.createPoolCluster(cfg)
 ```
 
 ### connect
@@ -267,14 +273,22 @@ Settings to [configure library](#configure-cluster)
         </tr>
         <tr>
             <td>redis</td>
-            <td>Redis object created using <i>ioredis</i> library</td>
+            <td>Redis object created using <i>ioredis</i> library. If Object passed then Redis is enabled</td>
             <td>false</td>
             <td>Redis object</td>
             <td>
 
 [Redis](https://www.npmjs.com/package/ioredis)
 </td>
-            <td>Default redis object using <i>ioredis</i> library</td>
+            <td>Don't have default Redis object (null)</td>
+        </tr>
+        <tr>
+            <td>useRedis</td>
+            <td>Enable cache query using Redis. To enable this key pass Redis object using key <i>redis</i></td>
+            <td>false</td>
+            <td>boolean</td>
+            <td>-</td>
+            <td>true</td>
         </tr>
         <tr>
             <td>errorRetryCount</td>
@@ -283,14 +297,6 @@ Settings to [configure library](#configure-cluster)
             <td>number</td>
             <td>-</td>
             <td>2</td>
-        </tr>
-        <tr>
-            <td>useRedis</td>
-            <td>Enable cache query using Redis</td>
-            <td>false</td>
-            <td>boolean</td>
-            <td>-</td>
-            <td>true</td>
         </tr>
         <tr>
             <td>serviceMetrics</td>
@@ -452,16 +458,7 @@ General pool settings which inherited by [user pool settings](#user-pool-setting
                 <b>operator</b> - operator to check with value. Exist: `=`, `<`, `>`, `Like`. For text only `=` or `Like` operator. `Like` is not strict equal check. <br>
                 <b>value</b> - value what must be to complete pool check <br>
             </td>
-            <td>
-
-```typescript
-[
-    { key: 'wsrep_ready', operator: '=', value: 'ON' },
-    { key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' },
-    { key: 'Threads_running', operator: '<', value: 50 }
-]
-```
-</td>
+            <td>[]</td>
         </tr>
         <tr>
             <td>loadFactors</td>
@@ -472,15 +469,7 @@ General pool settings which inherited by [user pool settings](#user-pool-setting
                 <b>key</b> - name (variable_name) of mysql global status <br>
                 <b>multiplier</b> - multiplies the result to achieve the corresponding pool score <br>
             </td>
-            <td>
-
-```typescript
-[
-    { key: 'Connections', multiplier: 2 },
-    { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
-]
-```
-</td>
+            <td>[]</td>
         </tr>
         <tr>
             <td>timerCheckRange</td>
@@ -707,6 +696,42 @@ Used in [user settings](#user-settings)
 Settings to configure amqp logger. Logging to the console in object format and send to the AMQP server, for example RabbitMQ. <br>
 All parameters are **not required** <br>
 Used in [user settings](#user-settings)
+
+**Default:**
+```js
+const amqpSettings = {
+    log_amqp: [
+        {
+            connection: {
+                host: "127.0.0.1",
+                port: 5672,
+                ssl: false,
+                username: "guest",
+                password: "guest",
+                vhost: "/",
+                heartbeat: 5
+            },
+            channel: {
+                directives: "ae",
+                exchange_name: "MDC",
+                exchange_type: "fanout",
+                exchange_durable: true,
+                topic: "",
+                options: {}
+            }
+        }
+    ],
+    pattern: {
+        DateTime: "",
+        Title: "",
+        Message: "",
+        LoggerSpecificData: "localhost",
+        LogSpecificData: "ThisLogType"
+    },
+    log_lvl: 1,
+    self_log_lvl: -1
+}
+```
 
 <table>
     <thead>

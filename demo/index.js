@@ -43,25 +43,25 @@ const cfg = {
          * operator - operator to compare (=, <, >). For text only '='
          * value - what value must be to complete pool check
          */
-        validators: [
-            { key: 'wsrep_ready', operator: '=', value: 'ON' },
-            { key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' },
-            { key: 'available_connection_count', operator: '>', value: 50 }
-        ],
+        // validators: [
+        //     { key: 'wsrep_ready', operator: '=', value: 'ON' },
+        //     { key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' },
+        //     { key: 'available_connection_count', operator: '>', value: 50 }
+        // ],
         /**
          * Load factors to sort the pools depends on load
          * key - variable_name in mysql global status
          * multiplier - multiply value of corresponding variable_name in mysql global status selected by key
          */
-        loadFactors: [
-            { key: 'Connections', multiplier: 2 },
-            { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
-        ],
+        // loadFactors: [
+        //     { key: 'Connections', multiplier: 2 },
+        //     { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
+        // ],
     },
     // showMetricKeys: true,
     // useConsoleLogger: false,
-    redis: new RedisLib(),
-    useAmqpLogger: true,
+    // redis: new RedisLib(),
+    // useAmqpLogger: true,
     /**
      * Level for logger. Default REGULAR
      * FULL - show all log information
