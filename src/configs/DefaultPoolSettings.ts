@@ -7,15 +7,8 @@ import { IDefaultPoolSettings } from "../types/PoolSettingsInterfaces";
 const DefaultPoolSettings: IDefaultPoolSettings = {
     port: 3306,
     connectionLimit: 100,
-    validators: [
-        { key: 'wsrep_ready', operator: '=', value: 'ON' },
-        { key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' },
-        { key: 'Threads_running', operator: '<', value: 50 }
-    ],
-    loadFactors: [
-        { key: 'Connections', multiplier: 2 },
-        { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
-    ],
+    validators: [],
+    loadFactors: [],
     timerCheckRange: {
         start: 5000,
         end: 15000

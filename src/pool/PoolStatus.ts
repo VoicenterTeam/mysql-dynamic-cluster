@@ -105,6 +105,7 @@ export class PoolStatus {
 
             queryTimer.end();
             this._queryTime = queryTimer.get();
+            this._isValid = false;
 
             this.nextCheckStatus(true)
         }

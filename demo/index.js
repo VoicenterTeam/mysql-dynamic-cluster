@@ -16,6 +16,7 @@ const cfg = {
             /**
              * You can reconfigure global parameters for current pool
              */
+            // port: 4608,
             // queryTimeout: 5000,
             // user: "user_current",
             // password: "password_current",

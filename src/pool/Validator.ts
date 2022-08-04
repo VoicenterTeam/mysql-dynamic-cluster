@@ -28,7 +28,7 @@ export class Validator {
      */
     public check(result: GlobalStatusResult[]): boolean {
         let validateCount: number = 0;
-        this._validators.forEach(validator => {
+        this._validators?.forEach(validator => {
             let value: string;
             switch (validator.key) {
                 // custom validators keys
@@ -48,7 +48,7 @@ export class Validator {
             if (Validator.checkValueIsValid(value, validator)) validateCount++;
         })
 
-        return validateCount === this._validators.length;
+        return validateCount === this._validators?.length;
     }
 
     /**
