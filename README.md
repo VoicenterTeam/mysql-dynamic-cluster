@@ -740,7 +740,6 @@ const amqpSettings = {
             <th>Description</th>
             <th>Type</th>
             <th>Value</th>
-            <th>Default</th>
         </tr>
     </thead>
     <tbody>
@@ -758,41 +757,11 @@ const amqpSettings = {
 
 [AMQP channel](#amqp-channel)
             </td>
-            <td>
-
-```typescript
-[
-    {
-        connection: {
-            host: "127.0.0.1",
-            port: 5672,
-            ssl: false,
-            username: "guest",
-            password: "guest",
-            vhost: "/",
-            heartbeat: 5
-        },
-        channel: {
-            directives: "ae",
-            exchange_name: "MDC",
-            exchange_type: "fanout",
-            exchange_durable: true,
-            topic: "",
-            options: {}
-        }
-    }
-]
-```
-</td>
         </tr>
         <tr>
             <td>pattern</td>
             <td>Pattern for AMQP</td>
-            <td>string</td>
-            <td>
-
-[AMQP pattern](#amqp-pattern)
-</td>
+            <td>object</td>
             <td>
 
 [AMQP pattern](#amqp-pattern)
@@ -810,7 +779,6 @@ const amqpSettings = {
                 <b>3</b> - debug <br>
                 <b>4</b> - trace <br>
             </td>
-            <td>1</td>
         </tr>
         <tr>
             <td>self_log_lvl</td>
@@ -824,7 +792,6 @@ const amqpSettings = {
                 <b>3</b> - debug <br>
                 <b>4</b> - trace <br>
             </td>
-            <td>1</td>
         </tr>
     </tbody>
 </table>
