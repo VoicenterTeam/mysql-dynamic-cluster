@@ -24,7 +24,7 @@ const defaultSettings: IDefaultSettings = {
   },
   showMetricKeys: false,
   useConsoleLogger: true,
-  useAmqpLogger: true,
+  useAmqpLogger: false,
   amqpLoggerSettings: AmqpLoggerConfig,
   redisSettings: DefaultRedisSettings,
   logLevel: LOGLEVEL.REGULAR
