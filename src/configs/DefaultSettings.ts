@@ -7,11 +7,10 @@ import { AmqpLoggerConfig } from './AmqpLoggerConfig';
 import { LOGLEVEL } from "../types/AmqpInterfaces";
 import DefaultRedisSettings from "./DefaultRedisSettings";
 import DefaultPoolSettings from "./DefaultPoolSettings";
-import RedisLib from 'ioredis';
 
 const defaultSettings: IDefaultSettings = {
   globalPoolSettings: DefaultPoolSettings,
-  redis: new RedisLib(),
+  redis: null,
   errorRetryCount: 2,
   useRedis: true,
   serviceMetrics: {

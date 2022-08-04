@@ -60,7 +60,7 @@ const cfg = {
     // showMetricKeys: true,
     // useAmqpLogger: false,
     // useConsoleLogger: false,
-    // redis: new RedisLib(),
+    redis: new RedisLib(),
     /**
      * Level for logger. Default REGULAR
      * FULL - show all log information
