@@ -9,7 +9,8 @@ export enum LOGLEVEL {
 }
 
 export interface IUserAmqpConfig {
-	log_amqp?: IAmqpLog[],
+	pool?: IAmqpLog[],
+	topic?: string
 	pattern?: IAmqpPattern,
 	log_lvl?: number,
 	self_log_lvl?: number
@@ -46,11 +47,22 @@ interface IAmqpConnection {
 }
 
 interface IAmqpChannel {
-	directives: string,
-	exchange_name: string,
-	exchange_type: string,
-	exchange_durable: boolean,
-	topic: string,
+	exchange: IAmqpExchange,
+	queue?: IAmqpQueue,
+	binding?: IAmqpBiding,
+	prefetch?: number
+}
+interface IAmqpExchange {
+	name: string,
+	type: string,
+	options: object
+}
+interface IAmqpQueue {
+	name: string,
+	options: object
+}
+interface IAmqpBiding {
+	name: string,
 	options: object
 }
 

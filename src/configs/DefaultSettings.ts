@@ -24,8 +24,8 @@ const defaultSettings: IDefaultSettings = {
     dbName: "mysql_dynamic_cluster"
   },
   showMetricKeys: false,
-  useConsoleLogger: true,
-  useAmqpLogger: true,
+  useConsoleLogger: false,
+  useAmqpLogger: false,
   amqpLoggerSettings: AmqpLoggerConfig,
   redisSettings: DefaultRedisSettings,
   logLevel: LOGLEVEL.REGULAR

@@ -16,12 +16,13 @@ const AmqpLoggerConfig: IDefaultAmqpConfig = {
                 heartbeat: 5
             },
             channel: {
-                directives: "ae",
-                exchange_name: "MDC",
-                exchange_type: "fanout",
-                exchange_durable: true,
-                topic: "",
-                options: {}
+                exchange: {
+                    name: "MDC",
+                    type: "fanout",
+                    options: {
+                        durable: true
+                    }
+                }
             }
         }
     ],
