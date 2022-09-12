@@ -5,7 +5,7 @@
 import { IUserSettings } from "../types/SettingsInterfaces";
 import { IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import Logger from "./Logger";
-import defaultSettings from "../configs/DefaultSettings";
+import config from '../configs';
 import deepmerge from "deepmerge";
 import { isPlainObject } from 'is-plain-object';
 
@@ -15,18 +15,15 @@ export class Settings {
      * @param userSettings user settings
      */
     public static mixSettings(userSettings: IUserSettings): IUserSettings {
-        Logger.debug("Mixing user and pool settings with global...");
 
         const overwriteMerge = (destinationArray, sourceArray) => sourceArray
-        userSettings = deepmerge(defaultSettings, userSettings, {
+        userSettings = deepmerge(config.get(), userSettings, {
             arrayMerge: overwriteMerge,
             isMergeableObject: isPlainObject
         }) as IUserSettings;
 
         userSettings.hosts = userSettings.hosts.map(host => {
-            return deepmerge(userSettings.globalPoolSettings, host, {
-                arrayMerge: overwriteMerge
-            }) as IUserPoolSettings;
+            return deepmerge(userSettings.defaultPoolSettings, host) as IUserPoolSettings;
         })
 
         return userSettings;

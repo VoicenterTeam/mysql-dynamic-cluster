@@ -1,6 +1,7 @@
 import { BinaryToTextEncoding } from "crypto";
 
 export interface IRedisSettings {
+    enabled: boolean,
     keyPrefix?: string,
     expire?: number,
     expiryMode?: string,
@@ -10,6 +11,7 @@ export interface IRedisSettings {
 }
 
 export interface IDefaultRedisSettings extends IRedisSettings {
+    enabled: boolean
     keyPrefix: string,
     expire: number,
     expiryMode: string,

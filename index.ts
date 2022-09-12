@@ -1,29 +1,27 @@
 import { IUserSettings } from "./src/types/SettingsInterfaces";
 import { GaleraCluster } from "./src/cluster/GaleraCluster";
-import { LOGLEVEL } from './src/types/AmqpInterfaces';
+import { LOGLEVEL } from './src/types/LoggerInterfaces';
 import Logger from "./src/utils/Logger";
 import { Settings } from "./src/utils/Settings";
 import Redis from "./src/Redis/Redis";
 import Metrics from "./src/metrics/Metrics";
+import config from './src/configs';
+import { Redis as RedisLib, Cluster}  from 'ioredis'
 
 function createPoolCluster(userSettings: IUserSettings): GaleraCluster {
     userSettings = Settings.mixSettings(userSettings);
-    init(userSettings);
-    return new GaleraCluster(userSettings);
+    config.load(userSettings).validate();
+    init();
+    return new GaleraCluster();
 }
 
-function init(userSettings: IUserSettings): void {
-    Logger.init(userSettings.useConsoleLogger, userSettings.clusterName);
-    if (userSettings.logLevel !== undefined) {
-        Logger.setLogLevel(userSettings.logLevel);
-    }
-    if (userSettings.useAmqpLogger) {
-        Logger.enableAMQPLogger(userSettings.amqpLoggerSettings);
-    }
-
-    Metrics.init(userSettings.clusterName, userSettings.showMetricKeys);
-    if(userSettings.redis){
-        Redis.init(userSettings.redis, userSettings.clusterName, userSettings.redisSettings);
+function init(): void {
+    Logger.init();
+    const redisInstant:any = config.get('redisInstant')
+    Metrics.init(config.get('clusterName'), config.get('showMetricKeys'));
+    // tslint:disable-next-line:no-bitwise
+    if(redisInstant instanceof Cluster ||  redisInstant in Redis){
+        Redis.init(redisInstant, config.get('clusterName'), config.get('redis'));
     }
     Logger.info("Initialized app");
 }

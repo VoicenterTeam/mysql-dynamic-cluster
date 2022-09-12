@@ -8,6 +8,9 @@ const RedisLib = require('ioredis');
 
 const cfg = {
     clusterName: 'demo',
+    logs: {
+        level: 'DEBUG'
+    },
     // Configuration for each pool. At least 2 pools are recommended
     hosts: [
         {
@@ -32,7 +35,7 @@ const cfg = {
         }
     ],
     // Configure global settings for all pools
-    globalPoolSettings: {
+    defaultPoolSettings: {
         user: process.env.DB_USERNAME,
         password: process.env.DB_PASSWORD,
         database: process.env.DB_DATABASE,

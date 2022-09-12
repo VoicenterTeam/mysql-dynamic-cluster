@@ -17,6 +17,7 @@ import { IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
 import ServiceNames from "../utils/ServiceNames";
 import { IRedisData } from "../types/RedisInterfaces";
+import config from "../configs";
 
 export class GaleraCluster {
     public connected: boolean = false;
@@ -42,28 +43,30 @@ export class GaleraCluster {
     /**
      * @param userSettings global user settings
      */
-    constructor(userSettings: IUserSettings) {
+    constructor() {
         Logger.debug("Configuring cluster...");
 
-        this._useClusterHashing = userSettings.useClusterHashing;
-        this._clusterName = userSettings.clusterName;
-        this._errorRetryCount = userSettings.errorRetryCount;
-        this._useRedis = userSettings.useRedis;
-        const poolIds: number[] = this._sortPoolIds(userSettings.hosts);
+        this._useClusterHashing = config.get('useClusterHashing')
+        this._clusterName = config.get('clusterName')
+        this._errorRetryCount = config.get('errorRetryCount')
+        this._useRedis = config.get('redis.enabled')
+        const poolIds: number[] = this._sortPoolIds(config.get('hosts'));
 
-        userSettings.hosts.forEach(poolSettings => {
+        config.get('hosts').forEach(poolSettings => {
             if (!poolSettings.id) {
                 poolSettings.id = poolIds.length <= 0 ? 0 : poolIds[poolIds.length - 1] + 1;
                 poolIds.push(poolSettings.id);
             }
-
+            if(poolSettings.host)
             this._pools.push(
                 new Pool(poolSettings, this._clusterName)
             )
+            else
+                Logger.error(`Pool not valid host ${poolSettings.host}`, poolSettings)
         })
 
-        this._serviceNames = new ServiceNames(this, userSettings.serviceMetrics);
-        this._clusterHashing = new ClusterHashing(this, this._clusterName, userSettings.clusterHashing);
+        this._serviceNames = new ServiceNames(this, config.get('serviceMetrics'));
+        this._clusterHashing = new ClusterHashing(this, this._clusterName, config.get('clusterHashing'));
 
         Logger.info("Cluster configuration finished");
     }

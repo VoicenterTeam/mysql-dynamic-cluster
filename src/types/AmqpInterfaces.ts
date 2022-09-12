@@ -2,24 +2,24 @@
  * Created by Bohdan on Mar, 2022
  */
 
-export enum LOGLEVEL {
-	QUIET,
-	REGULAR,
-	FULL
-}
-
 export interface IUserAmqpConfig {
-	log_amqp?: IAmqpLog[],
-	pattern?: IAmqpPattern,
-	log_lvl?: number,
-	self_log_lvl?: number
+	topic?: string,
+	connection_master: IAmqpConnection,
+	exchage: IAmqpExchange,
+	queue: IAmqpQueue,
+	bindings: IAmqpBinding,
+	prefetch?: number
+}
+export enum ExchangeType {
+	TOPIC = 'topic',
+	HEADERS = 'headers',
+	FANOUT = 'fanout',
+    DIECT = 'dierct',
 }
 
-export interface IDefaultAmqpConfig extends IUserAmqpConfig {
-	log_amqp: IAmqpLog[],
-	pattern: IDefaultAmqpPattern,
-	log_lvl: number
-	self_log_lvl: number
+export interface IDefaultAmqpConfig {
+	pool: IAmqp[],
+	topic?: string,
 }
 
 export interface IAmqpConfig extends IUserAmqpConfig {
@@ -30,7 +30,7 @@ export interface IMethDict {
 	[key: string]: number
 }
 
-interface IAmqpLog {
+interface IAmqp {
 	connection: IAmqpConnection,
 	channel: IAmqpChannel
 }
@@ -46,13 +46,40 @@ interface IAmqpConnection {
 }
 
 interface IAmqpChannel {
-	directives: string,
-	exchange_name: string,
-	exchange_type: string,
-	exchange_durable: boolean,
-	topic: string,
-	options: object
+	exchange: IAmqpExchange
+	queue: IAmqpQueue
+	binding?: IAmqpBinding,
+	prefetch?: number
 }
+
+
+interface IAmqpExchange {
+	name: string,
+	type: ExchangeType,
+	options?: IAmqpExchangeOptions
+}
+interface IAmqpExchangeOptions {
+	durable: boolean
+}
+interface IAmqpQueue{
+	name: string,
+	options?: IAmqpQueueOptions
+}
+interface IAmqpQueueOptions {
+	exclusive: boolean,
+	durable: boolean
+}
+
+interface IAmqpBinding{
+	enabled: boolean
+	pattern: string,
+	options?: IAmqpBindingOptions
+}
+
+interface IAmqpBindingOptions{}
+
+
+
 
 interface IAmqpPattern {
 	DateTime?: string,

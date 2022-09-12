@@ -20,7 +20,7 @@ interface IPoolSettings {
     redisFactor?: number
 }
 
-export interface IGlobalUserPoolSettings extends IPoolSettings {
+export interface IDefaultUserPoolSettings extends IPoolSettings {
     user: string,
     password: string,
     database: string

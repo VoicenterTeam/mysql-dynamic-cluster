@@ -13,6 +13,7 @@ class Redis {
 	private redisSettings: IRedisSettings;
 
 	init(newRedis: RedisLib | Cluster, clusterName: string, redisSettings: IRedisSettings): void {
+
 		this.redis = newRedis;
 		this.redisSettings = redisSettings;
 		this.redisSettings.keyPrefix = `${clusterName}_${this.redisSettings.keyPrefix}`;
