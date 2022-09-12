@@ -1,6 +1,6 @@
 {
   "name": "@voicenter-team/mysql-dynamic-cluster",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Galera cluster with implementation of dynamic choose mysql server for queries, caching, hashing it and metrics",
   "homepage": "https://github.com/VoicenterTeam/mysql-dynamic-cluster#readme",
   "bugs": {

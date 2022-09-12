@@ -18,7 +18,8 @@ interface ISettings {
     clusterHashing?: IClusterHashingSettings,
     redisSettings?: IRedisSettings,
     showMetricKeys?: boolean,
-    logger: ILoggerSettings
+    logs: ILoggerSettings,
+    amqp_logs: IUserAmqpConfig
 }
 
 export interface IUserSettings extends ISettings {
@@ -35,7 +36,6 @@ export interface IDefaultSettings extends ISettings {
     useClusterHashing: boolean,
     clusterHashing: IDefaultClusterHashingSettings,
     showMetricKeys: boolean,
-    useConsoleLogger: boolean,
     redisSettings: IDefaultRedisSettings,
     logs: ILoggerSettings,
     amqp_logs: IUserAmqpConfig
