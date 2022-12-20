@@ -184,6 +184,7 @@ export class GaleraCluster {
         }
 
         sql = this._formatSQL(sql, values);
+        Logger.debug("formatSQL", {sql, values})
         let redisData: IRedisData = null;
         if (queryOptions.redis) {
             const redisLatency = new QueryTimer(MetricNames.redis.latency);
