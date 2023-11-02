@@ -1,5 +1,5 @@
 create
-    definer = root@localhost procedure SP_RemoveNode(IN _ID tinyint)
+    procedure SP_RemoveNode(IN _ID tinyint)
 BEGIN
     delete
     from node_services

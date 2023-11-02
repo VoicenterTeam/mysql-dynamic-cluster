@@ -1,5 +1,5 @@
 create
-    definer = root@localhost procedure SP_NodeInsert(IN _ID tinyint, IN _Name varchar(100), IN _IP varchar(100),
+    procedure SP_NodeInsert(IN _ID tinyint, IN _Name varchar(100), IN _IP varchar(100),
                                                      IN _Port smallint)
 BEGIN
     if (select count(node_id) > 0

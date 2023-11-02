@@ -1,5 +1,5 @@
 create
-    definer = root@localhost function FN_GetServiceNodeMapping() returns json
+    function FN_GetServiceNodeMapping() returns json
 BEGIN
     RETURN (
         SELECT JSON_ARRAYagg(
