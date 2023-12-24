@@ -48,7 +48,7 @@ export class Pool {
         this.host = settings.host;
         this.port = settings.port;
         this.name = settings.name ? settings.name : `${this.host}:${this.port}`
-        Logger.debug(`Configure pool named ${this.name}`);
+        Logger.debug(`Configure pool named ${this.name} ${this.host}:${this.port}`);
 
         this._user = settings.user;
         this._password = settings.password;
@@ -72,6 +72,7 @@ export class Pool {
         Logger.debug("Creating pool in host: " + this.host);
         this._pool = mysql.createPool({
             host: this.host,
+            port: this.port,
             user: this._user,
             password: this._password,
             database: this._database,
