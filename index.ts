@@ -10,17 +10,18 @@ import { Redis as RedisLib, Cluster}  from 'ioredis'
 
 function createPoolCluster(userSettings: IUserSettings): GaleraCluster {
     userSettings = Settings.mixSettings(userSettings);
-    config.load(userSettings).validate();
-    init();
+    let redisInstant = userSettings.redisInstant;
+    delete userSettings.redisInstant;
+    config.load(userSettings).validate;
+    init(redisInstant);
     return new GaleraCluster();
 }
 
-function init(): void {
+function init(redisInstant): void {
     Logger.init();
-    const redisInstant:any = config.get('redisInstant')
     Metrics.init(config.get('clusterName'), config.get('showMetricKeys'));
     // tslint:disable-next-line:no-bitwise
-    if(redisInstant instanceof Cluster ||  redisInstant in Redis){
+    if(redisInstant instanceof Cluster ||  redisInstant?.constructor?.name === 'Redis'){
         Redis.init(redisInstant, config.get('clusterName'), config.get('redis'));
     }
     Logger.info("Initialized app");
