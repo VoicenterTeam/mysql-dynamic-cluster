@@ -42,7 +42,8 @@ export interface IQueryOptions {
     maxRetry?: number,
     redis?: boolean,
     redisFactor?: number,
-    redisExpire?: number
+    redisExpire?: number,
+    redisRefreshCache?: boolean
 }
 
 export interface IServiceNodeMap {

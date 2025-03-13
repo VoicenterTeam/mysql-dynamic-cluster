@@ -156,6 +156,7 @@ export class GaleraCluster {
         queryOptions = {
             redis: this._useRedis,
             maxRetry: this._errorRetryCount,
+            redisRefreshCache: false,
             ...queryOptions
         }
 
@@ -186,7 +187,7 @@ export class GaleraCluster {
         sql = this._formatSQL(sql, values);
         Logger.debug("formatSQL", {sql, values})
         let redisData: IRedisData = null;
-        if (queryOptions.redis) {
+        if (queryOptions.redis && !queryOptions.redisRefreshCache) {
             const redisLatency = new QueryTimer(MetricNames.redis.latency);
             redisLatency.start();
 
