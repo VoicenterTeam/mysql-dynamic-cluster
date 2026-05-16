@@ -7,7 +7,7 @@ connection-lifecycle events onto the shared `Events` bus, runs queries
 (optionally caching their results in Redis), and exposes a transactional
 multi-statement helper. The `PoolStatus` companion polls `SHOW GLOBAL
 STATUS` on a timer to decide whether the node is still routable; see
-[poolStatus.md](poolStatus.md) for that subsystem (and
+[health-and-scoring.md](health-and-scoring.md) for that subsystem (and
 [../architecture.md](../architecture.md) for where `Pool` sits in the
 boot flow).
 
@@ -59,7 +59,7 @@ calls on each pool. The steps:
    ([src/pool/Pool.ts:82](../../src/pool/Pool.ts#L82)). Setting
    `active` to `true` is the trigger for `PoolStatus` to start its
    recurring `SHOW GLOBAL STATUS` poller — see
-   [poolStatus.md](poolStatus.md) for the timer semantics.
+   [health-and-scoring.md](health-and-scoring.md) for the timer semantics.
 3. Wire mysql2's per-connection events through `_connectEvents`
    ([src/pool/Pool.ts:83](../../src/pool/Pool.ts#L83)).
 4. Run one synchronous (well, `await`ed) `status.checkStatus()` to
