@@ -39,7 +39,7 @@
   },
   "dependencies": {
     "@pm2/io": "^6.1.0",
-    "@voicenter-team/failover-amqp-pool": "^1.4.2",
+    "@voicenter-team/failover-amqp-pool": "^2.3.10",
     "convict": "^6.2.3",
     "deepmerge": "^4.2.2",
     "ioredis": "^4.28.3",
