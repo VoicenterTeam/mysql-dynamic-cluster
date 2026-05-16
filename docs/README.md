@@ -15,13 +15,13 @@ If you're new to the project, read in this order:
 ## Foundation
 
 - [architecture.md](architecture.md) — boot and runtime diagrams, singletons, and the connect/disconnect lifecycle.
-- [configuration.md](configuration.md) — convict schema, env-var overlay, `Settings.mixSettings` merge order, and defaults.
+- [configuration.md](configuration.md) — convict schema, env overlay, `Settings.mixSettings` merge order, defaults.
 - [events.md](events.md) — catalog of cluster and pool events, their payloads, and the array-wrapping listener quirk.
 - [sql-assets.md](sql-assets.md) — hashing-database tables, routines, capacity caps, and SQL path resolution.
 - [testing.md](testing.md) — Jest layout, why the current suite is stale on V3.0, and what still runs.
-- [known-issues.md](known-issues.md) — catalogued footguns and bugs with file:line refs and suggested fixes (not applied).
+- [known-issues.md](known-issues.md) — catalogued bugs/footguns with file:line refs and suggested fixes (not applied).
 - [branch-divergence.md](branch-divergence.md) — side-by-side of `dev` vs V3 API shapes and what stayed the same.
-- [glossary.md](glossary.md) — short definitions of Galera, validator, load factor, hashing, AMQP, and pm2 metric terms.
+- [glossary.md](glossary.md) — short defs: Galera, validator, load factor, hashing, AMQP, pm2 metric types.
 
 ## Subsystems
 
@@ -29,6 +29,6 @@ If you're new to the project, read in this order:
 - [subsystems/pool.md](subsystems/pool.md) — `Pool` lifecycle, query callback chain, multi-statement txns, events.
 - [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md) — `PoolStatus`, `Validator`, `LoadFactor`.
 - [subsystems/cluster-hashing.md](subsystems/cluster-hashing.md) — service-to-node pinning, hashing DB, pool ordering.
-- [subsystems/redis-cache.md](subsystems/redis-cache.md) — key derivation, payload TTL, stale-fallback, `clearOnStart`.
+- [subsystems/redis-cache.md](subsystems/redis-cache.md) — key derivation, TTL, stale fallback, `clearOnStart`.
 - [subsystems/metrics.md](subsystems/metrics.md) — pm2.io metric types, naming, two-write service scoping, adding.
 - [subsystems/logger.md](subsystems/logger.md) — winston setup, console + AMQP outputs, `LOGLEVEL` / `LOGTYPES` enums.
