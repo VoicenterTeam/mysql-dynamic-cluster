@@ -96,7 +96,7 @@ Logger output options. See [schema.ts:199-212](../src/configs/schema.ts#L199).
 | `level` | enum (`LOGLEVEL`) | `LOGLEVEL.INFO` | `LOGGER_LOG_LEVEL` |
 | `output` | `string` | `'console'` | `LOGGER_LOG_OUTPUT` |
 
-`output` accepts a comma-separated list (e.g. `console,file`).
+`output` accepts a comma-separated list. Only `console` and `amqp` are actually handled by [src/utils/Logger.ts](../src/utils/Logger.ts) (e.g. `'console,amqp'`); other tokens are silently ignored.
 
 ## `amqp_logs`
 

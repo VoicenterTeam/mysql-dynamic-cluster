@@ -257,52 +257,31 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 ### 13. Tests don't compile on V3.0
 
 - **Severity:** **medium**
-- **Location:** `tests/` (all suites). Specific files:
-  [tests/utils/settings.test.ts:7](../tests/utils/settings.test.ts#L7),
-  [tests/pool/query.test.ts:11](../tests/pool/query.test.ts#L11),
-  [tests/cluster/hashing.test.ts:53](../tests/cluster/hashing.test.ts#L53),
-  [tests/cluster/hashing.test.ts:72](../tests/cluster/hashing.test.ts#L72),
-  [tests/cluster/query.test.ts:11-32](../tests/cluster/query.test.ts#L11-L32),
-  [tests/loads/load.test.ts:14-37](../tests/loads/load.test.ts#L14-L37).
-- **Description:** The test suite was written against the dev-branch API and
-  has not been ported to V3.0. Concrete failures:
-  - `tests/utils/settings.test.ts` imports
-    `AmqpLoggerConfig` from `../../src/configs/AmqpLoggerConfig` (the file no
-    longer exists), and exercises `globalPoolSettings`, `useAmqpLogger`, and
-    a flat `redisSettings` — none of which match the V3 schema.
-  - `tests/pool/query.test.ts:11` constructs `new Pool({...})` with a single
-    settings argument; V3 `Pool` requires `(settings, clusterName)`.
-  - `tests/cluster/hashing.test.ts:53` calls
-    `new ClusterHashing(cluster, null, database)` with wrong argument types;
-    V3 wants `(cluster, clusterName, IClusterHashingSettings)`.
-  - `tests/cluster/hashing.test.ts:72` calls `new ClusterHashing(cluster)`
-    with only one argument — also wrong on V3.
-  - `tests/cluster/query.test.ts:11-32` and `tests/loads/load.test.ts:14-37`
-    pass `user`, `password`, `database`, `validators`, and `loadFactors` at
-    the top level; V3 expects these under `defaultPoolSettings`.
-  Cross-reference [testing.md](testing.md).
-- **Suggested fix:** rewrite each test file against the V3 settings schema
-  and constructor signatures. Deferred until after the dev -> V3 merge so the
-  rewrites do not have to be redone.
+- **Location:** `tests/` — see [testing.md](testing.md) for the per-file breakdown.
+- **Description:** The suite was written against the dev-branch API and never
+  ported. Failures include a deleted `AmqpLoggerConfig` import in
+  [tests/utils/settings.test.ts:7](../tests/utils/settings.test.ts#L7), wrong
+  constructor arity in
+  [tests/pool/query.test.ts:11](../tests/pool/query.test.ts#L11) and
+  [tests/cluster/hashing.test.ts:53,72](../tests/cluster/hashing.test.ts#L53),
+  and top-level `user`/`password`/`validators`/`loadFactors` (instead of nested
+  under `defaultPoolSettings`) in
+  [tests/cluster/query.test.ts:11-32](../tests/cluster/query.test.ts#L11-L32)
+  and [tests/loads/load.test.ts:14-37](../tests/loads/load.test.ts#L14-L37).
+- **Suggested fix:** rewrite each test file against the V3 schema and
+  constructor signatures. Defer until after the dev -> V3 merge to avoid
+  redoing the work.
 
 ### 14. `tests/loads/` is excluded from `npm test`
 
 - **Severity:** **low**
-- **Location:** [jest.config.js:11](../jest.config.js#L11) — the file's
-  `testPathIgnorePatterns` array contains the string `'tests/loads'` (line 11)
-  alongside `'dist'` (line 10).
-- **Description:** Jest is configured to skip everything under `tests/loads/`,
-  so `npm test` does not exercise the load-test suite. The suite contains
-  exactly one file, `tests/loads/load.test.ts`, which is also broken on V3
-  (issue #13). The combination means the load tests are not run automatically
-  *and* would not pass even if they were. Invoking Jest with an explicit path
-  (`npx jest tests/loads/load.test.ts`) overrides the ignore pattern, but that
-  is not part of the documented workflow.
-- **Suggested fix:** decide whether the load tests are abandoned (in which
-  case delete `tests/loads/`) or whether they are still wanted as a manual
-  smoke test. If the latter, add an explicit `test:load` script to
-  `package.json` (e.g. `"test:load": "jest --testPathPattern=tests/loads"`)
-  and document the contract in [testing.md](testing.md).
+- **Location:** [jest.config.js:11](../jest.config.js#L11) — `testPathIgnorePatterns` contains `'tests/loads'`.
+- **Description:** `npm test` skips everything under `tests/loads/`. The only
+  file there (`tests/loads/load.test.ts`) is also broken on V3 (issue #13), so
+  the load tests neither run automatically nor pass. `npx jest tests/loads/load.test.ts` overrides the ignore pattern but is undocumented.
+- **Suggested fix:** delete `tests/loads/` if abandoned; otherwise add a
+  `test:load` script to `package.json` and document the contract in
+  [testing.md](testing.md).
 
 ### 15. No CI, no lint script
 
@@ -315,8 +294,6 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   the repository, so `npm test`, `npm run build`, and any linter never run on
   push or PR. Schema breaks, type regressions, and the cluster of bugs above
   ride into `main` unchecked.
-- **Suggested fix:** migrate from `tslint` to ESLint (with
-  `@typescript-eslint`), add `lint`, `lint:fix`, and `typecheck` scripts to
-  `package.json`, and add a GitHub Actions workflow that runs
-  `npm ci && npm run build && npm test && npm run lint && npm run typecheck`
-  on every push and pull request.
+- **Suggested fix:** migrate to ESLint (`@typescript-eslint`), add `lint` and
+  `typecheck` scripts, and add a GitHub Actions workflow running
+  `npm ci && npm run build && npm test && npm run lint && npm run typecheck`.
