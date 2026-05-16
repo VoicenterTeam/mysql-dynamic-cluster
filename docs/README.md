@@ -25,10 +25,10 @@ If you're new to the project, read in this order:
 
 ## Subsystems
 
-- [subsystems/cluster.md](subsystems/cluster.md) — `GaleraCluster` orchestration, pool selection, and the full query flow.
-- [subsystems/pool.md](subsystems/pool.md) — `Pool` lifecycle, query callback chain, multi-statement transactions, and event wiring.
-- [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md) — adaptive `PoolStatus` timer, `Validator`, and `LoadFactor`.
-- [subsystems/cluster-hashing.md](subsystems/cluster-hashing.md) — service-to-node pinning, hashing DB lifecycle, and `_getActivePools` ordering.
-- [subsystems/redis-cache.md](subsystems/redis-cache.md) — key derivation, payload-level expiry, stale-fallback, and `clearOnStart` scoping.
-- [subsystems/metrics.md](subsystems/metrics.md) — pm2.io metric types, naming rules, two-write service scoping, and how to add a metric.
-- [subsystems/logger.md](subsystems/logger.md) — winston setup, console + AMQP outputs, and `LOGLEVEL` / `LOGTYPES` enums.
+- [subsystems/cluster.md](subsystems/cluster.md) — `GaleraCluster` orchestration, pool selection, and query flow.
+- [subsystems/pool.md](subsystems/pool.md) — `Pool` lifecycle, query callback chain, multi-statement txns, events.
+- [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md) — `PoolStatus`, `Validator`, `LoadFactor`.
+- [subsystems/cluster-hashing.md](subsystems/cluster-hashing.md) — service-to-node pinning, hashing DB, pool ordering.
+- [subsystems/redis-cache.md](subsystems/redis-cache.md) — key derivation, payload TTL, stale-fallback, `clearOnStart`.
+- [subsystems/metrics.md](subsystems/metrics.md) — pm2.io metric types, naming, two-write service scoping, adding.
+- [subsystems/logger.md](subsystems/logger.md) — winston setup, console + AMQP outputs, `LOGLEVEL` / `LOGTYPES` enums.
