@@ -38,7 +38,7 @@
     "coverage": "jest --coverage"
   },
   "dependencies": {
-    "@pm2/io": "^5.0.0",
+    "@pm2/io": "^6.1.0",
     "@voicenter-team/failover-amqp-pool": "^1.4.2",
     "convict": "^6.2.3",
     "deepmerge": "^4.2.2",
