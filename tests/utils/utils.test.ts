@@ -5,18 +5,23 @@
 import { Timer } from "../../src/utils/Timer";
 import { Utils } from "../../src/utils/Utils";
 
-test("Timer async", async () => {
-    let count = 0;
-    const timer = new Timer(() => {
-        console.log("Count");
-        count++;
+test("Timer async", () => {
+    jest.useFakeTimers();
+    try {
+        let count = 0;
+        const timer = new Timer(() => {
+            count++;
+            timer.start(30);
+        })
         timer.start(30);
-    })
-    timer.start(30);
-    await new Utils().sleep(35 * 4);
-    timer.dispose();
+        // Deterministically fire 3 reschedules: ticks land at t=30, 60, 90.
+        jest.advanceTimersByTime(90);
+        timer.dispose();
 
-    await expect(count).toBe(3);
+        expect(count).toBe(3);
+    } finally {
+        jest.useRealTimers();
+    }
 })
 
 test("Clamp", () => {
