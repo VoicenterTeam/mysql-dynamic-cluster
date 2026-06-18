@@ -17,7 +17,10 @@ interface IPoolSettings {
     timerCheckRange?: ITimerCheckRange, // Time in ms
     timerCheckMultiplier?: number,
     slowQueryTime?: number,
-    redisFactor?: number
+    redisFactor?: number,
+    minConnections?: number,
+    idleTimeout?: number,
+    idleCheckInterval?: number
 }
 
 export interface IDefaultUserPoolSettings extends IPoolSettings {
@@ -42,5 +45,8 @@ export interface IDefaultPoolSettings extends IPoolSettings {
     timerCheckRange: ITimerCheckRange, // Time in ms
     timerCheckMultiplier: number,
     slowQueryTime: number,
-    redisFactor: number
+    redisFactor: number,
+    minConnections: number,
+    idleTimeout: number,
+    idleCheckInterval: number
 }

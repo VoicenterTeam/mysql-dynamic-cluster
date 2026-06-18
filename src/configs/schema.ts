@@ -36,8 +36,26 @@ export const schema = {
         connectionLimit: {
             doc: 'default cluster connection limit',
             format:  Number,
-            default: 100,
+            default: 10,
             env: "MYSQL_DEFAULT_CONNECTION_LIMIT"
+        },
+        minConnections: {
+            doc: 'minimum free connections kept alive per pool by the idle reaper',
+            format:  Number,
+            default: 1,
+            env: "MYSQL_DEFAULT_MIN_CONNECTIONS"
+        },
+        idleTimeout: {
+            doc: 'time in ms after which an idle connection is destroyed (keeping at least minConnections)',
+            format:  Number,
+            default: 30000,
+            env: "MYSQL_DEFAULT_IDLE_TIMEOUT"
+        },
+        idleCheckInterval: {
+            doc: 'how often in ms the idle connection reaper runs its cleanup pass',
+            format:  Number,
+            default: 10000,
+            env: "MYSQL_DEFAULT_IDLE_CHECK_INTERVAL"
         },
         validators: {
             doc: 'default cluster validators',
