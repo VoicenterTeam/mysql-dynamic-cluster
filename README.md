@@ -432,7 +432,7 @@ General pool settings which inherited by [user pool settings](#user-pool-setting
             <td>false</td>
             <td>number</td>
             <td>-</td>
-            <td>100</td>
+            <td>10 <em>(changed from 100 in v3.2 — set explicitly if you need more)</em></td>
         </tr>
         <tr>
             <td>queryTimeout</td>
@@ -523,6 +523,30 @@ General pool settings which inherited by [user pool settings](#user-pool-setting
             <td>number</td>
             <td>-</td>
             <td>100</td>
+        </tr>
+        <tr>
+            <td>minConnections</td>
+            <td>Minimum free connections to keep alive per pool. The periodic status-check query keeps this connection warm so no extra keep-alive is needed.</td>
+            <td>false</td>
+            <td>number</td>
+            <td>-</td>
+            <td>1</td>
+        </tr>
+        <tr>
+            <td>idleTimeout</td>
+            <td>Time in ms after which an idle connection is destroyed, provided doing so leaves at least <code>minConnections</code> alive.</td>
+            <td>false</td>
+            <td>number (ms)</td>
+            <td>-</td>
+            <td>30000</td>
+        </tr>
+        <tr>
+            <td>idleCheckInterval</td>
+            <td>How often in ms the idle connection reaper runs its cleanup pass.</td>
+            <td>false</td>
+            <td>number (ms)</td>
+            <td>-</td>
+            <td>10000</td>
         </tr>
     </tbody>
 </table>
