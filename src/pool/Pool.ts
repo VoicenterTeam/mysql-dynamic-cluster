@@ -14,6 +14,7 @@ import { QueryTimer } from "../utils/QueryTimer";
 import { IMetricOptions } from "../types/MetricsInterfaces";
 import Redis from "../Redis/Redis";
 import { IRedisData } from "../types/RedisInterfaces";
+import { IdleConnectionReaper } from './IdleConnectionReaper';
 
 // AKA galera node
 export class Pool {
@@ -38,6 +39,7 @@ export class Pool {
     private readonly _redisExpire: number;
 
     private _pool: mysql.Pool;
+    private readonly _reaper: IdleConnectionReaper;
 
     /**
      * @param settings pool settings
@@ -60,6 +62,12 @@ export class Pool {
 
         this.connectionLimit = settings.connectionLimit;
 
+        this._reaper = new IdleConnectionReaper(
+            settings.minConnections,
+            settings.idleTimeout,
+            settings.idleCheckInterval
+        );
+
         this._status = new PoolStatus(this, settings, false, this.connectionLimit);
 
         Logger.info("configuration pool finished in host: " + this.host);
@@ -79,6 +87,7 @@ export class Pool {
             connectionLimit: this.connectionLimit
         })
 
+        this._reaper.start(this._pool as any);
         this.status.active = true;
         this._connectEvents();
         await this.status.checkStatus();
@@ -104,11 +113,13 @@ export class Pool {
 
         this._pool.on("release", (connection) => {
             this.status.availableConnectionCount++;
+            this._reaper.onRelease(connection);
             Logger.debug("Connection closed");
             Events.emit('release', connection, this.id);
         })
 
         this._pool.on('acquire', (connection) => {
+            this._reaper.onAcquire(connection);
             Logger.debug("Connection is acquire");
             Events.emit('acquire', connection, this.id);
         })
@@ -126,6 +137,7 @@ export class Pool {
         });
         this.status.active = false;
         this.status.stopTimerCheck();
+        this._reaper.stop();
         Events.emit('pool_disconnected', this.id);
 
         Logger.info("pool named " + this.name + " closed");
