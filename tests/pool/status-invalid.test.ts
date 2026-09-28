@@ -17,7 +17,7 @@ describe('PoolStatus.checkStatus validity', () => {
     beforeEach(() => {
         jest.useFakeTimers();
         pool = { host: '127.0.0.1', query: jest.fn() };
-        status = new PoolStatus(pool as any, settings, true, 10);
+        status = new PoolStatus(pool as any, settings, true);
     });
 
     afterEach(() => {
@@ -57,6 +57,19 @@ describe('PoolStatus.checkStatus validity', () => {
         pool.query.mockRejectedValueOnce(new Error('blip'));
         await status.checkStatus();
         expect(status.isValid).toBe(true);
+    });
+
+    it('the status query times out at the longest check interval, or queryTimeout if lower', async () => {
+        pool.query.mockResolvedValue([]);
+        const slow = new PoolStatus(pool as any, { ...settings, queryTimeout: 120000 }, true);
+        await slow.checkStatus();
+        expect(pool.query).toHaveBeenLastCalledWith('SHOW GLOBAL STATUS;', { redis: false, timeout: 10000 });
+        slow.stopTimerCheck();
+
+        const fast = new PoolStatus(pool as any, { ...settings, queryTimeout: 3000 }, true);
+        await fast.checkStatus();
+        expect(pool.query).toHaveBeenLastCalledWith('SHOW GLOBAL STATUS;', { redis: false, timeout: 3000 });
+        fast.stopTimerCheck();
     });
 
     it('restores validity on the next passing check', async () => {

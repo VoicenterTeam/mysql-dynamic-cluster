@@ -15,7 +15,10 @@ import MetricNames from "../metrics/MetricNames";
 
 export class PoolStatus {
     public active: boolean;
-    public availableConnectionCount: number;
+    // Connections that can still be handed out, read from the pool
+    public get availableConnectionCount(): number {
+        return this._pool.availableConnectionCount;
+    }
     // How much time query take. Time in seconds
 
     private readonly _pool: Pool;
@@ -39,6 +42,8 @@ export class PoolStatus {
     private _loadFactor: LoadFactor;
     // Failed checks in a row. One failure (network blip) doesn't take the pool out of rotation
     private _failedChecks: number = 0;
+    // Status check timeout: a check slower than the longest check interval counts as failed
+    private readonly _checkTimeout: number;
 
     private _timer: Timer;
     // Time to next check status. Time in ms
@@ -52,13 +57,11 @@ export class PoolStatus {
      * @param pool pool of what status to check
      * @param settings pool settings
      * @param active default pool active status before status check
-     * @param availableConnectionCount max connection count in the pool
      */
-    constructor(pool: Pool, settings: IUserPoolSettings, active: boolean, availableConnectionCount: number) {
+    constructor(pool: Pool, settings: IUserPoolSettings, active: boolean) {
         this._pool = pool;
 
         this.active = active;
-        this.availableConnectionCount = availableConnectionCount;
 
         this._isValid = false;
         this._loadScore = 100000;
@@ -68,6 +71,7 @@ export class PoolStatus {
 
         this.timerCheckRange = settings.timerCheckRange;
         this.timerCheckMultiplier = settings.timerCheckMultiplier;
+        this._checkTimeout = Math.min(settings.queryTimeout ?? Infinity, settings.timerCheckRange.end);
         this._timer = new Timer(this.checkStatus.bind(this));
         Logger.debug("Pool status configured");
     }
@@ -91,7 +95,7 @@ export class PoolStatus {
             Logger.debug("checking pool status in host: " + this._pool.host);
             queryTimer.start();
 
-            const result = await this._pool.query(`SHOW GLOBAL STATUS;`, { redis: false }) as GlobalStatusResult[];
+            const result = await this._pool.query(`SHOW GLOBAL STATUS;`, { redis: false, timeout: this._checkTimeout }) as GlobalStatusResult[];
 
             queryTimer.end();
             this._queryTime = queryTimer.get();

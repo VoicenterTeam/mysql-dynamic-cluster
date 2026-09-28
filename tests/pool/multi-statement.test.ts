@@ -21,17 +21,23 @@ const makeConn = (opts: { changeUserErr?: any, beginErr?: any, queryErrs?: Recor
     const conn = {
         log,
         changeUser: jest.fn((_o: any, cb: Cb) => setImmediate(() => cb(opts.changeUserErr ?? null))),
-        beginTransaction: jest.fn((cb: Cb) => setImmediate(() => { log.push('begin'); cb(opts.beginErr ?? null); })),
         query: jest.fn((o: any, cb: Cb) => setImmediate(() => {
             if (o.sql === 'ROLLBACK') {
                 log.push('rollback');
                 return cb(opts.rollbackErr ?? null);
             }
+            if (o.sql === 'START TRANSACTION') {
+                log.push('begin');
+                return cb(opts.beginErr ?? null);
+            }
+            if (o.sql === 'COMMIT') {
+                log.push('commit');
+                return cb(opts.commitErr ?? null);
+            }
             log.push(o.sql);
             const err = opts.queryErrs?.[o.sql];
             cb(err ?? null, err ? undefined : { sql: o.sql });
         })),
-        commit: jest.fn((cb: Cb) => setImmediate(() => { log.push('commit'); cb(opts.commitErr ?? null); })),
         release: jest.fn(),
         destroy: jest.fn()
     };
@@ -64,7 +70,7 @@ describe('Pool.multiStatementQuery', () => {
         const conn = makeConn({ queryErrs: { B: { code: 'ER_PARSE_ERROR' } } });
         await expect(makePool(null, conn).multiStatementQuery(['A', 'B', 'C'], {})).rejects.toEqual({ code: 'ER_PARSE_ERROR' });
         expect(conn.log).toEqual(['begin', 'A', 'B', 'rollback']);
-        expect(conn.commit).not.toHaveBeenCalled();
+        expect(conn.log).not.toContain('commit');
         expect(conn.release).toHaveBeenCalledTimes(1);
         expect(conn.destroy).not.toHaveBeenCalled();
     });
@@ -73,7 +79,7 @@ describe('Pool.multiStatementQuery', () => {
         for (const err of [{ code: 'ECONNRESET', fatal: true }, { code: 'PROTOCOL_SEQUENCE_TIMEOUT' }]) {
             const conn = makeConn({ queryErrs: { A: err } });
             await expect(makePool(null, conn).multiStatementQuery(['A', 'B'], {})).rejects.toEqual(err);
-            expect(conn.commit).not.toHaveBeenCalled();
+            expect(conn.log).not.toContain('commit');
             expect(conn.log).not.toContain('rollback');
             expect(conn.destroy).toHaveBeenCalledTimes(1);
             expect(conn.release).not.toHaveBeenCalled();
@@ -85,6 +91,21 @@ describe('Pool.multiStatementQuery', () => {
         await expect(makePool(null, conn).multiStatementQuery(['A'], {})).rejects.toEqual({ code: 'ER_LOCK_DEADLOCK' });
         expect(conn.log).toEqual(['begin', 'A', 'commit', 'rollback']);
         expect(conn.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('START TRANSACTION and COMMIT are sent with the query timeout', async () => {
+        const conn = makeConn();
+        await makePool(null, conn).multiStatementQuery(['A'], { timeout: 700 });
+        expect(conn.query).toHaveBeenCalledWith({ sql: 'START TRANSACTION', timeout: 700 }, expect.any(Function));
+        expect(conn.query).toHaveBeenCalledWith({ sql: 'COMMIT', timeout: 700 }, expect.any(Function));
+    });
+
+    it('COMMIT times out: destroys without rollback', async () => {
+        const conn = makeConn({ commitErr: { code: 'PROTOCOL_SEQUENCE_TIMEOUT' } });
+        await expect(makePool(null, conn).multiStatementQuery(['A'], {})).rejects.toBeTruthy();
+        expect(conn.log).not.toContain('rollback');
+        expect(conn.destroy).toHaveBeenCalledTimes(1);
+        expect(conn.release).not.toHaveBeenCalled();
     });
 
     it('rollback fails: destroys instead of releasing, rejects with the original error', async () => {
@@ -103,7 +124,7 @@ describe('Pool.multiStatementQuery', () => {
     it('changeUser fails: no transaction, destroys once', async () => {
         const conn = makeConn({ changeUserErr: { code: 'ER_BAD_DB_ERROR', fatal: true } });
         await expect(makePool(null, conn).multiStatementQuery(['A'], {})).rejects.toBeTruthy();
-        expect(conn.beginTransaction).not.toHaveBeenCalled();
+        expect(conn.log).not.toContain('begin');
         expect(conn.query).not.toHaveBeenCalled();
         expect(conn.destroy).toHaveBeenCalledTimes(1);
         expect(conn.release).not.toHaveBeenCalled();
@@ -117,17 +138,17 @@ describe('Pool.multiStatementQuery', () => {
             const p = makePool(null, conn).multiStatementQuery(['A'], { timeout: 500 });
             jest.advanceTimersByTime(500);
             await expect(p).rejects.toMatchObject({ code: 'PROTOCOL_SEQUENCE_TIMEOUT' });
-            expect(conn.beginTransaction).not.toHaveBeenCalled();
+            expect(conn.log).not.toContain('begin');
             expect(conn.destroy).toHaveBeenCalledTimes(1);
         } finally {
             jest.useRealTimers();
         }
     });
 
-    it('beginTransaction fails: no queries, hands back once', async () => {
+    it('START TRANSACTION fails: no statements, hands back once', async () => {
         const conn = makeConn({ beginErr: { code: 'ER_UNKNOWN' } });
         await expect(makePool(null, conn).multiStatementQuery(['A'], {})).rejects.toBeTruthy();
-        expect(conn.query).not.toHaveBeenCalled();
+        expect(conn.log).toEqual(['begin']);
         expect(conn.release).toHaveBeenCalledTimes(1);
     });
 

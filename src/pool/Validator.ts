@@ -42,9 +42,13 @@ export class Validator {
                     value = this._poolStatus.active.toString();
                     break;
                 default:
-                    value = result.find(res => res.Variable_name === validator.key).Value;
+                    value = result.find(res => res.Variable_name === validator.key)?.Value;
             }
 
+            if (value === undefined) {
+                Logger.error("Validator key " + validator.key + " isn't in the global status, validator fails");
+                return;
+            }
             if (Validator.checkValueIsValid(value, validator)) validateCount++;
         })
 

@@ -41,6 +41,21 @@ const makePool = (getConnErr: any, conn: any): Pool => {
     return pool;
 };
 
+describe('Pool.availableConnectionCount', () => {
+    it('is the limit minus connections in use, read from mysql2', () => {
+        const pool = makePool(null, undefined);
+        (pool as any)._pool = { _allConnections: { length: 3 }, _freeConnections: { length: 1 } };
+        expect(pool.availableConnectionCount).toBe(8);
+        expect(pool.status.availableConnectionCount).toBe(8);
+    });
+
+    it('is the limit before the pool is created', () => {
+        const pool = makePool(null, undefined);
+        (pool as any)._pool = undefined;
+        expect(pool.availableConnectionCount).toBe(10);
+    });
+});
+
 describe('Pool.query connection hygiene', () => {
     beforeEach(() => jest.clearAllMocks());
 

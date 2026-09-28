@@ -25,7 +25,7 @@ export class LoadFactor {
     public check(result: GlobalStatusResult[]): number {
         let score = 0;
         this._loadFactors.forEach(loadFactor => {
-            const value = result.find(res => res.Variable_name === loadFactor.key).Value;
+            const value = result.find(res => res.Variable_name === loadFactor.key)?.Value;
             if (isNaN(+value) || !value) {
                 Logger.error("Value from db isn't number. Check if you set right key. Current key: " + loadFactor.key)
             } else {

@@ -40,9 +40,11 @@ subsystems. Fields populated from `settings`:
   ([src/pool/Pool.ts:61](../../src/pool/Pool.ts#L61)).
 
 After the fields are wired the constructor builds the companion
-`PoolStatus` with `active = false` and an initial
-`availableConnectionCount` equal to `connectionLimit`
-([src/pool/Pool.ts:63](../../src/pool/Pool.ts#L63)). The mysql2 pool
+`PoolStatus` with `active = false`. Since 3.2.2
+`Pool.availableConnectionCount` is a getter read from mysql2's own lists:
+`connectionLimit - _allConnections.length + _freeConnections.length`
+(the limit before `connect()`), so destroyed connections are counted
+right. `PoolStatus.availableConnectionCount` returns it. The mysql2 pool
 itself is **not** created here; that happens lazily in `connect()`.
 
 ## `connect()`
@@ -80,17 +82,18 @@ The `'pool_connected'` event is documented in
 
 Private helper. Subscribes to the underlying `mysql2.Pool`'s three
 connection-lifecycle events and re-emits each one onto the shared
-`Events` bus, additionally maintaining `availableConnectionCount`:
+`Events` bus. (Before 3.2.2 it also kept `availableConnectionCount` by
+hand, `--` on `connection` and `++` on `release`, which climbed with every
+reuse and dropped on every destroy.)
 
-- `connection` — decrement `availableConnectionCount`, log, emit
+- `connection` — log, emit
   `Events.emit('connection', connection, this.id)`
   ([src/pool/Pool.ts:99-103](../../src/pool/Pool.ts#L99)).
-- `release` — increment `availableConnectionCount`, log, emit
+- `release` — log, emit
   `Events.emit('release', connection, this.id)`
   ([src/pool/Pool.ts:105-109](../../src/pool/Pool.ts#L105)).
 - `acquire` — log and emit `Events.emit('acquire', connection,
-  this.id)` (no counter change — `acquire` and `release` come in pairs
-  bracketing a query, only `release` needs to bump the counter)
+  this.id)`
   ([src/pool/Pool.ts:111-114](../../src/pool/Pool.ts#L111)).
 
 See [../events.md](../events.md) for the payload shapes consumers
@@ -224,11 +227,13 @@ omitted — this method does not cache:
 1. `_pool.getConnection(...)` — same guards as `query()`. Reject on
    error or missing `conn`.
 2. `conn.changeUser({ database }, ...)` — same database swap.
-3. `conn.beginTransaction(...)` — open a transaction. On error,
+3. `START TRANSACTION` (sent with `queryOptions.timeout`) — open a transaction. On error,
    `conn.release()` and reject.
 4. Run the statements one after another: each `conn.query` starts from
    the previous one's callback, and results are collected in order.
-5. `conn.commit(...)` — issued only after the last statement succeeded.
+5. `COMMIT` (sent with `queryOptions.timeout`) — issued only after the last
+   statement succeeded. A timed-out `COMMIT` destroys the connection; whether
+   it committed on the server is unknown.
 6. Increment `successfulQueries`, `conn.release()`, and
    `resolve(results)`.
 

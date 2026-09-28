@@ -42,6 +42,16 @@ export class Pool {
     private readonly _reaper: IdleConnectionReaper;
 
     /**
+     * Connections that can still be handed out: limit minus connections in use.
+     * Read from mysql2's own lists, so destroyed connections are counted right
+     */
+    public get availableConnectionCount(): number {
+        const pool = this._pool as any;
+        if (!pool?._allConnections) return this.connectionLimit;
+        return this.connectionLimit - pool._allConnections.length + pool._freeConnections.length;
+    }
+
+    /**
      * @param settings pool settings
      * @param clusterName cluster name used for prefix
      */
@@ -68,7 +78,7 @@ export class Pool {
             settings.idleCheckInterval
         );
 
-        this._status = new PoolStatus(this, settings, false, this.connectionLimit);
+        this._status = new PoolStatus(this, settings, false);
 
         Logger.info("configuration pool finished in host: " + this.host);
     }
@@ -106,13 +116,11 @@ export class Pool {
      */
     private _connectEvents() {
         this._pool.on("connection", (connection) => {
-            this.status.availableConnectionCount--;
             Logger.debug("Open connection");
             Events.emit('connection', connection, this.id);
         })
 
         this._pool.on("release", (connection) => {
-            this.status.availableConnectionCount++;
             this._reaper.onRelease(connection);
             Logger.debug("Connection closed");
             Events.emit('release', connection, this.id);
@@ -281,7 +289,7 @@ export class Pool {
                 const runQuery = (index: number) => {
                     if (index >= sqls.length) {
                         Logger.debug("Commit transaction in pool by host " + this.host);
-                        conn.commit(errorC => {
+                        conn.query({ sql: 'COMMIT', timeout: queryOptions.timeout }, errorC => {
                             if (errorC) return fail(errorC, conn, true);
                             if (settled) return;
                             settled = true;
@@ -306,7 +314,7 @@ export class Pool {
                     if (error) return fail(error, conn);
 
                     Logger.debug("Start transaction in pool by host " + this.host);
-                    conn.beginTransaction(errorT => {
+                    conn.query({ sql: 'START TRANSACTION', timeout: queryOptions.timeout }, errorT => {
                         if (errorT) return fail(errorT, conn);
                         runQuery(0);
                     })

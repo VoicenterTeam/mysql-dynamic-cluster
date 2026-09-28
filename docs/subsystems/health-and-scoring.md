@@ -30,7 +30,7 @@ The public surface that `GaleraCluster` and `Pool` read from:
 | Field | Kind | Source | Notes |
 | --- | --- | --- | --- |
 | `active` | `boolean` (mutable) | [:17](../../src/pool/PoolStatus.ts#L17) | Flipped to `true` by `Pool.connect()` (see [pool.md](pool.md)). The first thing `checkStatus()` does is `if (!this.active) return`, so the poll is a no-op until `Pool.connect()` runs. |
-| `availableConnectionCount` | `number` (mutable) | [:18](../../src/pool/PoolStatus.ts#L18) | Maintained by `Pool._connectEvents` (see [pool.md](pool.md)). Decremented on `connection`, incremented on `release`. |
+| `availableConnectionCount` | `number` (getter) | [:18](../../src/pool/PoolStatus.ts#L18) | Returns `Pool.availableConnectionCount`: `connectionLimit` minus connections in use, read from mysql2's own lists (see [pool.md](pool.md)). |
 | `isValid` | `boolean` (getter over `_isValid`) | [:23-26](../../src/pool/PoolStatus.ts#L23) | Set by `Validator.check`. Initially `false` (line 23 and re-asserted on line 61) — a pool that has never been polled is not yet routable. |
 | `queryTime` | `number` (getter over `_queryTime`) | [:28-31](../../src/pool/PoolStatus.ts#L28) | Wall-clock duration in seconds of the most recent `SHOW GLOBAL STATUS`, measured via `QueryTimer`. Set after both the success and the error branches of `checkStatus`. |
 | `loadScore` | `number` (getter over `_loadScore`) | [:34-37](../../src/pool/PoolStatus.ts#L34) | Sum from `LoadFactor.check`. **Initial value is `100000`** (set in the constructor at [:62](../../src/pool/PoolStatus.ts#L62), overriding the field's `= 0`). A pool that has never been polled sorts last in `_getActivePools` — see [cluster.md](cluster.md). |
@@ -97,8 +97,11 @@ When every node is invalid, `GaleraCluster` throws
 `"There is no pool that satisfies the parameters"` before the Redis cache
 lookup — the reason one failed check isn't enough to drop a node.
 
-A check that hangs (server stops answering) fails after `queryTimeout`:
-`Pool` puts its own timer on `changeUser`, which mysql2 doesn't time out.
+The status query has its own timeout, `min(queryTimeout,
+timerCheckRange.end)` (15 s with the defaults): a check slower than the
+longest check interval counts as failed. That covers a hung server too,
+since `Pool` puts the same timer on `changeUser`, which mysql2 doesn't
+time out.
 Note the bug in [known-issues.md#3](../known-issues.md#3-validatorcheck-crashes-on-missing-status-key):
 a missing status key throws *out of* `Validator.check` into this same
 catch path.

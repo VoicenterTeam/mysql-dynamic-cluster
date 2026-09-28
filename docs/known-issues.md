@@ -88,6 +88,15 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   transient failure keeps the node in rotation); the next passing check
   restores it.
 
+### 1c. `availableConnectionCount` drifted
+
+- **Status:** **fixed in 3.2.2.**
+- **Description:** it was kept by hand (`--` on a new socket, `++` on every
+  release), so it climbed with every reuse and fell with every destroy. It
+  fed the `available_connection_count` validator key. It is now read from
+  mysql2's own lists: `connectionLimit - _allConnections.length +
+  _freeConnections.length`.
+
 ### 2. `Pool.multiStatementQuery` commits before queries finish
 
 - **Status:** **fixed in 3.2.2.** Queries run one after another, `commit` is
@@ -122,6 +131,8 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 
 ### 3. `Validator.check` crashes on missing status key
 
+- **Status:** **fixed in 3.2.2.** A missing key is logged by name and that
+  validator fails, so the pool is marked invalid instead of the check throwing.
 - **Severity:** **medium**
 - **Location:** [src/pool/Validator.ts:45](../src/pool/Validator.ts#L45)
 - **Description:** In the `default` branch of the switch, the expression
@@ -139,6 +150,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 
 ### 4. `LoadFactor.check` crashes on missing status key
 
+- **Status:** **fixed in 3.2.2.** A missing key is logged by name and skipped.
 - **Severity:** **medium**
 - **Location:** [src/pool/LoadFactor.ts:28](../src/pool/LoadFactor.ts#L28)
 - **Description:** The same pattern as issue #3:

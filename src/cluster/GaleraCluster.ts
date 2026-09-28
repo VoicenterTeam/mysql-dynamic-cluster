@@ -180,6 +180,15 @@ export class GaleraCluster {
             activePools = await this._getActivePools(serviceId);
             retryCount = this._maxRetryCount(queryOptions.maxRetry, activePools.length);
         } catch (e) {
+            // no pool passed the validator: serve cached data, even expired, as when every pool fails
+            if (queryOptions.redis && !queryOptions.redisRefreshCache) {
+                const redisResult = await Redis.get(this._formatSQL(sql, values));
+                if (redisResult) {
+                    Logger.warn("No valid pool. Use old data from Redis");
+                    Metrics.inc(MetricNames.cluster.successfulQueries);
+                    return (JSON.parse(redisResult) as IRedisData).data;
+                }
+            }
             Metrics.inc(MetricNames.cluster.errorQueries);
             throw new Error(e);
         }

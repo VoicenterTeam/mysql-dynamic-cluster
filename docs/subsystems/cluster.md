@@ -157,7 +157,10 @@ does:
 4. If the pinned pool exists in `_pools`, find it and `unshift` it to
    the front so the pinned pool is tried first.
 5. Throw `"There is no pool that satisfies the parameters"` if the
-   final list is empty.
+   final list is empty. Since 3.2.2 `query()` first serves cached Redis
+   data for that SQL, even expired, when `redis` is on for the query and
+   no `redisRefreshCache` was asked — the same fallback it already used
+   when every pool errors.
 
 ### 5. Retry clamp
 
