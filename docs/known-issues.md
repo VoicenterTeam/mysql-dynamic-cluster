@@ -264,9 +264,11 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 
 ### 10. Hashing tables capped at 127 entries each (signed TINYINT)
 
-- **Note (3.2.2):** schema version 2 widened `node.port` and
-  `SP_NodeInsert._Port` to `smallint unsigned` (ports above 32767, e.g.
-  33061, were rejected). The id columns below are unchanged.
+- **Note (3.2.2):** `node.port` and `SP_NodeInsert._Port` are now
+  `smallint unsigned` (ports above 32767, e.g. 33061, were rejected), applied
+  in place to existing schemas without a version bump. The id columns below
+  are unchanged; widening them the same way would be backward compatible
+  too.
 
 - **Severity:** **medium**
 - **Location:** [assets/sql/create_hashing_database/tables/node.sql](../assets/sql/create_hashing_database/tables/node.sql),
@@ -280,9 +282,10 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   key relationships further interact unpleasantly with the truncation case.
   Cross-reference [sql-assets.md](sql-assets.md) for the schema overview.
 - **Suggested fix:** widen the affected columns to `SMALLINT UNSIGNED`
-  (65 535 entries) or `INT UNSIGNED` (~4 B entries) in a new migration. Bump
-  `ClusterHashing._databaseVersion` so existing deployments recreate the
-  schema. Coordinate with the column-versus-parameter mismatch in issue #11.
+  (65 535 entries) or `INT UNSIGNED` (~4 B entries), applied to existing
+  schemas in place by `ClusterHashing._upgradeInPlace()`. Don't bump
+  `_databaseVersion`: that drops the schema, and older versions sharing it
+  drop it back. Coordinate with the column-versus-parameter mismatch in issue #11.
 
 ### 11. `SP_NodeServiceUpdate` parameter is smallint but column is tinyint
 

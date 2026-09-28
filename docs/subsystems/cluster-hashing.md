@@ -46,15 +46,28 @@ A `Timer` wrapper is created bound to `_checkHashing` but not started;
 `connect()` is what actually kicks the timer off
 ([src/cluster/ClusterHashing.ts:36](../../src/cluster/ClusterHashing.ts#L36)).
 
-`_databaseVersion` is the hard-coded constant `2` (since 3.2.2: `READS SQL
-DATA` on `FN_GetServiceNodeMapping`, unsigned port columns)
+`_databaseVersion` is the hard-coded constant `1`
 ([src/cluster/ClusterHashing.ts:23](../../src/cluster/ClusterHashing.ts#L23)).
-The first 3.2.2 start drops the version-1 schema once and rebuilds it,
-which empties `node_services`; it refills through `updateNodeForService`.
-Two instances starting at the same moment can both see version 1 and
-rebuild over each other, so start one instance first. (A `GET_LOCK`
-guard would not help: Percona XtraDB Cluster does not support locking
-functions, and Galera does not replicate them.)
+Bumping it drops and rebuilds the schema (emptying `node_services`), and an
+older version sharing the schema would see a different number and drop it
+back on its next start. So schema changes must stay backward compatible and
+go into `_upgradeInPlace()` instead, which runs when the version matches.
+Since 3.2.2 it:
+
+- widens `node.port` to `smallint unsigned` (`ALTER TABLE ... MODIFY`) if
+  `information_schema.COLUMNS` shows it signed (ports above 32767 were
+  rejected);
+- recreates `FN_GetServiceNodeMapping` if `information_schema.ROUTINES`
+  shows it missing or without `READS SQL DATA` (MySQL 8 error 1418 with
+  binary logging on);
+- recreates `SP_NodeInsert` if its `_Port` parameter is not unsigned.
+
+Each step is checked first, only widens or recreates with the same
+signature (so 3.2.1 instances keep working against the result), drops no
+data, and logs and moves on if it fails (it is retried on the next start).
+A routine is briefly missing between its `DROP` and `CREATE`, since MySQL 8
+has no `CREATE OR REPLACE PROCEDURE`; an old instance calling it in that
+moment gets one logged error.
 Bumping this constant is what forces existing deployments to drop and
 recreate the helper schema on next boot.
 

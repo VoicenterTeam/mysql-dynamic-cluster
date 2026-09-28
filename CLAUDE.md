@@ -62,6 +62,7 @@ There is **no** `lint`, `typecheck`, or `test:load` script. `tslint` is in devDe
 - Don't refactor unrelated code while implementing a feature.
 - Don't fix `README.md` to match V3 unless explicitly asked — a future `dev` → V3 merge owns that rewrite (see [docs/known-issues.md#12-readme-describes-dev-branch-api-not-v30](docs/known-issues.md#12-readme-describes-dev-branch-api-not-v30)).
 - Don't add tests against the old (dev) API.
+- Don't make breaking changes to the hashing helper schema (`assets/sql/create_hashing_database/`), and don't bump `ClusterHashing._databaseVersion`: older versions share the schema and would drop it back. Keep changes backward compatible and apply them to existing schemas in `ClusterHashing._upgradeInPlace()` — see [docs/subsystems/cluster-hashing.md](docs/subsystems/cluster-hashing.md).
 - Don't commit `dist/` — it's gitignored; verify with `git check-ignore dist/` before staging anything generated.
 
 ## Docs index

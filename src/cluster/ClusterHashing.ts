@@ -20,8 +20,9 @@ export class ClusterHashing {
     // Next time for hashing check
     private readonly _nextCheckTime: number;
     private readonly _database: string;
-    // 2: FN_GetServiceNodeMapping READS SQL DATA (MySQL 8 error 1418), unsigned port columns
-    private readonly _databaseVersion: number = 2;
+    // Bumping it drops and rebuilds the schema, and older versions sharing it would drop it back.
+    // Keep schema changes backward compatible and apply them in _upgradeInPlace instead
+    private readonly _databaseVersion: number = 1;
 
     /**
      * @param cluster cluster for what hashing data
@@ -53,6 +54,8 @@ export class ClusterHashing {
                     }
                 );
                 await this._createDB();
+            } else {
+                await this._upgradeInPlace();
             }
             Logger.info(`Database ${this._database} created for hashing`);
 
@@ -145,6 +148,56 @@ export class ClusterHashing {
         } catch (e) {
             throw e;
         }
+    }
+
+    /**
+     * Bring a schema built by an older version up to date without dropping it or its data.
+     * Each step runs only when needed and keeps what older versions use: the port column is
+     * only widened, and routines are recreated with the same signatures. A failed step is logged
+     * and retried on the next start
+     * @private
+     */
+    private async _upgradeInPlace() {
+        const options = { maxRetry: 1, database: this._database, redis: false };
+        const step = async (name: string, needed: () => Promise<boolean>, sqls: () => string[]) => {
+            try {
+                if (!await needed()) return;
+                Logger.info(`Upgrading hashing schema ${this._database}: ${name}`);
+                for (const sql of sqls()) {
+                    await this._cluster.query(sql, null, options);
+                }
+            } catch (e) {
+                Logger.error(`Upgrading hashing schema ${this._database} (${name}) failed: ${e.message}`);
+            }
+        };
+        const routine = (name: string, kind: 'FUNCTION' | 'PROCEDURE') => {
+            // same path as _createDB
+            const routines = this._readFilesInDir(join(__dirname, '../' + '../../assets/sql/create_hashing_database/routines/'));
+            return [`DROP ${kind} IF EXISTS ${name};`, routines.fileContents[routines.fileNames.indexOf(name)]];
+        };
+
+        // ports above 32767 (signed smallint) were rejected
+        await step('node.port smallint unsigned', async () => {
+            const res: any[] = await this._cluster.query(
+                `SELECT COLUMN_TYPE AS type FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'node' AND COLUMN_NAME = 'port';`,
+                [this._database], options);
+            return res.length > 0 && !/unsigned/i.test(res[0].type);
+        }, () => ['ALTER TABLE node MODIFY port smallint unsigned default 3306 null;']);
+
+        // MySQL 8 with binary logging refuses the function without READS SQL DATA (error 1418)
+        await step('FN_GetServiceNodeMapping READS SQL DATA', async () => {
+            const res: any[] = await this._cluster.query(
+                `SELECT SQL_DATA_ACCESS AS access FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ? AND ROUTINE_NAME = 'FN_GetServiceNodeMapping';`,
+                [this._database], options);
+            return res[0]?.access !== 'READS SQL DATA';
+        }, () => routine('FN_GetServiceNodeMapping', 'FUNCTION'));
+
+        await step('SP_NodeInsert _Port smallint unsigned', async () => {
+            const res: any[] = await this._cluster.query(
+                `SELECT DTD_IDENTIFIER AS type FROM information_schema.PARAMETERS WHERE SPECIFIC_SCHEMA = ? AND SPECIFIC_NAME = 'SP_NodeInsert' AND PARAMETER_NAME = '_Port';`,
+                [this._database], options);
+            return !/unsigned/i.test(res[0]?.type ?? '');
+        }, () => routine('SP_NodeInsert', 'PROCEDURE'));
     }
 
     /**

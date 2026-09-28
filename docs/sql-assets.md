@@ -106,7 +106,7 @@ create table if not exists metadata
 );
 ```
 
-A single-row table that records the schema version of the helper database. The TypeScript side hard-codes the current version in `ClusterHashing._databaseVersion = 2` (since 3.2.2) ([src/cluster/ClusterHashing.ts:23](../src/cluster/ClusterHashing.ts#L23)).
+A single-row table that records the schema version of the helper database. The TypeScript side hard-codes the current version in `ClusterHashing._databaseVersion = 1` ([src/cluster/ClusterHashing.ts:23](../src/cluster/ClusterHashing.ts#L23)).
 
 The flow on every `connect()`:
 
@@ -114,7 +114,7 @@ The flow on every `connect()`:
 2. If either check fails, the **entire helper schema is dropped** (`DROP SCHEMA IF EXISTS ...`) and rebuilt from the SQL files ([src/cluster/ClusterHashing.ts:45](../src/cluster/ClusterHashing.ts#L45)-[L55](../src/cluster/ClusterHashing.ts#L55)).
 3. The final step of `_createDB` writes `INSERT INTO metadata (version) VALUES (1);` to mark the freshly built schema as current ([src/cluster/ClusterHashing.ts:136](../src/cluster/ClusterHashing.ts#L136)-[L144](../src/cluster/ClusterHashing.ts#L144)).
 
-Bumping `_databaseVersion` is therefore the supported way to ship a breaking change to the helper schema: on next start the old database is wiped and the new SQL bundle takes over. Any existing `node_services` data is lost in the process — clients re-populate it via `updateNodeForService` after reconnecting.
+Bumping `_databaseVersion` wipes the old database on next start and loses `node_services`, and older versions sharing the schema would wipe it back on their next start. Prefer backward-compatible changes applied in place by `ClusterHashing._upgradeInPlace()` (see [subsystems/cluster-hashing.md](subsystems/cluster-hashing.md)); 3.2.2 uses that for the unsigned port column and the `READS SQL DATA` function.
 
 ## Path resolution at runtime
 
