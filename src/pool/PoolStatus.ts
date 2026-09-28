@@ -102,6 +102,7 @@ export class PoolStatus {
             this.nextCheckStatus()
         } catch (err) {
             Logger.error("Something wrong while checking status in host: " + this._pool.host + ".\n Message: " + err.message);
+            this._isValid = false;
 
             queryTimer.end();
             this._queryTime = queryTimer.get();

@@ -176,65 +176,53 @@ export class Pool {
             Metrics.mark(MetricNames.pool.queryPerMinute, poolMetricOption);
             queryTimer.start();
 
-            this._pool.getConnection((err, conn) => {
-                if (err) {
-                    Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
-                    queryTimer.end();
-                    queryTimer.save(poolMetricOption);
+            const fail = (error: any, conn?: mysql.PoolConnection) => {
+                Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
+                queryTimer.end();
+                queryTimer.save(poolMetricOption);
+                // a dead socket, or one still running a timed-out statement, must not go back to the pool
+                if (error?.fatal || error?.code === 'PROTOCOL_SEQUENCE_TIMEOUT') {
+                    conn?.destroy();
+                } else {
                     conn?.release();
-                    reject(err);
                 }
+                reject(error);
+            }
 
-                if (!conn) {
-                    Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
-                    queryTimer.end();
-                    queryTimer.save(poolMetricOption);
-                    conn?.release();
-                    reject(new Error("Can't find connection. Maybe it was unexpectedly closed."));
-                }
+            this._pool.getConnection((err, conn) => {
+                if (err) return fail(err);
+                if (!conn) return fail(new Error("Can't find connection. Maybe it was unexpectedly closed."));
 
                 // change database
                 Logger.debug("Changing database to " + queryOptions.database);
-                conn?.changeUser({ database: queryOptions.database }, (error) => {
-                    if (error) {
-                        Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
+                conn.changeUser({ database: queryOptions.database }, (error) => {
+                    if (error) return fail(error, conn);
+
+                    Logger.debug(`Query in pool by host ${this.host}`);
+                    conn.query({ sql, timeout: queryOptions.timeout }, (error, result: T) => {
+                        if (error) return fail(error, conn);
+                        conn.release();
+
                         queryTimer.end();
                         queryTimer.save(poolMetricOption);
-                        conn.release();
-                        reject(error);
-                    }
-                })
-
-                Logger.debug(`Query in pool by host ${this.host}`);
-                conn?.query({ sql, timeout: queryOptions.timeout }, (error, result: T) => {
-                    if (error) {
-                        Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
-                        queryTimer.end();
-                        queryTimer.save(poolMetricOption);
-                        conn.release();
-                        reject(error);
-                    }
-                    conn.release();
-
-                    queryTimer.end();
-                    queryTimer.save(poolMetricOption);
-                    if (queryTimer.get() >= this._slowQueryTime) {
-                        Logger.warn(`Query in pool named ${this.name} takes ${queryTimer.get()} sec`);
-                    }
-
-                    Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
-
-                    if (queryOptions.redis) {
-                        const redisExpired = new Date().getTime() + queryTimer.get() * 1000 * queryOptions.redisFactor;
-                        const redisData: IRedisData = {
-                            data: result,
-                            expired: redisExpired
+                        if (queryTimer.get() >= this._slowQueryTime) {
+                            Logger.warn(`Query in pool named ${this.name} takes ${queryTimer.get()} sec`);
                         }
-                        Redis.set(sql, JSON.stringify(redisData), queryOptions.redisExpire);
-                    }
 
-                    resolve(result);
-                });
+                        Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
+
+                        if (queryOptions.redis) {
+                            const redisExpired = new Date().getTime() + queryTimer.get() * 1000 * queryOptions.redisFactor;
+                            const redisData: IRedisData = {
+                                data: result,
+                                expired: redisExpired
+                            }
+                            Redis.set(sql, JSON.stringify(redisData), queryOptions.redisExpire);
+                        }
+
+                        resolve(result);
+                    });
+                })
             })
         })
     }

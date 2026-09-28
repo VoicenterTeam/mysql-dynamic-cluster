@@ -40,6 +40,9 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 
 ### 1. `Pool.query` does not return after reject
 
+- **Status:** **fixed in 3.2.2.** Every error path now goes through one `fail()`
+  helper that hands the connection back once and returns; the query only runs
+  after `changeUser` succeeds.
 - **Severity:** **high**
 - **Location:** [src/pool/Pool.ts:167-194](../src/pool/Pool.ts#L167-L194)
 - **Description:** Inside the nested `getConnection` -> `changeUser` -> `query`
@@ -55,6 +58,24 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   remove the redundant `conn?.release()` from the `!conn` branch. Consider
   rewriting around `mysql2/promise` and `async/await` to make the control flow
   explicit.
+
+### 1a. Connections released back to the pool after a fatal error or timeout
+
+- **Status:** **fixed in 3.2.2.**
+- **Location:** `Pool.query` in [src/pool/Pool.ts](../src/pool/Pool.ts)
+- **Description:** every query error ended in `conn.release()`, including fatal
+  socket errors and `PROTOCOL_SEQUENCE_TIMEOUT`. After a timeout mysql2 leaves the
+  statement running on the socket, so the next borrower queued behind it. The
+  connection is now `destroy()`ed when `err.fatal` is set or the code is
+  `PROTOCOL_SEQUENCE_TIMEOUT`; plain SQL errors still `release()`.
+
+### 1b. `isValid` left `true` after a failed health check
+
+- **Status:** **fixed in 3.2.2.**
+- **Location:** `PoolStatus.checkStatus` in [src/pool/PoolStatus.ts](../src/pool/PoolStatus.ts)
+- **Description:** the `catch` logged and rescheduled but kept the last
+  successful `_isValid`, so a node whose checks all failed stayed in rotation.
+  It now sets `_isValid = false`; the next passing check restores it.
 
 ### 2. `Pool.multiStatementQuery` commits before queries finish
 
