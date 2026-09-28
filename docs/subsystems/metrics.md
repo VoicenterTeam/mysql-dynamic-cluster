@@ -160,6 +160,12 @@ Display names (the human-readable strings shown in pm2 dashboards) are
 the values' `name` fields (e.g. `'Cluster all queries'`) prefixed as
 described in [Naming](#naming).
 
+`redis.staleServed` (`redis_stale_served`, counter, since 3.2.2) counts
+queries answered from stale Redis data because no pool answered: either no
+pool was valid, or every pool errored. Those queries also count as
+`cluster.successfulQueries`, so watch this one to see outages hidden by
+the cache.
+
 ## Adding a new metric
 
 Three steps.

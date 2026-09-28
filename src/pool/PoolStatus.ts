@@ -71,7 +71,8 @@ export class PoolStatus {
 
         this.timerCheckRange = settings.timerCheckRange;
         this.timerCheckMultiplier = settings.timerCheckMultiplier;
-        this._checkTimeout = Math.min(settings.queryTimeout ?? Infinity, settings.timerCheckRange.end);
+        // queryTimeout 0 means no timeout
+        this._checkTimeout = Math.min(settings.queryTimeout || Infinity, settings.timerCheckRange.end);
         this._timer = new Timer(this.checkStatus.bind(this));
         Logger.debug("Pool status configured");
     }
@@ -95,7 +96,19 @@ export class PoolStatus {
             Logger.debug("checking pool status in host: " + this._pool.host);
             queryTimer.start();
 
-            const result = await this._pool.query(`SHOW GLOBAL STATUS;`, { redis: false, timeout: this._checkTimeout }) as GlobalStatusResult[];
+            // one timer for the whole check, including waiting for a free connection
+            let checkTimer: NodeJS.Timeout;
+            let result: GlobalStatusResult[];
+            try {
+                result = await Promise.race([
+                    this._pool.query(`SHOW GLOBAL STATUS;`, { redis: false, timeout: this._checkTimeout }),
+                    new Promise<never>((_, reject) => {
+                        checkTimer = setTimeout(() => reject(new Error("Status check timeout")), this._checkTimeout);
+                    })
+                ]) as GlobalStatusResult[];
+            } finally {
+                clearTimeout(checkTimer);
+            }
 
             queryTimer.end();
             this._queryTime = queryTimer.get();

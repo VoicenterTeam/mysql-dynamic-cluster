@@ -47,6 +47,7 @@ export class Pool {
      */
     public get availableConnectionCount(): number {
         const pool = this._pool as any;
+        if (!this.connectionLimit) return Infinity; // mysql2: 0 means no limit
         if (!pool?._allConnections) return this.connectionLimit;
         return this.connectionLimit - pool._allConnections.length + pool._freeConnections.length;
     }
@@ -333,6 +334,9 @@ export class Pool {
      * @private
      */
     private static _changeUser(conn: mysql.PoolConnection, database: string, timeout: number, callback: (error?: any) => void) {
+        // mysql2: timeout 0 means no timeout
+        if (!timeout) return conn.changeUser({ database }, callback);
+
         let done = false;
         const timer = setTimeout(() => {
             done = true;

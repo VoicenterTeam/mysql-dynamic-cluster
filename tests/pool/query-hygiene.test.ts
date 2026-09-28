@@ -49,6 +49,13 @@ describe('Pool.availableConnectionCount', () => {
         expect(pool.status.availableConnectionCount).toBe(8);
     });
 
+    it('is unlimited when connectionLimit is 0 (mysql2: no limit)', () => {
+        const pool = makePool(null, undefined);
+        (pool as any).connectionLimit = 0;
+        (pool as any)._pool = { _allConnections: { length: 3 }, _freeConnections: { length: 1 } };
+        expect(pool.availableConnectionCount).toBe(Infinity);
+    });
+
     it('is the limit before the pool is created', () => {
         const pool = makePool(null, undefined);
         (pool as any)._pool = undefined;
@@ -114,6 +121,13 @@ describe('Pool.query connection hygiene', () => {
         } finally {
             jest.useRealTimers();
         }
+    });
+
+    it('timeout 0 means no timeout: a slow changeUser still succeeds', async () => {
+        const conn = makeConn({ rows: [{ a: 1 }] });
+        conn.changeUser.mockImplementation((_o: any, cb: Cb) => { setTimeout(() => cb(null), 5); });
+        await expect(makePool(null, conn).query('SELECT 1', { timeout: 0 })).resolves.toEqual([{ a: 1 }]);
+        expect(conn.destroy).not.toHaveBeenCalled();
     });
 
     it('error callback fired twice: settles and hands back only once', async () => {

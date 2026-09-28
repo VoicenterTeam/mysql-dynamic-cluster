@@ -97,14 +97,17 @@ When every node is invalid, `GaleraCluster` throws
 `"There is no pool that satisfies the parameters"` before the Redis cache
 lookup — the reason one failed check isn't enough to drop a node.
 
-The status query has its own timeout, `min(queryTimeout,
-timerCheckRange.end)` (15 s with the defaults): a check slower than the
-longest check interval counts as failed. That covers a hung server too,
-since `Pool` puts the same timer on `changeUser`, which mysql2 doesn't
-time out.
-Note the bug in [known-issues.md#3](../known-issues.md#3-validatorcheck-crashes-on-missing-status-key):
-a missing status key throws *out of* `Validator.check` into this same
-catch path.
+The whole check has one timeout, `min(queryTimeout, timerCheckRange.end)`
+(15 s with the defaults; `queryTimeout: 0` means no query timeout, so the
+check then uses `timerCheckRange.end`). `checkStatus` races the status
+query against that timer, so it also covers waiting for a free connection
+(mysql2's `getConnection` queue has no timer) and a hung server. A check
+slower than that counts as failed. The same value is also passed as the
+query's own timeout, so a hung connection is destroyed.
+
+A missing status key no longer throws: `Validator.check` logs the key by
+name and that validator fails, so the pool is marked invalid (see
+[known-issues.md#3](../known-issues.md#3-validatorcheck-crashes-on-missing-status-key)).
 
 ## Adaptive timer
 
@@ -165,11 +168,17 @@ the `PoolStatus`
 Every other key is looked up by `Variable_name` in the
 `SHOW GLOBAL STATUS` row set
 ([:45](../../src/pool/Validator.ts#L45)):
-`result.find(res => res.Variable_name === validator.key).Value`. The
-trailing `.Value` is unguarded — a typo or a non-Galera MySQL flavor
-that omits a `wsrep_*` row throws `TypeError`, which propagates out of
-`check`. See
+`result.find(res => res.Variable_name === validator.key)?.Value`. If the
+key is missing (a typo, or a non-Galera server without `wsrep_*` rows),
+`check` logs the key by name and counts that validator as failed. Before
+3.2.2 this threw `TypeError` out of `check`; see
 [known-issues.md#3](../known-issues.md#3-validatorcheck-crashes-on-missing-status-key).
+
+`available_connection_count` is the real number of free slots
+(`connectionLimit` minus connections in use). Before 3.2.2 it was a
+counter that only grew, so thresholds like `> 50` always passed; re-tune
+them when upgrading. With `connectionLimit: 0` (mysql2: no limit) it is
+`Infinity`.
 
 ### Operator semantics
 

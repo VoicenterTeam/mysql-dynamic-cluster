@@ -72,6 +72,28 @@ describe('PoolStatus.checkStatus validity', () => {
         fast.stopTimerCheck();
     });
 
+    it('queryTimeout 0 (no timeout) still bounds the check by the longest check interval', async () => {
+        pool.query.mockResolvedValue([]);
+        const noTimeout = new PoolStatus(pool as any, { ...settings, queryTimeout: 0 }, true);
+        await noTimeout.checkStatus();
+        expect(pool.query).toHaveBeenLastCalledWith('SHOW GLOBAL STATUS;', { redis: false, timeout: 10000 });
+        noTimeout.stopTimerCheck();
+    });
+
+    it('a check that never settles (e.g. waiting for a free connection) fails at the check timeout', async () => {
+        pool.query.mockResolvedValueOnce([]);
+        await status.checkStatus();
+
+        pool.query.mockReturnValue(new Promise(() => undefined));
+        const first = status.checkStatus();
+        jest.advanceTimersByTime(10000);
+        await first;
+        const second = status.checkStatus();
+        jest.advanceTimersByTime(10000);
+        await second;
+        expect(status.isValid).toBe(false);
+    });
+
     it('restores validity on the next passing check', async () => {
         pool.query.mockRejectedValue(new Error('read ECONNRESET'));
         await status.checkStatus();

@@ -90,6 +90,11 @@ const MetricNames = {
             key: 'redis_latency',
             name: 'Redis latency',
             type: MetricType.HISTOGRAM
+        },
+        staleServed: {
+            key: 'redis_stale_served',
+            name: 'Redis stale data served (no pool answered)',
+            type: MetricType.COUNTER
         }
     }
 }

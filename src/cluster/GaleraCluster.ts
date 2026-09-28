@@ -185,6 +185,7 @@ export class GaleraCluster {
                 const redisResult = await Redis.get(this._formatSQL(sql, values));
                 if (redisResult) {
                     Logger.warn("No valid pool. Use old data from Redis");
+                    Metrics.inc(MetricNames.redis.staleServed);
                     Metrics.inc(MetricNames.cluster.successfulQueries);
                     return (JSON.parse(redisResult) as IRedisData).data;
                 }
@@ -249,6 +250,7 @@ export class GaleraCluster {
         Logger.error("All pools have error. Error messages: \n" + errorMessage);
         if (redisData) {
             Logger.warn("Use old data from Redis");
+            Metrics.inc(MetricNames.redis.staleServed);
             Metrics.inc(MetricNames.cluster.successfulQueries);
             return redisData.data;
         }

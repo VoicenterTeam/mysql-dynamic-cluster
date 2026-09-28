@@ -46,8 +46,15 @@ A `Timer` wrapper is created bound to `_checkHashing` but not started;
 `connect()` is what actually kicks the timer off
 ([src/cluster/ClusterHashing.ts:36](../../src/cluster/ClusterHashing.ts#L36)).
 
-`_databaseVersion` is the hard-coded constant `1`
+`_databaseVersion` is the hard-coded constant `2` (since 3.2.2: `READS SQL
+DATA` on `FN_GetServiceNodeMapping`, unsigned port columns)
 ([src/cluster/ClusterHashing.ts:23](../../src/cluster/ClusterHashing.ts#L23)).
+The first 3.2.2 start drops the version-1 schema once and rebuilds it,
+which empties `node_services`; it refills through `updateNodeForService`.
+Two instances starting at the same moment can both see version 1 and
+rebuild over each other, so start one instance first. (A `GET_LOCK`
+guard would not help: Percona XtraDB Cluster does not support locking
+functions, and Galera does not replicate them.)
 Bumping this constant is what forces existing deployments to drop and
 recreate the helper schema on next boot.
 
@@ -73,11 +80,11 @@ recreate the helper schema on next boot.
 3. **Insert nodes.** `_insertNodes()` registers every pool currently
    in `GaleraCluster.pools` into the helper database's `node` table
    ([src/cluster/ClusterHashing.ts:205-218](../../src/cluster/ClusterHashing.ts#L205)).
-4. **Prime cache and arm timer.** Calls `_checkHashing()` once
-   synchronously; that method both fetches the current
-   service-to-node mapping and schedules itself to run again. Sets
-   `this.connected = true`
-   ([src/cluster/ClusterHashing.ts:60](../../src/cluster/ClusterHashing.ts#L60)).
+4. **Prime cache and arm timer.** Awaits `_checkHashing()` once; that
+   method fetches the current service-to-node mapping, schedules itself
+   to run again, and sets `connected` to whether the check succeeded
+   (since 3.2.2 — before, `connected = true` was set regardless, so a
+   missing function still reported connected).
    Until `connected` flips to `true`, callers of `getNodeByService` /
    `updateNodeForService` are short-circuited by guards in
    `GaleraCluster` (see below).
@@ -104,7 +111,8 @@ The order of operations
 
 1. `CREATE SCHEMA IF NOT EXISTS ${database} COLLATE utf8_general_ci;`.
 2. `multiStatementQuery` with one `DROP PROCEDURE IF EXISTS` per
-   routine. This makes the routine replay idempotent.
+   routine (`DROP FUNCTION IF EXISTS` for `FN_*` files). This makes the
+   routine replay idempotent.
 3. `multiStatementQuery` with the combined tables + routines payload.
 4. `multiStatementQuery` with the metadata payload.
 5. `INSERT INTO metadata (version) VALUES (${_databaseVersion});`.
@@ -129,9 +137,9 @@ The procedure is idempotent — the `(ip, port)` unique constraint on
 `node` means re-running this on an already-populated helper schema is
 safe.
 
-**Known issue:** the `try/catch` wraps a non-awaited Promise, so a
-rejected `cluster.query` slips out as an unhandled rejection and the
-`forEach` fires every insert in parallel without ordering. See
+Since 3.2.2 each insert is awaited in order and a failure is logged.
+Before, the `try/catch` wrapped a non-awaited Promise, so a rejection was
+unhandled. See
 [#6 in known-issues](../known-issues.md#6-clusterhashing_insertnodes-swallows-errors-silently).
 
 ## Periodic refresh — `_checkHashing`

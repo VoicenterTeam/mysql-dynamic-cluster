@@ -20,7 +20,8 @@ export class ClusterHashing {
     // Next time for hashing check
     private readonly _nextCheckTime: number;
     private readonly _database: string;
-    private readonly _databaseVersion: number = 1;
+    // 2: FN_GetServiceNodeMapping READS SQL DATA (MySQL 8 error 1418), unsigned port columns
+    private readonly _databaseVersion: number = 2;
 
     /**
      * @param cluster cluster for what hashing data
@@ -56,8 +57,7 @@ export class ClusterHashing {
             Logger.info(`Database ${this._database} created for hashing`);
 
             await this._insertNodes();
-            this._checkHashing();
-            this.connected = true;
+            await this._checkHashing();
         } catch (err) {
             throw err;
         }
@@ -126,7 +126,7 @@ export class ClusterHashing {
 
             const sqlsDrop: string[] = [];
             routinesSqls.fileNames.forEach(name => {
-                sqlsDrop.push(`DROP PROCEDURE IF EXISTS ${name};`);
+                sqlsDrop.push(`DROP ${name.startsWith('FN_') ? 'FUNCTION' : 'PROCEDURE'} IF EXISTS ${name};`);
             });
 
             await this._cluster.pools[0].multiStatementQuery(sqlsDrop, { database: this._database });
@@ -203,9 +203,9 @@ export class ClusterHashing {
      * @private
      */
     private async _insertNodes() {
-        this._cluster.pools.forEach(pool => {
+        for (const pool of this._cluster.pools) {
             try {
-                this._cluster.query('CALL SP_NodeInsert( ? , ? , ? , ? );', [pool.id, pool.name, pool.host, pool.port],
+                await this._cluster.query('CALL SP_NodeInsert( ? , ? , ? , ? );', [pool.id, pool.name, pool.host, pool.port],
                 {
                     maxRetry: 1,
                     database: this._database,
@@ -214,7 +214,7 @@ export class ClusterHashing {
             } catch (e) {
                 Logger.error(e.message);
             }
-        });
+        }
     }
 
     /**
@@ -236,9 +236,11 @@ export class ClusterHashing {
                 this._serviceNodeMap.set(obj.ServiceID, obj.NodeID);
             })
 
+            this.connected = true;
             this._nextCheckHashing()
         } catch (err) {
             Logger.error("Something wrong while checking hashing status in cluster.\n Message: " + err.message);
+            this.connected = false;
             this._nextCheckHashing()
         }
     }

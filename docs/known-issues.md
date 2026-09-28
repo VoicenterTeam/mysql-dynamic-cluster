@@ -119,9 +119,10 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   each `conn.query(...)` callback-style, then `conn.commit(...)` is invoked,
   the results array is returned via `resolve(results)`, and `conn.release()`
   runs — all synchronously, before the per-query callbacks have a chance to
-  run. The transaction commits with zero queries executed against it, the
-  `results` array is empty (or filled in random order if MySQL happens to be
-  fast enough), and the connection is released back to the pool while queries
+  run. The promise resolves (with an empty `results` array) before any
+  statement has run, so a caller reading straight away sees none of the
+  writes; a failing statement's `ROLLBACK` is queued behind the `COMMIT`,
+  so earlier statements stay committed; and the connection is released back to the pool while queries
   are mid-flight. Same pattern as the bug in issue #1, but worse because the
   state being clobbered is a transaction.
 - **Suggested fix:** rewrite the method around `mysql2/promise` (or `util.promisify`
@@ -182,6 +183,10 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 
 ### 6. `ClusterHashing._insertNodes` swallows errors silently
 
+- **Status:** **fixed in 3.2.2.** Each `SP_NodeInsert` is awaited in a
+  `for...of`, and a failed insert is logged. Before, a rejected insert (for
+  example a port over 32767) was an unhandled rejection, which crashes
+  services that exit on those.
 - **Severity:** **low**
 - **Location:** [src/cluster/ClusterHashing.ts:205-218](../src/cluster/ClusterHashing.ts#L205-L218)
 - **Description:** The method wraps `this._cluster.query(...)` in
@@ -258,6 +263,10 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 ## Data model & SQL constraints
 
 ### 10. Hashing tables capped at 127 entries each (signed TINYINT)
+
+- **Note (3.2.2):** schema version 2 widened `node.port` and
+  `SP_NodeInsert._Port` to `smallint unsigned` (ports above 32767, e.g.
+  33061, were rejected). The id columns below are unchanged.
 
 - **Severity:** **medium**
 - **Location:** [assets/sql/create_hashing_database/tables/node.sql](../assets/sql/create_hashing_database/tables/node.sql),

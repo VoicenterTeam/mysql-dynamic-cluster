@@ -37,7 +37,7 @@ create table if not exists node
         primary key,
     node_name varchar(100)          null,
     ip        varchar(100)          null,
-    port      smallint default 3306 null,
+    port      smallint unsigned default 3306 null,
     constraint unique_port_ip
         unique (ip, port)
 );
@@ -66,7 +66,7 @@ create table if not exists node_services
 
 ## Routines
 
-All four routines live under [assets/sql/create_hashing_database/routines/](../assets/sql/create_hashing_database/routines/) and are reloaded on every helper-database (re)build. `_createDB` issues a `DROP PROCEDURE IF EXISTS` for each routine file *by base name* before re-creating them ([src/cluster/ClusterHashing.ts:127-132](../src/cluster/ClusterHashing.ts#L127)); note that the function `FN_GetServiceNodeMapping` is also dropped with `DROP PROCEDURE` because the loader does not distinguish procedures from functions — this works on MySQL only because the create-after-drop replaces it regardless.
+All four routines live under [assets/sql/create_hashing_database/routines/](../assets/sql/create_hashing_database/routines/) and are reloaded on every helper-database (re)build. `_createDB` issues a `DROP PROCEDURE IF EXISTS` for each routine file *by base name* before re-creating them, and `DROP FUNCTION IF EXISTS` for `FN_*` files ([src/cluster/ClusterHashing.ts:127-132](../src/cluster/ClusterHashing.ts#L127)). `FN_GetServiceNodeMapping` declares `READS SQL DATA`, which MySQL 8 requires with binary logging on and `log_bin_trust_function_creators=0` (error 1418).
 
 ### `SP_NodeInsert(_ID, _Name, _IP, _Port)`
 
@@ -106,7 +106,7 @@ create table if not exists metadata
 );
 ```
 
-A single-row table that records the schema version of the helper database. The TypeScript side hard-codes the current version in `ClusterHashing._databaseVersion = 1` ([src/cluster/ClusterHashing.ts:23](../src/cluster/ClusterHashing.ts#L23)).
+A single-row table that records the schema version of the helper database. The TypeScript side hard-codes the current version in `ClusterHashing._databaseVersion = 2` (since 3.2.2) ([src/cluster/ClusterHashing.ts:23](../src/cluster/ClusterHashing.ts#L23)).
 
 The flow on every `connect()`:
 
