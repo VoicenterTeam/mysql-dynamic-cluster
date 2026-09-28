@@ -85,12 +85,23 @@ If any step throws, the `catch` branch
 `_queryTime` (so a hanging node's slow poll is visible), and calls
 `nextCheckStatus(true)` to schedule a *faster* re-check.
 
-Note: a thrown error does **not** flip `_isValid` to `false`. The
-previously-recorded `isValid` survives the failed poll, so a single
-transient error does not immediately remove the pool from rotation —
-but the bug in [known-issues.md#3](../known-issues.md#3-validatorcheck-crashes-on-missing-status-key)
-means a missing status key throws *out of* `Validator.check`, which is
-exactly the catch path that leaves `_isValid` stale.
+Since 3.2.2 the `catch` also counts failures in a row (`_failedChecks`).
+The **second** failed check in a row sets `_isValid = false`; a single
+failure (network blip, proxy restart, DNS) keeps the last `isValid` so one
+bad poll doesn't take the node out of rotation. A passing check resets the
+counter and assigns `_isValid` from the validator again. Before 3.2.2 a
+failed check never touched `_isValid`, so a node whose checks all failed
+stayed in rotation.
+
+When every node is invalid, `GaleraCluster` throws
+`"There is no pool that satisfies the parameters"` before the Redis cache
+lookup — the reason one failed check isn't enough to drop a node.
+
+A check that hangs (server stops answering) fails after `queryTimeout`:
+`Pool` puts its own timer on `changeUser`, which mysql2 doesn't time out.
+Note the bug in [known-issues.md#3](../known-issues.md#3-validatorcheck-crashes-on-missing-status-key):
+a missing status key throws *out of* `Validator.check` into this same
+catch path.
 
 ## Adaptive timer
 

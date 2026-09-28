@@ -25,19 +25,43 @@ describe('PoolStatus.checkStatus validity', () => {
         jest.useRealTimers();
     });
 
-    it('marks the pool invalid when a check fails and schedules the next check', async () => {
+    it('keeps the pool valid after one failed check and schedules the next check', async () => {
         pool.query.mockResolvedValueOnce([]);
         await status.checkStatus();
         expect(status.isValid).toBe(true);
 
         pool.query.mockRejectedValueOnce(new Error('read ECONNRESET'));
         await status.checkStatus();
-        expect(status.isValid).toBe(false);
+        expect(status.isValid).toBe(true);
         expect(jest.getTimerCount()).toBeGreaterThan(0);
     });
 
+    it('marks the pool invalid after two failed checks in a row', async () => {
+        pool.query.mockResolvedValueOnce([]);
+        await status.checkStatus();
+
+        pool.query.mockRejectedValue(new Error('read ECONNRESET'));
+        await status.checkStatus();
+        await status.checkStatus();
+        expect(status.isValid).toBe(false);
+    });
+
+    it('a passing check resets the failure count', async () => {
+        pool.query.mockResolvedValueOnce([]);
+        await status.checkStatus();
+
+        pool.query.mockRejectedValueOnce(new Error('blip'));
+        await status.checkStatus();
+        pool.query.mockResolvedValueOnce([]);
+        await status.checkStatus();
+        pool.query.mockRejectedValueOnce(new Error('blip'));
+        await status.checkStatus();
+        expect(status.isValid).toBe(true);
+    });
+
     it('restores validity on the next passing check', async () => {
-        pool.query.mockRejectedValueOnce(new Error('read ECONNRESET'));
+        pool.query.mockRejectedValue(new Error('read ECONNRESET'));
+        await status.checkStatus();
         await status.checkStatus();
         expect(status.isValid).toBe(false);
 

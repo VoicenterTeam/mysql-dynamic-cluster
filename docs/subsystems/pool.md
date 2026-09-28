@@ -161,9 +161,15 @@ The `Promise` callback chain is, in order
 2. `conn.changeUser({ database: queryOptions.database }, ...)` — swaps
    the database on the borrowed connection so the same `Pool` can serve
    queries against multiple databases.
+   It runs through `Pool._changeUser`, which adds a `queryOptions.timeout`
+   timer (mysql2 ignores `changeUser`'s own timeout option). The query is
+   only sent from its success callback.
 3. `conn.query({ sql, timeout: queryOptions.timeout }, ...)` — runs the
-   SQL. Always calls `conn.release()` after the callback fires, whether
-   it succeeded or not.
+   SQL. On success the connection is `release()`d. On error it goes
+   through `fail()`, which settles once and hands the connection back
+   once: `destroy()` after a fatal error (a failed `changeUser` is always
+   fatal) or `PROTOCOL_SEQUENCE_TIMEOUT` (the statement is still running
+   on the server), `release()` after a plain SQL error.
 4. On success: stops the `QueryTimer`, saves metrics, logs a slow-query
    warning if `queryTimer.get() >= _slowQueryTime`
    ([src/pool/Pool.ts:209-211](../../src/pool/Pool.ts#L209)),
@@ -185,16 +191,14 @@ successful result is serialised into an `IRedisData`:
 writes the entry with the key-level TTL set to `redisExpire`
 seconds. The cache key is the raw SQL string.
 
-### Known bug
+### Error handling before 3.2.2
 
-Every error branch (`getConnection`, the `!conn` guard, `changeUser`,
-the inner `query`) calls `reject(...)` without a following `return`, so
-execution continues into the next callback chain even after a
-rejection. The Promise itself stays rejected (it can only resolve
-once), but the misleading side effects — `conn?.release()` on a missing
-connection, follow-up metric writes, and continuing into `conn.query`
-after `changeUser` errored — are real. See
-[../known-issues.md#1-poolquery-does-not-return-after-reject](../known-issues.md#1-poolquery-does-not-return-after-reject).
+Before 3.2.2 no error branch returned after `reject(...)`, the query was
+sent even when `changeUser` failed, and every error ended in
+`release()` — so a timed-out connection went back to the pool while
+still busy. See
+[../known-issues.md#1-poolquery-does-not-return-after-reject](../known-issues.md#1-poolquery-does-not-return-after-reject)
+and [#1a](../known-issues.md#1a-connections-released-back-to-the-pool-after-a-timeout-or-failed-changeuser).
 
 ## `multiStatementQuery()`
 
@@ -229,7 +233,8 @@ omitted — this method does not cache:
    `resolve(results)`.
 
 Any error stops the sequence, increments `errorQueries` once and rejects.
-A query or commit error rolls back first, then releases. After a fatal
+A query or commit error sends `ROLLBACK` (with `queryOptions.timeout`),
+then releases — or destroys, if the rollback itself fails. After a fatal
 error or `PROTOCOL_SEQUENCE_TIMEOUT` the connection is destroyed instead
 (no rollback — closing the socket makes the server discard the
 transaction). Before 3.2.2 the statements were fired from a `forEach`

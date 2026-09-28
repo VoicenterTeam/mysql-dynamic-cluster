@@ -37,6 +37,8 @@ export class PoolStatus {
     }
     private _validator: Validator;
     private _loadFactor: LoadFactor;
+    // Failed checks in a row. One failure (network blip) doesn't take the pool out of rotation
+    private _failedChecks: number = 0;
 
     private _timer: Timer;
     // Time to next check status. Time in ms
@@ -98,11 +100,12 @@ export class PoolStatus {
             Logger.debug("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())
             this._loadScore = this._loadFactor.check(result);
             Logger.debug("Load score by checking status in host " + this._pool.host + " is " + this._loadScore);
+            this._failedChecks = 0;
 
             this.nextCheckStatus()
         } catch (err) {
             Logger.error("Something wrong while checking status in host: " + this._pool.host + ".\n Message: " + err.message);
-            this._isValid = false;
+            if (++this._failedChecks >= 2) this._isValid = false;
 
             queryTimer.end();
             this._queryTime = queryTimer.get();

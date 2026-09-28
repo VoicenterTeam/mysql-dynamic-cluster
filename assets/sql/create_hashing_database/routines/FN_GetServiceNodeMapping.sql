@@ -1,5 +1,6 @@
 create
     function FN_GetServiceNodeMapping() returns json
+    READS SQL DATA
 BEGIN
     RETURN (
         SELECT JSON_ARRAYagg(

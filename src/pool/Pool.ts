@@ -176,7 +176,11 @@ export class Pool {
             Metrics.mark(MetricNames.pool.queryPerMinute, poolMetricOption);
             queryTimer.start();
 
+            // mysql2 can call back twice (timeout, then a late server error), settle only once
+            let settled = false;
             const fail = (error: any, conn?: mysql.PoolConnection) => {
+                if (settled) return;
+                settled = true;
                 Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                 queryTimer.end();
                 queryTimer.save(poolMetricOption);
@@ -190,12 +194,14 @@ export class Pool {
 
                 // change database
                 Logger.debug("Changing database to " + queryOptions.database);
-                conn.changeUser({ database: queryOptions.database }, (error) => {
+                Pool._changeUser(conn, queryOptions.database, queryOptions.timeout, (error) => {
                     if (error) return fail(error, conn);
 
                     Logger.debug(`Query in pool by host ${this.host}`);
                     conn.query({ sql, timeout: queryOptions.timeout }, (error, result: T) => {
                         if (error) return fail(error, conn);
+                        if (settled) return;
+                        settled = true;
                         conn.release();
 
                         queryTimer.end();
@@ -245,12 +251,20 @@ export class Pool {
             Metrics.mark(MetricNames.pool.queryPerMinute, poolMetricOption);
             const results: T[] = [];
 
+            let settled = false;
             const fail = (error: any, conn?: mysql.PoolConnection, rollback: boolean = false) => {
+                if (settled) return;
+                settled = true;
                 Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                 // a broken connection can't roll back; destroying it makes the server discard the transaction
                 if (rollback && !Pool._isBroken(error)) {
-                    conn.rollback(() => {
-                        conn.release();
+                    conn.query({ sql: 'ROLLBACK', timeout: queryOptions.timeout }, (errorR) => {
+                        if (errorR) {
+                            Logger.error("Rollback failed in pool by host " + this.host + ": " + errorR.message);
+                            conn.destroy();
+                        } else {
+                            conn.release();
+                        }
                         reject(error);
                     });
                     return;
@@ -269,6 +283,8 @@ export class Pool {
                         Logger.debug("Commit transaction in pool by host " + this.host);
                         conn.commit(errorC => {
                             if (errorC) return fail(errorC, conn, true);
+                            if (settled) return;
+                            settled = true;
 
                             Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
                             conn.release();
@@ -286,7 +302,7 @@ export class Pool {
 
                 // change database
                 Logger.debug("Changing database to " + queryOptions.database);
-                conn.changeUser({ database: queryOptions.database }, (error) => {
+                Pool._changeUser(conn, queryOptions.database, queryOptions.timeout, (error) => {
                     if (error) return fail(error, conn);
 
                     Logger.debug("Start transaction in pool by host " + this.host);
@@ -297,6 +313,30 @@ export class Pool {
                 })
             })
         })
+    }
+
+    /**
+     * Change connection database with a timeout. mysql2 ignores the timeout option of changeUser,
+     * and a query's own timeout only starts after changeUser finished
+     * @param conn connection
+     * @param database database to change to
+     * @param timeout time in ms before failing with PROTOCOL_SEQUENCE_TIMEOUT
+     * @param callback called once, with an error on failure or timeout
+     * @private
+     */
+    private static _changeUser(conn: mysql.PoolConnection, database: string, timeout: number, callback: (error?: any) => void) {
+        let done = false;
+        const timer = setTimeout(() => {
+            done = true;
+            callback(Object.assign(new Error("Change database timeout"), { code: 'PROTOCOL_SEQUENCE_TIMEOUT' }));
+        }, timeout);
+
+        conn.changeUser({ database }, (error) => {
+            clearTimeout(timer);
+            if (done) return;
+            done = true;
+            callback(error);
+        });
     }
 
     /**

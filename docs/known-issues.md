@@ -59,15 +59,24 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   rewriting around `mysql2/promise` and `async/await` to make the control flow
   explicit.
 
-### 1a. Connections released back to the pool after a fatal error or timeout
+### 1a. Connections released back to the pool after a timeout or failed changeUser
 
 - **Status:** **fixed in 3.2.2.**
 - **Location:** `Pool.query` in [src/pool/Pool.ts](../src/pool/Pool.ts)
-- **Description:** every query error ended in `conn.release()`, including fatal
-  socket errors and `PROTOCOL_SEQUENCE_TIMEOUT`. After a timeout mysql2 leaves the
-  statement running on the socket, so the next borrower queued behind it. The
-  connection is now `destroy()`ed when `err.fatal` is set or the code is
-  `PROTOCOL_SEQUENCE_TIMEOUT`; plain SQL errors still `release()`.
+- **Description:** every query error ended in `conn.release()`. The cases that
+  poisoned the pool were `PROTOCOL_SEQUENCE_TIMEOUT` — mysql2 sends no `KILL`,
+  so the statement keeps running and the next borrower queued behind it — and
+  a failed `changeUser`, which mysql2 marks fatal but doesn't remove from the
+  pool. (For socket-level fatal errors mysql2 3.x already removes the
+  connection itself.) The connection is now `destroy()`ed when `err.fatal` is
+  set or the code is `PROTOCOL_SEQUENCE_TIMEOUT`; plain SQL errors still
+  `release()`. `changeUser` also gets its own timeout, since mysql2 ignores
+  its timeout option and a query's timer only starts once `changeUser` ends.
+- **Requires mysql2 >= 3.23.3** (package floor is `^3.24.4`). Older mysql2
+  shares one config object across the pool and `changeUser` writes the
+  database into it, so after a failed database override every replacement
+  connection pointed at the bad database. 3.23.3 copies the config per
+  connection (`Pool._createConnectionConfig`).
 
 ### 1b. `isValid` left `true` after a failed health check
 
@@ -75,14 +84,26 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 - **Location:** `PoolStatus.checkStatus` in [src/pool/PoolStatus.ts](../src/pool/PoolStatus.ts)
 - **Description:** the `catch` logged and rescheduled but kept the last
   successful `_isValid`, so a node whose checks all failed stayed in rotation.
-  It now sets `_isValid = false`; the next passing check restores it.
+  It now sets `_isValid = false` after **two** failed checks in a row (one
+  transient failure keeps the node in rotation); the next passing check
+  restores it.
 
 ### 2. `Pool.multiStatementQuery` commits before queries finish
 
 - **Status:** **fixed in 3.2.2.** Queries run one after another, `commit` is
   issued only after the last one succeeds, and the promise resolves only after
-  the commit. Errors roll back and hand the connection back once (destroyed
-  after a fatal error or timeout, same rule as `Pool.query`).
+  the commit. Errors roll back (with a timeout) and hand the connection back
+  once (destroyed after a fatal error, a timeout or a failed rollback).
+- **What actually went wrong:** mysql2 queues commands per connection, so the
+  server did receive the statements in order — but `resolve([])` and
+  `release()` ran before any reply, and a failing statement's `ROLLBACK` was
+  queued behind the already-sent `COMMIT`. The result was partial commits
+  (earlier statements kept), lost errors (the promise had already resolved),
+  empty results, and a busy connection handed to the next caller. Surfacing
+  errors also exposed a MySQL 8 failure in the hashing bootstrap:
+  `FN_GetServiceNodeMapping` lacked `READS SQL DATA` (error 1418 with binary
+  logging on and `log_bin_trust_function_creators=0`), fixed in the same
+  release.
 - **Severity:** **high**
 - **Location:** [src/pool/Pool.ts:282-307](../src/pool/Pool.ts#L282-L307)
 - **Description:** Inside the `beginTransaction` callback, `sqls.forEach` fires

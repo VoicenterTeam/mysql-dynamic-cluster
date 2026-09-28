@@ -74,14 +74,49 @@ describe('Pool.query connection hygiene', () => {
         expect(conn.release).not.toHaveBeenCalled();
     });
 
-    it('changeUser fails: rejects, never queries, hands back once', async () => {
-        const conn = makeConn({ changeUserErr: { code: 'ER_BAD_DB_ERROR' } });
+    it('changeUser fails: rejects, never queries, destroys once', async () => {
+        // mysql2 marks every changeUser error fatal
+        const conn = makeConn({ changeUserErr: { code: 'ER_BAD_DB_ERROR', fatal: true } });
         await expect(makePool(null, conn).query('SELECT 1')).rejects.toBeTruthy();
         expect(conn.query).not.toHaveBeenCalled();
-        expect(conn.release.mock.calls.length + conn.destroy.mock.calls.length).toBe(1);
+        expect(conn.destroy).toHaveBeenCalledTimes(1);
+        expect(conn.release).not.toHaveBeenCalled();
+    });
+
+    it('changeUser never answers: rejects after the query timeout, destroys, ignores a late answer', async () => {
+        jest.useFakeTimers();
+        try {
+            let late: Cb;
+            const conn = makeConn();
+            conn.changeUser.mockImplementation((_o: any, cb: Cb) => { late = cb; });
+            const p = makePool(null, conn).query('SELECT 1', { timeout: 500 });
+            jest.advanceTimersByTime(500);
+            await expect(p).rejects.toMatchObject({ code: 'PROTOCOL_SEQUENCE_TIMEOUT' });
+            late(null);
+            expect(conn.query).not.toHaveBeenCalled();
+            expect(conn.destroy).toHaveBeenCalledTimes(1);
+            expect(conn.release).not.toHaveBeenCalled();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('error callback fired twice: settles and hands back only once', async () => {
+        const conn = makeConn();
+        conn.query.mockImplementation((_o: any, cb: Cb) => {
+            cb({ code: 'PROTOCOL_SEQUENCE_TIMEOUT' });
+            cb({ code: 'ECONNRESET', fatal: true });
+        });
+        await expect(makePool(null, conn).query('SELECT 1')).rejects.toMatchObject({ code: 'PROTOCOL_SEQUENCE_TIMEOUT' });
+        expect(conn.destroy).toHaveBeenCalledTimes(1);
+        expect(conn.release).not.toHaveBeenCalled();
     });
 
     it('no connection: rejects without touching a connection', async () => {
         await expect(makePool(new Error('no conn'), undefined).query('SELECT 1')).rejects.toThrow('no conn');
+    });
+
+    it('no error and no connection: rejects', async () => {
+        await expect(makePool(null, undefined).query('SELECT 1')).rejects.toThrow("Can't find connection");
     });
 });
