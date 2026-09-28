@@ -180,12 +180,7 @@ export class Pool {
                 Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                 queryTimer.end();
                 queryTimer.save(poolMetricOption);
-                // a dead socket, or one still running a timed-out statement, must not go back to the pool
-                if (error?.fatal || error?.code === 'PROTOCOL_SEQUENCE_TIMEOUT') {
-                    conn?.destroy();
-                } else {
-                    conn?.release();
-                }
+                Pool._handBack(conn, error);
                 reject(error);
             }
 
@@ -250,62 +245,80 @@ export class Pool {
             Metrics.mark(MetricNames.pool.queryPerMinute, poolMetricOption);
             const results: T[] = [];
 
-            this._pool.getConnection((err, conn) => {
-                if (err) {
-                    Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
-                    reject(err);
+            const fail = (error: any, conn?: mysql.PoolConnection, rollback: boolean = false) => {
+                Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
+                // a broken connection can't roll back; destroying it makes the server discard the transaction
+                if (rollback && !Pool._isBroken(error)) {
+                    conn.rollback(() => {
+                        conn.release();
+                        reject(error);
+                    });
+                    return;
                 }
+                Pool._handBack(conn, error);
+                reject(error);
+            }
 
-                if (!conn) {
-                    Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
-                    reject(new Error("Can't find connection. Maybe it was unexpectedly closed."));
+            this._pool.getConnection((err, conn) => {
+                if (err) return fail(err);
+                if (!conn) return fail(new Error("Can't find connection. Maybe it was unexpectedly closed."));
+
+                // queries run one after another; commit only after the last one succeeded
+                const runQuery = (index: number) => {
+                    if (index >= sqls.length) {
+                        Logger.debug("Commit transaction in pool by host " + this.host);
+                        conn.commit(errorC => {
+                            if (errorC) return fail(errorC, conn, true);
+
+                            Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
+                            conn.release();
+                            resolve(results);
+                        });
+                        return;
+                    }
+
+                    conn.query({ sql: sqls[index], timeout: queryOptions.timeout }, (errorQ, result: T) => {
+                        if (errorQ) return fail(errorQ, conn, true);
+                        results.push(result);
+                        runQuery(index + 1);
+                    });
                 }
 
                 // change database
                 Logger.debug("Changing database to " + queryOptions.database);
-                conn?.changeUser({ database: queryOptions.database }, (error) => {
-                    if (error) {
-                        Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
-                        conn.release();
-                        reject(error);
-                    }
-                })
+                conn.changeUser({ database: queryOptions.database }, (error) => {
+                    if (error) return fail(error, conn);
 
-                Logger.debug("Start transaction in pool by host " + this.host);
-                conn?.beginTransaction(error => {
-                    if (error) {
-                        Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
-                        conn.release();
-                        reject(error);
-                    }
-
-                    sqls.forEach(sql => {
-                        conn.query({ sql, timeout: queryOptions.timeout }, (errorQ, result: T) => {
-                            if (errorQ) {
-                                conn.rollback(() => 0);
-                                Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
-                                conn.release();
-                                reject(errorQ);
-                            }
-                            results.push(result);
-                        });
+                    Logger.debug("Start transaction in pool by host " + this.host);
+                    conn.beginTransaction(errorT => {
+                        if (errorT) return fail(errorT, conn);
+                        runQuery(0);
                     })
-
-                    Logger.debug("Commit transaction in pool by host " + this.host);
-                    conn.commit(errorC => {
-                        if (errorC) {
-                            conn.rollback(() => 0);
-                            Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
-                            conn.release();
-                            reject(errorC);
-                        }
-                    });
-
-                    Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
-                    conn.release();
-                    resolve(results);
                 })
             })
         })
+    }
+
+    /**
+     * Dead socket, or one still running a timed-out statement
+     * @param error error from mysql
+     * @private
+     */
+    private static _isBroken(error: any): boolean {
+        return error?.fatal || error?.code === 'PROTOCOL_SEQUENCE_TIMEOUT';
+    }
+
+    /**
+     * Hand connection back to the pool, or destroy it if it's broken so it's never reused
+     * @param conn connection to hand back
+     * @param error error from mysql
+     * @private
+     */
+    private static _handBack(conn: mysql.PoolConnection, error?: any) {
+        if (Pool._isBroken(error)) {
+            conn?.destroy();
+        } else {
+            conn?.release();
+        }
     }
 }

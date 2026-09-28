@@ -222,25 +222,18 @@ omitted — this method does not cache:
 2. `conn.changeUser({ database }, ...)` — same database swap.
 3. `conn.beginTransaction(...)` — open a transaction. On error,
    `conn.release()` and reject.
-4. `sqls.forEach(sql => conn.query({ sql, timeout }, ...))` — fire every
-   query callback-style. Each callback rolls back, releases, and
-   rejects on its own error.
-5. `conn.commit(...)` — commit. On error, `conn.rollback(() => 0)`,
-   release, and reject.
+4. Run the statements one after another: each `conn.query` starts from
+   the previous one's callback, and results are collected in order.
+5. `conn.commit(...)` — issued only after the last statement succeeded.
 6. Increment `successfulQueries`, `conn.release()`, and
    `resolve(results)`.
 
-### Known bug
-
-Steps 4-6 in the list above run synchronously: `forEach` only schedules
-the per-query callbacks, then `commit` is invoked, `release` runs, and
-`resolve(results)` returns — all before any of the actual query
-callbacks have fired. The transaction commits with zero queries
-executed against it, `results` is empty, and the connection is released
-back to the pool while queries are still in flight. The pattern cannot
-be fixed by adding `return` after each `reject` — it needs a full
-rewrite around `mysql2/promise` (or `util.promisify` on the callback
-API) to sequence the awaits properly. See
+Any error stops the sequence, increments `errorQueries` once and rejects.
+A query or commit error rolls back first, then releases. After a fatal
+error or `PROTOCOL_SEQUENCE_TIMEOUT` the connection is destroyed instead
+(no rollback — closing the socket makes the server discard the
+transaction). Before 3.2.2 the statements were fired from a `forEach`
+and committed before any of them ran — see
 [../known-issues.md#2-poolmultistatementquery-commits-before-queries-finish](../known-issues.md#2-poolmultistatementquery-commits-before-queries-finish).
 
 ## Public API summary

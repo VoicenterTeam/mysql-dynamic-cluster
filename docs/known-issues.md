@@ -79,6 +79,10 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 
 ### 2. `Pool.multiStatementQuery` commits before queries finish
 
+- **Status:** **fixed in 3.2.2.** Queries run one after another, `commit` is
+  issued only after the last one succeeds, and the promise resolves only after
+  the commit. Errors roll back and hand the connection back once (destroyed
+  after a fatal error or timeout, same rule as `Pool.query`).
 - **Severity:** **high**
 - **Location:** [src/pool/Pool.ts:282-307](../src/pool/Pool.ts#L282-L307)
 - **Description:** Inside the `beginTransaction` callback, `sqls.forEach` fires
