@@ -28,6 +28,12 @@ export class PoolStatus {
         return this._isValid;
     }
 
+    // Answered its last status check, whether or not it passed the validators
+    private _isReachable: boolean = false;
+    public get isReachable(): boolean {
+        return this._isReachable;
+    }
+
     private _queryTime: number;
     get queryTime(): number {
         return this._queryTime;
@@ -113,6 +119,7 @@ export class PoolStatus {
             queryTimer.end();
             this._queryTime = queryTimer.get();
 
+            this._isReachable = true;
             this._isValid = this._validator.check(result);
             Logger.debug("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())
             this._loadScore = this._loadFactor.check(result);
@@ -122,7 +129,7 @@ export class PoolStatus {
             this.nextCheckStatus()
         } catch (err) {
             Logger.error("Something wrong while checking status in host: " + this._pool.host + ".\n Message: " + err.message);
-            if (++this._failedChecks >= 2) this._isValid = false;
+            if (++this._failedChecks >= 2) this._isValid = this._isReachable = false;
 
             queryTimer.end();
             this._queryTime = queryTimer.get();

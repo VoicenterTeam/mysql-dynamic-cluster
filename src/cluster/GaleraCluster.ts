@@ -340,6 +340,8 @@ export class GaleraCluster {
         activePools = this._pools.filter(pool => {
             return pool.status.isValid && pool.id !== poolIdService;
         })
+        // no node passed the validators: use every node that still answers, least busy first
+        if (activePools.length < 1) activePools = this._pools.filter(pool => pool.status.isReachable && pool.id !== poolIdService);
         activePools.sort((a, b) => a.status.loadScore - b.status.loadScore)
 
         if (poolIdService >= 0) {
