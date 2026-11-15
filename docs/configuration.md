@@ -72,7 +72,9 @@ A load factor is `{ key: string, multiplier: number }`.
 
 The `flags` connection option of mysql2, passed to `mysql.createPool` as they are. A name adds a flag, a name with a leading `-` turns a default one off. mysql2 takes an array or one comma-separated string. Left out, the library does not pass the key and mysql2 keeps its defaults.
 
-The case it exists for: mysql2 3.21.0 and later turn on `CLIENT_QUERY_ATTRIBUTES` without looking at the server version. A MySQL or Percona server older than 8.0.26 does not parse the prepared-statement packet that comes with it, so every `connection.execute()` hangs. The library's own queries are plain `query()` calls and are not affected, but code that runs `execute()` on the library's pools is. Turn the flag off for such servers:
+Nobody checks the names. mysql2 ignores a name it does not know, without an error, and matches array entries exactly: upper case, no spaces. A typo such as `'-client_query_attributes'` changes nothing. Leave `MULTI_STATEMENTS` off: it lets one query carry several statements, which makes SQL injection worse.
+
+The case it exists for: mysql2 3.21.0 and later turn on `CLIENT_QUERY_ATTRIBUTES` without looking at the server version. A server that announces the capability but is older than 8.0.26, such as Percona XtraDB Cluster 8.0.25, does not parse the prepared-statement packet that comes with it, so every `connection.execute()` hangs. The library's own queries are plain `query()` calls and are not affected, but code that runs `execute()` on the library's pools is. Turn the flag off for such servers:
 
 ```js
 defaultPoolSettings: {

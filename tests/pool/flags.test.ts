@@ -23,6 +23,8 @@ import { parseSettings } from '../../src/configs/schema';
 import { IUserSettings } from '../../src/types/SettingsInterfaces';
 
 const QUERY_ATTRIBUTES_OFF = '-CLIENT_QUERY_ATTRIBUTES';
+// capability bit of the MySQL protocol
+const CLIENT_QUERY_ATTRIBUTES = 1 << 27;
 
 const base = (): IUserSettings => ({
     clusterName: 'test',
@@ -35,7 +37,8 @@ const createPoolOptions = async (settings: IUserSettings): Promise<any[]> => {
     const createPool = mysql.createPool as unknown as jest.Mock;
     createPool.mockClear();
     for (const host of Settings.mixSettings(settings).hosts) {
-        await expect(new Pool({ id: 1, ...host }, 'test').connect()).rejects.toThrow('createPool reached');
+        const pool = new Pool({ id: 1, ...host }, 'test');
+        await expect(pool.connect()).rejects.toThrow('createPool reached');
     }
     return createPool.mock.calls.map(call => call[0]);
 };
@@ -64,7 +67,11 @@ describe('the flags pool setting', () => {
     it('of a host replaces the default one, it is not added to it', async () => {
         const settings = base();
         settings.defaultPoolSettings.flags = [QUERY_ATTRIBUTES_OFF];
-        settings.hosts = [{ host: 'a', flags: ['-FOUND_ROWS'] }, { host: 'b', flags: [] }, { host: 'c', flags: 'IGNORE_SPACE' }];
+        settings.hosts = [
+            { host: 'a', flags: ['-FOUND_ROWS'] },
+            { host: 'b', flags: [] },
+            { host: 'c', flags: 'IGNORE_SPACE' }
+        ];
 
         const options = await createPoolOptions(settings);
         expect(options[0].flags).toEqual(['-FOUND_ROWS']);
@@ -82,9 +89,33 @@ describe('the flags pool setting', () => {
 
     it('left out leaves the createPool options as they were', async () => {
         const options = await createPoolOptions(base());
-        expect(options[0]).toEqual({
-            host: '127.0.0.1', port: 3306, user: 'u', password: 'p', database: 'd', connectionLimit: 10
+        expect(options[0]).toStrictEqual({
+            host: '127.0.0.1', port: 3306, user: 'u', password: 'p', database: 'd',
+            connectionLimit: 10
         });
+    });
+
+    it('set to undefined on a host counts as left out, the default one stays', async () => {
+        const settings = base();
+        settings.defaultPoolSettings.flags = [QUERY_ATTRIBUTES_OFF];
+        settings.hosts = [{ host: 'a', flags: undefined }];
+
+        const options = await createPoolOptions(settings);
+        expect(options[0].flags).toEqual([QUERY_ATTRIBUTES_OFF]);
+    });
+
+    // mysql2's types promise an array only. This pins that the real mysql2 takes the string too
+    it.each([
+        ['an array', [QUERY_ATTRIBUTES_OFF]],
+        ['a string', QUERY_ATTRIBUTES_OFF]
+    ])('turns the flag off in the real mysql2 when given as %s', (_name, flags) => {
+        const real = jest.requireActual('mysql2');
+        // no socket opens before a connection is asked for
+        const clientFlags = (options: object): number =>
+            real.createPool({ host: '127.0.0.1', ...options }).config.connectionConfig.clientFlags;
+
+        expect(clientFlags({}) & CLIENT_QUERY_ATTRIBUTES).not.toBe(0);
+        expect(clientFlags({ flags }) & CLIENT_QUERY_ATTRIBUTES).toBe(0);
     });
 
     it('has no default, so the parsed defaults get no flags key', () => {

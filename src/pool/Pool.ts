@@ -89,7 +89,8 @@ export class Pool {
      * Create pool connection
      */
     public async connect() {
-        Logger.debug("Creating pool in host: " + this.host);
+        const flagsMeta = this._flags === undefined ? undefined : { flags: this._flags };
+        Logger.debug("Creating pool in host: " + this.host, flagsMeta);
         this._pool = mysql.createPool({
             host: this.host,
             port: this.port,
