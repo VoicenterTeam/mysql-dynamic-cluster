@@ -19,7 +19,7 @@ If you're new to the project, read in this order:
 - [events.md](events.md) — catalog of cluster and pool events, their payloads, and the array-wrapping listener quirk.
 - [sql-assets.md](sql-assets.md) — hashing-database tables, routines, capacity caps, and SQL path resolution.
 - [testing.md](testing.md) — Jest layout, which suites run, and the four stale suites that still fail to compile.
-- [known-issues.md](known-issues.md) — catalogued bugs/footguns with file:line refs and suggested fixes (not applied).
+- [known-issues.md](known-issues.md) — catalogued bugs/footguns with file:line refs, each with a suggested fix or a fixed-in status.
 - [branch-divergence.md](branch-divergence.md) — side-by-side of `dev` vs V3 API shapes and what stayed the same.
 - [glossary.md](glossary.md) — short defs: Galera, validator, load factor, hashing, OpenTelemetry metric terms.
 

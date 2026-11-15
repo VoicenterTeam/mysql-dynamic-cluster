@@ -41,7 +41,7 @@ tests/
     settings.test.ts             # Merge of user settings + defaults via Settings (stale, dev API)
     utils.test.ts                # Pure-unit tests for Timer and Utils.clamp
   loads/
-    load.test.ts                 # Manual load harness; ignored by jest config
+    load.test.ts                 # Manual load harness; ignored by jest config (stale)
 ```
 
 ## Prerequisites for integration suites

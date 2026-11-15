@@ -76,7 +76,7 @@ Full human-facing index lives in [docs/README.md](docs/README.md). Quick map:
 - [docs/events.md](docs/events.md) — cluster/pool event catalog and the array-wrapping listener quirk.
 - [docs/sql-assets.md](docs/sql-assets.md) — hashing-DB tables, routines, capacity caps, path resolution.
 - [docs/testing.md](docs/testing.md) — Jest layout, which suites run, and the four stale suites.
-- [docs/known-issues.md](docs/known-issues.md) — bugs/footguns with file:line refs (fixes not applied).
+- [docs/known-issues.md](docs/known-issues.md) — bugs/footguns with file:line refs and a fixed-in status where one landed.
 - [docs/branch-divergence.md](docs/branch-divergence.md) — `dev` vs V3 API shapes side-by-side.
 - [docs/glossary.md](docs/glossary.md) — Galera, validator, load factor, hashing, OpenTelemetry metric terms.
 
