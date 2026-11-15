@@ -43,6 +43,7 @@ Base configuration applied to every host in `hosts`.
 | `queryTimeout` | `number` (ms) | `120000` |
 | `slowQueryTime` | `number` (s) | `1` |
 | `redisFactor` | `number` | `1` |
+| `flags` | `string` or `string[]` | not set, see [below](#flags) |
 
 Default `validators`:
 
@@ -66,6 +67,20 @@ Default `loadFactors`:
 ```
 
 A load factor is `{ key: string, multiplier: number }`.
+
+### `flags`
+
+The `flags` connection option of mysql2, passed to `mysql.createPool` as they are. A name adds a flag, a name with a leading `-` turns a default one off. mysql2 takes an array or one comma-separated string. Left out, the library does not pass the key and mysql2 keeps its defaults.
+
+The case it exists for: mysql2 3.21.0 and later turn on `CLIENT_QUERY_ATTRIBUTES` without looking at the server version. A MySQL or Percona server older than 8.0.26 does not parse the prepared-statement packet that comes with it, so every `connection.execute()` hangs. The library's own queries are plain `query()` calls and are not affected, but code that runs `execute()` on the library's pools is. Turn the flag off for such servers:
+
+```js
+defaultPoolSettings: {
+    flags: ['-CLIENT_QUERY_ATTRIBUTES']
+}
+```
+
+`flags` on a host replaces the default ones for that node, it is not added to them: `flags: []` on a host on a newer server gives that node mysql2's defaults again. This differs from `validators` and `loadFactors`, which are added.
 
 ## `hosts`
 
@@ -125,7 +140,7 @@ The values are lowercase. `LOGLEVEL` is exported from the package for them. Wher
 
 1. **Take the live objects off.** `redisInstant` and `logger` are removed from a copy of the object. The caller's object is not changed.
 2. **Validate and fill defaults.** `parseSettings` runs the zod schema. Keys you left out get their default, also inside nested objects: `redis: { enabled: true }` keeps every other `redis` default. An array you pass replaces the default array.
-3. **Mix every host with the default pool settings.** Each host becomes `deepmerge(defaultPoolSettings, host)`. A host that omits `port`, or sets it to `undefined`, inherits it. Arrays are concatenated in this step: `validators` on a host are added to the default ones, not swapped for them.
+3. **Mix every host with the default pool settings.** Each host becomes `deepmerge(defaultPoolSettings, host)`. A host that omits `port`, or sets it to `undefined`, inherits it. Arrays are concatenated in this step: `validators` on a host are added to the default ones, not swapped for them. `flags` is the exception, a host's value replaces the default one.
 4. **Store.** The result is loaded into the `config` singleton ([src/configs/index.ts](../src/configs/index.ts)). The rest of the library reads `config.current`, a plain typed object.
 
 Before `createPoolCluster` runs, `config.current` holds the defaults. A second `createPoolCluster` call in one process replaces the settings of the first and logs a warning to the first cluster's logger.

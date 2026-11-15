@@ -26,6 +26,7 @@ tests/
     no-side-effects.test.ts      # Requiring the package has no side effects
     otel-metrics.test.ts         # OpenTelemetry metrics recorded by the cluster
   pool/
+    flags.test.ts                # The flags pool setting reaches mysql2's createPool
     idle-defaults.test.ts        # Idle connection defaults in the settings schema
     multi-statement.test.ts      # Pool.multiStatementQuery: order, commit, rollback
     query-hygiene.test.ts        # Pool.query error paths and availableConnectionCount

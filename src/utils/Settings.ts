@@ -19,7 +19,10 @@ export class Settings {
 
         settings.hosts = settings.hosts.map(host => {
             const own = Settings._withoutUndefined(host);
-            return deepmerge(settings.defaultPoolSettings, own) as IUserPoolSettings;
+            const mixed = deepmerge(settings.defaultPoolSettings, own) as IUserPoolSettings;
+            // flags of a host replace the default ones: added to them, a host could not undo a "-FLAG"
+            if (own.flags !== undefined) mixed.flags = own.flags;
+            return mixed;
         })
 
         return settings;

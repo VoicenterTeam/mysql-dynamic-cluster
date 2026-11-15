@@ -336,7 +336,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 - **Location:** `tests/` — see [testing.md](testing.md) for the per-file breakdown.
 - **Description:** Four suites were written against the dev-branch API and
   never ported (`tests/cluster/hashing.test.ts`, `tests/cluster/query.test.ts`,
-  `tests/pool/query.test.ts`, `tests/utils/settings.test.ts`). The other 15
+  `tests/pool/query.test.ts`, `tests/utils/settings.test.ts`). The other 16
   suites pass. Failures include a deleted `AmqpLoggerConfig` import in
   [tests/utils/settings.test.ts:7](../tests/utils/settings.test.ts#L7), wrong
   constructor arity in

@@ -55,8 +55,8 @@ itself is **not** created here; that happens lazily in `connect()`.
 calls on each pool. The steps:
 
 1. Build the underlying mysql2 pool via `mysql.createPool({ host, port,
-   user, password, database, connectionLimit })`
-   ([src/pool/Pool.ts:73-80](../../src/pool/Pool.ts#L73)).
+   user, password, database, connectionLimit })`, plus `flags` when the
+   pool settings have it ([src/pool/Pool.ts](../../src/pool/Pool.ts)).
 2. Mark the status as active (`this.status.active = true`)
    ([src/pool/Pool.ts:82](../../src/pool/Pool.ts#L82)). Setting
    `active` to `true` is the trigger for `PoolStatus` to start its

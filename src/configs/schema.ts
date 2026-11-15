@@ -51,7 +51,9 @@ const poolFields = {
     queryTimeout: z.number(),
     // time in seconds
     slowQueryTime: z.number(),
-    redisFactor: z.number()
+    redisFactor: z.number(),
+    // mysql2 connection flags, passed to createPool as they are
+    flags: z.union([z.string(), z.array(z.string())])
 };
 
 const defaultPoolSettings = z.strictObject({
@@ -80,7 +82,9 @@ const defaultPoolSettings = z.strictObject({
     timerCheckMultiplier: poolFields.timerCheckMultiplier.default(1.3),
     queryTimeout: poolFields.queryTimeout.default(2 * 60 * 1000),
     slowQueryTime: poolFields.slowQueryTime.default(1),
-    redisFactor: poolFields.redisFactor.default(1)
+    redisFactor: poolFields.redisFactor.default(1),
+    // no default: left out, mysql2 keeps its own flags
+    flags: poolFields.flags.optional()
 });
 
 // A host overrides any pool setting. What it leaves out comes from defaultPoolSettings

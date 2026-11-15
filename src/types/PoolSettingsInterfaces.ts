@@ -21,7 +21,9 @@ interface IPoolSettings {
     redisFactor?: number,
     minConnections?: number,
     idleTimeout?: number,
-    idleCheckInterval?: number
+    idleCheckInterval?: number,
+    // mysql2 connection flags, such as ['-CLIENT_QUERY_ATTRIBUTES']. Passed to mysql2 as they are
+    flags?: string | string[]
 }
 
 export interface IDefaultUserPoolSettings extends IPoolSettings {

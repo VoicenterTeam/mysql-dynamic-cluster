@@ -36,6 +36,7 @@ export class Pool {
     private readonly _slowQueryTime: number;
     private readonly _redisFactor: number;
     private readonly _redisExpire: number;
+    private readonly _flags?: string | string[];
 
     private _pool: mysql.Pool;
     private readonly _reaper: IdleConnectionReaper;
@@ -69,6 +70,7 @@ export class Pool {
         this._slowQueryTime = settings.slowQueryTime;
         this._redisFactor = settings.redisFactor;
         this._redisExpire = settings.redisExpire;
+        this._flags = settings.flags;
 
         this.connectionLimit = settings.connectionLimit;
 
@@ -94,7 +96,9 @@ export class Pool {
             user: this._user,
             password: this._password,
             database: this._database,
-            connectionLimit: this.connectionLimit
+            connectionLimit: this.connectionLimit,
+            // left out when unset, so mysql2 keeps its default flags. mysql2 takes a string too
+            ...(this._flags === undefined ? {} : { flags: this._flags as string[] })
         })
 
         this._reaper.start(this._pool as any);
