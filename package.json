@@ -41,11 +41,10 @@
     "coverage": "jest --coverage"
   },
   "dependencies": {
-    "convict": "^6.2.3",
     "deepmerge": "^4.2.2",
     "ioredis": "^4.28.3",
-    "is-plain-object": "^5.0.0",
-    "mysql2": "^3.24.4"
+    "mysql2": "^3.24.4",
+    "zod": "^4.6.7"
   },
   "peerDependencies": {
     "@opentelemetry/api": "^1.7.0"
@@ -53,7 +52,6 @@
   "devDependencies": {
     "@opentelemetry/api": "~1.9.0",
     "@opentelemetry/sdk-metrics": "^2.12.1",
-    "@types/convict": "^6.1.1",
     "@types/ioredis": "^4.28.10",
     "@types/jest": "^30.0.0",
     "@types/node": "^16.9.0",

@@ -4,7 +4,7 @@ This document describes the test layout of `@voicenter-team/mysql-dynamic-cluste
 
 ## Framework and commands
 
-- Runner: **Jest 27** with `ts-jest` (see `devDependencies` in [package.json:50](../package.json#L50)).
+- Runner: **Jest 30** (`jest ^30.4.2`) with `ts-jest ^29.4.9` (see `devDependencies` in [package.json:50](../package.json#L50)).
 - Config: [jest.config.js:1](../jest.config.js#L1). Uses the `ts-jest` preset, `node` test environment, and a 5-minute per-test timeout (`testTimeout: 300000`).
 - Scripts ([package.json:33](../package.json#L33)):
   - `npm test` runs `jest`.
@@ -18,10 +18,16 @@ tests/
   cluster/
     hashing.test.ts   # ClusterHashing wiring against a live cluster + helper schema
     query.test.ts     # GaleraCluster.query() shapes: no values, scalar, array, named, timeout
+  configs/
+    settings.test.ts  # Settings schema: defaults, strict validation, mixSettings, no env reading
+  metrics/
+    no-side-effects.test.ts  # Requiring the package has no side effects
+    otel-metrics.test.ts     # OpenTelemetry metrics recorded by the cluster
   pool/
     query.test.ts     # Single-pool round-trip: connect → query → disconnect, plus query timeout
   utils/
-    settings.test.ts  # Merge of user settings + defaults via Settings/convict
+    logger.test.ts    # Logger: levels, console default, app-supplied logger
+    settings.test.ts  # Merge of user settings + defaults via Settings (stale, dev API)
     utils.test.ts     # Pure-unit tests for Timer and Utils.clamp
   loads/
     load.test.ts      # Manual load harness; ignored by jest config
@@ -29,7 +35,7 @@ tests/
 
 ## Prerequisites for integration suites
 
-Everything outside `tests/utils/utils.test.ts` and `tests/utils/settings.test.ts` opens real MySQL connections via `mysql2` and requires a `.env` file at the repo root. The keys, copied from [.env.example:1](../.env.example#L1):
+The integration suites (`tests/pool/query.test.ts`, `tests/cluster/query.test.ts`, `tests/cluster/hashing.test.ts`, `tests/loads/load.test.ts`) open real MySQL connections via `mysql2` and require a `.env` file at the repo root. The keys, copied from [.env.example:1](../.env.example#L1):
 
 | Variable | Used by | Notes |
 | --- | --- | --- |
@@ -38,7 +44,7 @@ Everything outside `tests/utils/utils.test.ts` and `tests/utils/settings.test.ts
 | `DB_HOST3` | Same files as `DB_HOST2` (second host slot) | Secondary node. |
 | `DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE` | All integration tests | The MySQL user must have permission to read `officering_api_doc.MethodType` (cluster/pool query suites) and to create/drop `test_hashing` plus run the hashing helper schema in `mysql-dynamic-cluster` (hashing suite). |
 
-`dotenv.config({ path: './.env' })` is invoked inside each suite, so tests must be run from the repo root.
+`dotenv.config({ path: './.env' })` is invoked inside each of these suites, so tests must be run from the repo root. `dotenv` is a devDependency for this purpose only; the library itself reads no `.env` file.
 
 ## File-by-file summary
 
@@ -51,16 +57,16 @@ Everything outside `tests/utils/utils.test.ts` and `tests/utils/settings.test.ts
 
 ---
 
-## **Warning: the test suite is stale on V3.0**
+## **Warning: four suites are stale on V3.0**
 
-> **All tests except [tests/utils/utils.test.ts](../tests/utils/utils.test.ts) were written against the dev-branch API and no longer compile or behave correctly against the V3 source.** They are kept in-tree as a starting point for a future rewrite, but `npm test` will currently fail before reaching any DB call.
+> **Four suites were written against the dev-branch API and no longer compile against the V3 source: `tests/cluster/hashing.test.ts`, `tests/cluster/query.test.ts`, `tests/pool/query.test.ts` and `tests/utils/settings.test.ts`.** They are kept in-tree as a starting point for a future rewrite. `npm test` reports them as failed before they reach any DB call; every other suite passes. `tests/loads/load.test.ts` is stale too, but Jest does not run it.
 
 ### `tests/utils/settings.test.ts`
 
-- [tests/utils/settings.test.ts:7](../tests/utils/settings.test.ts#L7) imports `AmqpLoggerConfig` from `../../src/configs/AmqpLoggerConfig` — that module has been removed from V3. AMQP logger configuration now lives inside [src/configs/schema.ts](../src/configs/schema.ts) and the runtime [src/utils/Logger.ts](../src/utils/Logger.ts).
+- [tests/utils/settings.test.ts:7](../tests/utils/settings.test.ts#L7) imports `AmqpLoggerConfig` from `../../src/configs/AmqpLoggerConfig` — that module has been removed from V3. Since 4.0.0 the library has no AMQP logger at all; see [subsystems/logger.md](./subsystems/logger.md).
 - [tests/utils/settings.test.ts:8](../tests/utils/settings.test.ts#L8) imports `LOGLEVEL` from `../../src/types/AmqpInterfaces`. In V3 `LOGLEVEL` is exported from [src/types/LoggerInterfaces.ts](../src/types/LoggerInterfaces.ts) (and re-exported via [src/types/SettingsInterfaces.ts](../src/types/SettingsInterfaces.ts)).
-- The fixture builds `IUserSettings` with a top-level `globalPoolSettings` block ([tests/utils/settings.test.ts:27](../tests/utils/settings.test.ts#L27), [tests/utils/settings.test.ts:88](../tests/utils/settings.test.ts#L88)) and a `useAmqpLogger: true` flag ([tests/utils/settings.test.ts:112](../tests/utils/settings.test.ts#L112)). V3 renamed the key to `defaultPoolSettings` (see [src/types/SettingsInterfaces.ts:28](../src/types/SettingsInterfaces.ts#L28)) and dropped `useAmqpLogger` in favour of the `amqpLogger` sub-object documented in [configuration.md](./configuration.md).
-- The `redisSettings` block is flat (`algorithm`, `keyPrefix`, `expiryMode`, `expire`, `clearOnStart` at the top level — see [tests/utils/settings.test.ts:33](../tests/utils/settings.test.ts#L33) and [tests/utils/settings.test.ts:113](../tests/utils/settings.test.ts#L113)). V3 nests the cache-encoding fields under `redisSettings.algorithm`/`encoding` differently and renames several keys; consult [configuration.md](./configuration.md) for the current shape.
+- The fixture builds `IUserSettings` with a top-level `globalPoolSettings` block ([tests/utils/settings.test.ts:27](../tests/utils/settings.test.ts#L27), [tests/utils/settings.test.ts:88](../tests/utils/settings.test.ts#L88)) and a `useAmqpLogger: true` flag ([tests/utils/settings.test.ts:112](../tests/utils/settings.test.ts#L112)). V3 renamed the key to `defaultPoolSettings` (see [src/types/SettingsInterfaces.ts:28](../src/types/SettingsInterfaces.ts#L28)) and dropped `useAmqpLogger`; since 4.0.0 the app passes its own `logger` instead (see [subsystems/logger.md](./subsystems/logger.md)).
+- The `redisSettings` block is flat (`algorithm`, `keyPrefix`, `expiryMode`, `expire`, `clearOnStart` at the top level — see [tests/utils/settings.test.ts:33](../tests/utils/settings.test.ts#L33) and [tests/utils/settings.test.ts:113](../tests/utils/settings.test.ts#L113)). V3 calls this block `redis`, moves `enabled` into it, and rejects `redisSettings`; consult [configuration.md](./configuration.md) for the current shape.
 
 ### `tests/cluster/hashing.test.ts`
 
@@ -83,14 +89,14 @@ Everything outside `tests/utils/utils.test.ts` and `tests/utils/settings.test.ts
 
 ## What still works
 
-[tests/utils/utils.test.ts](../tests/utils/utils.test.ts) is the only suite that runs clean on V3. It depends solely on [src/utils/Timer.ts](../src/utils/Timer.ts) and [src/utils/Utils.ts](../src/utils/Utils.ts), neither of which has changed shape between branches. Use it as the canonical reference for a test that doesn't need rewriting.
+The other suites run clean on V3: [tests/utils/utils.test.ts](../tests/utils/utils.test.ts) and the suites written for this line (everything under `tests/` that the warning above does not name). `utils.test.ts` depends solely on [src/utils/Timer.ts](../src/utils/Timer.ts) and [src/utils/Utils.ts](../src/utils/Utils.ts), neither of which has changed shape between branches. Use it as the canonical reference for a test that doesn't need rewriting.
 
 ## Guidance for future agents
 
 When you touch these tests, **rewrite them against the V3 schema documented in [configuration.md](./configuration.md)**. Concretely:
 
 1. Move `user` / `password` / `database` / `validators` / `loadFactors` into `defaultPoolSettings` on every `createPoolCluster()` call.
-2. Replace `globalPoolSettings` with `defaultPoolSettings` and drop the top-level `useAmqpLogger` flag (see [configuration.md](./configuration.md) for the AMQP logger sub-object).
+2. Replace `globalPoolSettings` with `defaultPoolSettings` and drop the top-level `useAmqpLogger` flag (the library has no AMQP logger; see [subsystems/logger.md](./subsystems/logger.md)).
 3. Import `LOGLEVEL` from `src/types/LoggerInterfaces` (or `src/types/SettingsInterfaces`), not `src/types/AmqpInterfaces`.
 4. Update the `ClusterHashing` test fixture to construct `new ClusterHashing(cluster, clusterName, { nextCheckTime, dbName })`, and drive it through its public surface (`connect()` / `stop()`) instead of poking `_checkHashing` and `serviceNodeMap`. If you genuinely need to assert internal state, add a public read-only getter on `ClusterHashing` first.
 5. For the `Pool` suite, pass a `clusterName` as the second constructor argument, or replace the direct `new Pool(...)` with a cluster fixture.

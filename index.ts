@@ -9,22 +9,23 @@ import config from './src/configs';
 import { Redis as RedisLib, Cluster}  from 'ioredis'
 
 function createPoolCluster(userSettings: IUserSettings): GaleraCluster {
-    // the logger is a live object of the app: taken off before the merge, which would copy it
-    const { logger, ...settings } = userSettings;
-    userSettings = Settings.mixSettings(settings as IUserSettings);
-    let redisInstant = userSettings.redisInstant;
-    delete userSettings.redisInstant;
-    config.load(userSettings).validate;
+    // anything but an object fails validation here, with the settings error
+    if (userSettings === null || typeof userSettings !== 'object' || Array.isArray(userSettings)) {
+        Settings.mixSettings(userSettings);
+    }
+    // live objects of the app, not settings to validate
+    const { redisInstant, logger, ...settings } = userSettings;
+    config.load(Settings.mixSettings(settings as IUserSettings));
     init(redisInstant, logger);
     return new GaleraCluster();
 }
 
 function init(redisInstant, logger?: ILogger): void {
-    Logger.init(config.get('logs.level'), logger);
-    Metrics.init(config.get('clusterName'));
+    Logger.init(config.current.logs.level, logger);
+    Metrics.init(config.current.clusterName);
     // tslint:disable-next-line:no-bitwise
     if(redisInstant instanceof Cluster ||  redisInstant?.constructor?.name === 'Redis'){
-        Redis.init(redisInstant, config.get('clusterName'), config.get('redis'));
+        Redis.init(redisInstant, config.current.clusterName, config.current.redis);
     }
     Logger.info("Initialized app");
 }

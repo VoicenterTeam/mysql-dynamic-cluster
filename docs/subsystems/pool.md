@@ -157,8 +157,8 @@ The `Promise` callback chain is, in order
 ([src/pool/Pool.ts:167-226](../../src/pool/Pool.ts#L167)):
 
 1. `_pool.getConnection((err, conn) => { ... })` — checks out a raw
-   `mysql2.PoolConnection`. On error, increments the
-   `errorQueries` metric and rejects; if `conn` is falsy a
+   `mysql2.PoolConnection`. On error, records the
+   attempt with its `error.type` and rejects; if `conn` is falsy a
    second guard rejects with `"Can't find connection. Maybe it was
    unexpectedly closed."`.
 2. `conn.changeUser({ database: queryOptions.database }, ...)` — swaps
@@ -173,10 +173,11 @@ The `Promise` callback chain is, in order
    once: `destroy()` after a fatal error (a failed `changeUser` is always
    fatal) or `PROTOCOL_SEQUENCE_TIMEOUT` (the statement is still running
    on the server), `release()` after a plain SQL error.
-4. On success: stops the `QueryTimer`, saves metrics, logs a slow-query
+4. On success: stops the `QueryTimer`, records the attempt as
+   `mysql_dynamic_cluster.operation.duration`, logs a slow-query
    warning if `queryTimer.get() >= _slowQueryTime`
    ([src/pool/Pool.ts:209-211](../../src/pool/Pool.ts#L209)),
-   increments the `successfulQueries` metric, optionally writes the
+   optionally writes the
    result to Redis (see below), and resolves with the mysql2 result.
 
 ### Redis cache write
@@ -234,10 +235,12 @@ omitted — this method does not cache:
 5. `COMMIT` (sent with `queryOptions.timeout`) — issued only after the last
    statement succeeded. A timed-out `COMMIT` destroys the connection; whether
    it committed on the server is unknown.
-6. Increment `successfulQueries`, `conn.release()`, and
+6. Record the transaction as one `mysql_dynamic_cluster.operation.duration`
+   sample, `conn.release()`, and
    `resolve(results)`.
 
-Any error stops the sequence, increments `errorQueries` once and rejects.
+Any error stops the sequence, records the attempt once with its
+`error.type` and rejects.
 A query or commit error sends `ROLLBACK` (with `queryOptions.timeout`),
 then releases — or destroys, if the rollback itself fails. After a fatal
 error or `PROTOCOL_SEQUENCE_TIMEOUT` the connection is destroyed instead

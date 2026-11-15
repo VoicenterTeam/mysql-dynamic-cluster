@@ -10,11 +10,11 @@ to Redis. The cache also doubles as a **stale-while-down** fallback when
 every pool fails.
 
 The cache is **off by default** in the V3 schema
-([src/configs/schema.ts:159](../../src/configs/schema.ts#L159) —
+([src/configs/schema.ts](../../src/configs/schema.ts) —
 `redis.enabled` defaults to `false`). The user-facing `useRedis` flag on
 the cluster (`_useRedis`) is read directly from `redis.enabled`
 ([src/cluster/GaleraCluster.ts:52](../../src/cluster/GaleraCluster.ts#L52)),
-so unless the caller (or `MYSQL_REDIS_ENABLE`) flips that bit, the cache
+so unless the caller flips that bit, the cache
 is bypassed entirely and no `ioredis` client is constructed.
 
 Source: [src/Redis/Redis.ts](../../src/Redis/Redis.ts). See also

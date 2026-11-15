@@ -46,27 +46,26 @@ export class GaleraCluster {
     constructor() {
         Logger.debug("Configuring cluster...");
 
-        this._useClusterHashing = config.get('useClusterHashing')
-        this._clusterName = config.get('clusterName')
-        this._errorRetryCount = config.get('errorRetryCount')
-        this._useRedis = config.get('redis.enabled')
-        const poolIds: number[] = this._sortPoolIds(config.get('hosts'));
+        this._useClusterHashing = config.current.useClusterHashing
+        this._clusterName = config.current.clusterName
+        this._errorRetryCount = config.current.errorRetryCount
+        this._useRedis = config.current.redis.enabled
+        const poolIds: number[] = this._sortPoolIds(config.current.hosts);
 
-        config.get('hosts').forEach(poolSettings => {
+        config.current.hosts.forEach(poolSettings => {
             if (!poolSettings.id) {
                 poolSettings.id = poolIds.length <= 0 ? 0 : poolIds[poolIds.length - 1] + 1;
                 poolIds.push(poolSettings.id);
             }
-            if(poolSettings.host)
+            // a host without `host` never gets here: the settings schema rejects it
             this._pools.push(
                 new Pool(poolSettings, this._clusterName)
             )
-            else
-                Logger.error(`Pool not valid host ${poolSettings.host}`, poolSettings)
         })
 
-        this._serviceNames = new ServiceNames(this, config.get('serviceMetrics'));
-        this._clusterHashing = new ClusterHashing(this, this._clusterName, config.get('clusterHashing'));
+        this._serviceNames = new ServiceNames(this, config.current.serviceMetrics);
+        const hashingSettings = config.current.clusterHashing;
+        this._clusterHashing = new ClusterHashing(this, this._clusterName, hashingSettings);
 
         Logger.info("Cluster configuration finished");
     }

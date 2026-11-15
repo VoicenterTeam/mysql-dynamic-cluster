@@ -50,25 +50,11 @@ A query whose execution time exceeds the `slowQueryTime` threshold from [src/con
 
 ### Expiry mode (`EX`)
 
-The Redis flag passed alongside `SET` to attach a TTL in seconds; the library only supports `EX` (see the `format: ['EX']` constraint at [src/configs/schema.ts:174](../src/configs/schema.ts#L174)). Combined with the `expire` setting (default `1000000` seconds), every cached query result expires that many seconds after it is written.
+The Redis flag passed alongside `SET` to attach a TTL in seconds; the library only supports `EX` (see the `z.enum(['EX'])` constraint in [src/configs/schema.ts](../src/configs/schema.ts)). Combined with the `expire` setting (default `1000000` seconds), every cached query result expires that many seconds after it is written.
 
 ### Key prefix
 
 A string prepended to every Redis key the library writes, configured by `redis.keyPrefix` (default `"mdc:"`, see [src/configs/schema.ts:162](../src/configs/schema.ts#L162)). It namespaces this library's cache entries so they coexist with other consumers of the same Redis instance and can be wiped wholesale on start via `clearOnStart`.
-
-## Logging (AMQP)
-
-### Exchange
-
-An AMQP routing component that receives published messages and forwards them to queues based on a routing key and exchange type. The library declares one exchange named `Logs` of type `topic` by default ([src/configs/schema.ts:264](../src/configs/schema.ts#L264)) and publishes every log record to it.
-
-### Queue
-
-A named AMQP buffer that holds messages until a consumer reads them. The logger declares a queue named `MYSQL_CLUSTER_LOGS` by default ([src/configs/schema.ts:278](../src/configs/schema.ts#L278)); downstream services subscribe to it to ship logs onward.
-
-### Binding
-
-The rule that connects a queue to an exchange via a routing-key pattern; without a binding, messages published to the exchange never reach the queue. The library binds its queue to its exchange using the pattern `mysql_logs` when `bindings.enabled` is true ([src/configs/schema.ts:286](../src/configs/schema.ts#L286)).
 
 ## Metrics (OpenTelemetry)
 

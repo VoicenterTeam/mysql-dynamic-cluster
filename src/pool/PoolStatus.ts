@@ -68,10 +68,11 @@ export class PoolStatus {
         this._validator = new Validator(this, settings.validators);
         this._loadFactor = new LoadFactor(settings.loadFactors);
 
-        this.timerCheckRange = settings.timerCheckRange;
+        // complete by now: Settings.mixSettings filled both halves from the defaults
+        this.timerCheckRange = settings.timerCheckRange as ITimerCheckRange;
         this.timerCheckMultiplier = settings.timerCheckMultiplier;
         // queryTimeout 0 means no timeout
-        this._checkTimeout = Math.min(settings.queryTimeout || Infinity, settings.timerCheckRange.end);
+        this._checkTimeout = Math.min(settings.queryTimeout || Infinity, this.timerCheckRange.end);
         this._timer = new Timer(this.checkStatus.bind(this));
         Logger.debug("Pool status configured");
     }

@@ -4,7 +4,7 @@
 `ClusterHashing` module, the `ServiceNames` cache, and the query routing
 logic. Every consumer call (`connect`, `disconnect`, `on`, `query`) flows
 through this class. It is constructed by `createPoolCluster` after the
-convict singleton has been loaded and validated; see
+settings have been validated and loaded into the `config` singleton; see
 [../architecture.md](../architecture.md) for the boot flow that precedes
 this subsystem.
 
@@ -13,12 +13,12 @@ Source: [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
 ## Construction
 
 The constructor takes no arguments. Every configuration value is read
-off the convict singleton via `config.get(...)`; user settings have
-already been merged into convict by `createPoolCluster` before
+off the `config` singleton via `config.current`; `createPoolCluster` has
+already validated the user settings and loaded them into it before
 `new GaleraCluster()` is called
 ([src/cluster/GaleraCluster.ts:46-72](../../src/cluster/GaleraCluster.ts#L46)).
 
-Fields populated from convict:
+Fields populated from `config.current`:
 
 - `_useClusterHashing` ← `useClusterHashing`
   ([src/cluster/GaleraCluster.ts:49](../../src/cluster/GaleraCluster.ts#L49)).
@@ -35,10 +35,10 @@ Fields populated from convict:
 Pool construction
 ([src/cluster/GaleraCluster.ts:53-66](../../src/cluster/GaleraCluster.ts#L53)):
 
-1. `_sortPoolIds(config.get('hosts'))` collects every manually-set
+1. `_sortPoolIds(config.current.hosts)` collects every manually-set
    numeric `id` from the host list and returns them sorted ascending
    ([src/cluster/GaleraCluster.ts:79-86](../../src/cluster/GaleraCluster.ts#L79)).
-2. The constructor iterates `config.get('hosts')`; for any host with no
+2. The constructor iterates `config.current.hosts`; for any host with no
    `id`, the next id is `0` when the sorted list is empty, otherwise
    `last + 1`, and the new id is pushed back into the list so subsequent
    gaps still increment from the highest assigned id.
@@ -48,8 +48,8 @@ Pool construction
    ([src/cluster/GaleraCluster.ts:61-65](../../src/cluster/GaleraCluster.ts#L61)).
 
 After the pool array is built, the constructor instantiates
-`ServiceNames(this, config.get('serviceMetrics'))` and
-`ClusterHashing(this, clusterName, config.get('clusterHashing'))`
+`ServiceNames(this, config.current.serviceMetrics)` and
+`ClusterHashing(this, clusterName, config.current.clusterHashing)`
 ([src/cluster/GaleraCluster.ts:68-69](../../src/cluster/GaleraCluster.ts#L68)).
 Note: `ClusterHashing` is constructed unconditionally — the
 `_useClusterHashing` flag only gates `connect()` calling `_enableHashing`.
@@ -119,15 +119,16 @@ Signature:
 `queryOptions` is rebuilt via spread so caller-supplied keys win
 ([src/cluster/GaleraCluster.ts:156-161](../../src/cluster/GaleraCluster.ts#L156)):
 
-- `redis` defaults to `_useRedis` (i.e. `config.get('redis.enabled')`).
+- `redis` defaults to `_useRedis` (i.e. `config.current.redis.enabled`).
 - `maxRetry` defaults to `_errorRetryCount`.
 - `redisRefreshCache` defaults to `false`.
 
 ### 2. Metrics
 
-Marks `cluster.queryPerMinute` and increments `cluster.allQueries`
-before any work
-([src/cluster/GaleraCluster.ts:167-168](../../src/cluster/GaleraCluster.ts#L167)).
+Starts a `QueryTimer` before any work. Every way out of `query` records
+one `mysql_dynamic_cluster.query.duration` sample through the local
+`record` helper ([src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts)).
+See [metrics.md](./metrics.md).
 
 ### 3. Service-id resolution
 
@@ -173,7 +174,7 @@ overruns the array; if `maxRetry` is missing or non-positive it falls
 back to `_errorRetryCount`.
 
 Service-id resolution and active-pool selection share a single
-`try`/`catch`: a thrown error is recorded as `errorQueries` and
+`try`/`catch`: a thrown error is recorded as a failed query and
 re-wrapped before being rethrown
 ([src/cluster/GaleraCluster.ts:182-185](../../src/cluster/GaleraCluster.ts#L182)).
 
@@ -215,7 +216,7 @@ Runs before any pool query when `queryOptions.redis && !queryOptions.redisRefres
 
 For `i` from `0` to `retryCount - 1`, calls
 `this._queryRequest(sql, activePools[i], queryOptions)`. First success
-increments `cluster.successfulQueries` and returns. Each failure pushes
+records the query with source `pool` and returns. Each failure pushes
 `{ error, pool }` into `errorList` and the loop continues until exhausted.
 
 ### 9. Aggregated failure / stale-while-down
@@ -227,9 +228,9 @@ When every pool has failed:
 - Build a multi-line error message of `Pool: <name>; Error: <message>`
   per entry in `errorList`.
 - If `redisData` is non-null (cache existed but was expired), log a
-  warning, increment `cluster.successfulQueries`, and **return the
+  warning, record the query with source `stale_cache`, and **return the
   stale payload** anyway.
-- Otherwise increment `cluster.errorQueries` and throw the aggregated
+- Otherwise record the query as failed and throw the aggregated
   message.
 
 ### 10. `_queryRequest`

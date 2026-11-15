@@ -2,8 +2,8 @@ import config from '../../src/configs';
 import { Settings } from '../../src/utils/Settings';
 import { IUserSettings } from '../../src/types/SettingsInterfaces';
 
-describe('idle connection defaults (convict schema)', () => {
-    const poolDefaults = config.get('defaultPoolSettings');
+describe('idle connection defaults (settings schema)', () => {
+    const poolDefaults = config.current.defaultPoolSettings;
 
     it('connectionLimit defaults to 10', () => {
         expect(poolDefaults.connectionLimit).toBe(10);

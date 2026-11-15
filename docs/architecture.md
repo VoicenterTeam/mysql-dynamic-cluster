@@ -3,7 +3,7 @@
 `@voicenter-team/mysql-dynamic-cluster` wraps `mysql2` to route queries
 across a Galera cluster with health-aware pool selection, service-sticky
 routing via cluster hashing, optional Redis caching, OpenTelemetry metrics, and
-a winston-based logger with an optional AMQP transport. The library
+a console logger that the app can replace with its own. The library
 exposes a single factory, `createPoolCluster`, that assembles a process-
 wide `GaleraCluster` instance backed by a shared configuration, metric
 registry, logger, and Redis client.
@@ -13,39 +13,44 @@ score) are defined in [glossary.md](./glossary.md).
 
 ## Boot flow
 
-The factory in [index.ts:11](../index.ts#L11) wires the singletons before
+The factory in [index.ts](../index.ts) wires the singletons before
 constructing `GaleraCluster`:
 
 1. `createPoolCluster(userSettings)` is called by the consumer —
-   [index.ts:11](../index.ts#L11).
-2. `Settings.mixSettings(userSettings)` deep-merges the defaults pulled
-   from the convict singleton with the user input and then expands every
-   host using `defaultPoolSettings` —
-   [src/utils/Settings.ts:17](../src/utils/Settings.ts#L17).
-3. `redisInstant` is stripped off the merged settings —
-   [index.ts:13-14](../index.ts#L13). It is an injection seam for an
-   externally constructed `ioredis` client, not a value that belongs in
-   the convict schema.
-4. `config.load(userSettings).validate` writes the merged user input
-   back into the convict singleton and validates the schema —
-   [index.ts:15](../index.ts#L15). The convict instance itself is
-   created and validated once at module load in
-   [src/configs/index.ts:9](../src/configs/index.ts#L9) and exported as
-   a singleton via [src/configs/index.ts:27](../src/configs/index.ts#L27).
-5. `init(redisInstant)` runs the per-process bootstrap —
-   [index.ts:20-28](../index.ts#L20):
-   - `Logger.init()` ([index.ts:21](../index.ts#L21)) builds the winston
-     transports, including the optional AMQP transport.
+   [index.ts](../index.ts).
+2. `redisInstant` and `logger` are stripped off the user settings
+   ([index.ts](../index.ts)). They are live objects of the app (an
+   externally constructed `ioredis` client and a logger), not values
+   that belong in the settings schema.
+3. `Settings.mixSettings(settings)` validates the rest with
+   `parseSettings`, the zod schema in
+   [src/configs/schema.ts](../src/configs/schema.ts), which also fills in
+   the defaults. Every object in the schema is strict. On an unknown key
+   or a wrong type it throws one `Error`
+   (`Invalid mysql-dynamic-cluster settings: ...`) that lists every
+   problem by its path. It then deep-merges every host with
+   `defaultPoolSettings`
+   ([src/utils/Settings.ts:16](../src/utils/Settings.ts#L16)).
+4. `config.load(...)` stores the validated settings in the `config`
+   singleton ([index.ts](../index.ts)). The rest of the library
+   reads them from `config.current`. The singleton is exported at
+   [src/configs/index.ts](../src/configs/index.ts). The library
+   reads no environment variable, no `.env` file and no config file.
+5. `init(redisInstant, logger)` runs the per-process bootstrap —
+   [index.ts](../index.ts):
+   - `Logger.init(level, logger)` ([index.ts](../index.ts)) sets
+     the log level and the logger: the app-supplied `logger` if given,
+     otherwise the console. See [subsystems/logger.md](subsystems/logger.md).
    - `Metrics.init(clusterName)`
-     ([index.ts:22](../index.ts#L22)) stores the cluster name that every
+     ([index.ts](../index.ts)) stores the cluster name that every
      metric carries as an attribute. Instruments are created on first use.
    - `Redis.init(...)` is called only when `redisInstant` is an
      `ioredis` `Cluster` or `Redis` instance
-     ([index.ts:24-26](../index.ts#L24)).
-6. `new GaleraCluster()` is returned — [index.ts:17](../index.ts#L17).
+     ([index.ts](../index.ts)).
+6. `new GaleraCluster()` is returned — [index.ts](../index.ts).
    The constructor reads `useClusterHashing`, `clusterName`,
-   `errorRetryCount`, `redis.enabled`, and the host list from the
-   convict singleton, then constructs one `Pool` per host
+   `errorRetryCount`, `redis.enabled`, and the host list from
+   `config.current`, then constructs one `Pool` per host
    ([src/cluster/GaleraCluster.ts:46-72](../src/cluster/GaleraCluster.ts#L46)).
    Hosts without a numeric `id` get one auto-assigned from the sorted
    set of existing ids
@@ -108,19 +113,12 @@ Each call walks the following steps:
    read earlier (even if expired), it is returned with a warning;
    otherwise the accumulated per-pool error messages are thrown —
    [src/cluster/GaleraCluster.ts:241-248](../src/cluster/GaleraCluster.ts#L241).
-7. **Metrics on every branch** — counters and meters are nudged at each
-   decision point: `queryPerMinute` and `allQueries` on entry
-   ([src/cluster/GaleraCluster.ts:167-168](../src/cluster/GaleraCluster.ts#L167)),
-   `errorQueries` on setup or final failure
-   ([src/cluster/GaleraCluster.ts:183](../src/cluster/GaleraCluster.ts#L183),
-   [src/cluster/GaleraCluster.ts:247](../src/cluster/GaleraCluster.ts#L247)),
-   `redis.uses` / `redis.expired` / `redis.latency` around the cache
-   read
-   ([src/cluster/GaleraCluster.ts:191-209](../src/cluster/GaleraCluster.ts#L191)),
-   and `successfulQueries` on each return path
-   ([src/cluster/GaleraCluster.ts:204](../src/cluster/GaleraCluster.ts#L204),
-   [src/cluster/GaleraCluster.ts:221](../src/cluster/GaleraCluster.ts#L221),
-   [src/cluster/GaleraCluster.ts:243](../src/cluster/GaleraCluster.ts#L243)).
+7. **Metrics on every exit.** The call is timed from entry, and each
+   way out records one `mysql_dynamic_cluster.query.duration` sample with
+   its result source (`pool`, `cache`, `stale_cache`) or an `error.type`.
+   The cache read records `mysql_dynamic_cluster.cache.lookup.duration`,
+   and every pool attempt records `mysql_dynamic_cluster.operation.duration`. See
+   [subsystems/metrics.md](subsystems/metrics.md).
 
 ## Disconnect flow
 
@@ -145,10 +143,10 @@ is exactly one instance per Node process, regardless of how many times
 
 | Singleton | Source | Consequence if duplicated |
 | --- | --- | --- |
-| `Logger` | [src/utils/Logger.ts:85](../src/utils/Logger.ts#L85) | A second logger would overwrite winston transports and AMQP credentials configured by the first cluster. |
+| `Logger` | [src/utils/Logger.ts](../src/utils/Logger.ts) | A second `Logger.init()` would overwrite the log level and the app-supplied logger set by the first cluster. |
 | `Redis` | [src/Redis/Redis.ts:93](../src/Redis/Redis.ts#L93) | A second Redis singleton would overwrite the `clusterName` prefix and the injected `ioredis` client, mixing cache keys between clusters. |
 | `Metrics` | [src/metrics/Metrics.ts](../src/metrics/Metrics.ts) | The cluster name attribute is stored once; a second `init()` would relabel the metrics of the first cluster. |
-| `config` | [src/configs/index.ts:27](../src/configs/index.ts#L27) | Convict is loaded once and validated at import; calling `config.load(...)` again overwrites the first cluster's hosts, validators, and Redis settings. |
+| `config` | [src/configs/index.ts](../src/configs/index.ts) | `config.current` holds one set of settings; calling `config.load(...)` again overwrites the first cluster's hosts, validators, and Redis settings. |
 | `Events` | [src/utils/Events.ts:4](../src/utils/Events.ts#L4) | The single `EventEmitter` would fan out `connected` / `disconnected` / `hashing_created` events from both clusters into every subscriber. |
 
 **Net effect:** the library supports effectively one `GaleraCluster`

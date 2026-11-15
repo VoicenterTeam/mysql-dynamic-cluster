@@ -47,8 +47,8 @@ Private members worth knowing about:
   which time the clamp on line 124 has already brought it into range.
 - `timerCheckRange: ITimerCheckRange` —
   [:45](../../src/pool/PoolStatus.ts#L45). Defaults
-  `{start: 5000, end: 15000}` ms from the convict schema
-  ([src/configs/schema.ts:59-66](../../src/configs/schema.ts#L59)).
+  `{start: 5000, end: 15000}` ms from the settings schema
+  ([src/configs/schema.ts](../../src/configs/schema.ts)).
 - `timerCheckMultiplier: number` —
   [:47](../../src/pool/PoolStatus.ts#L47). Default `1.3` from the
   schema

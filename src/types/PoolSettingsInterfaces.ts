@@ -14,7 +14,8 @@ interface IPoolSettings {
     queryTimeout?: number,
     validators?: IValidatorParams[],
     loadFactors?: ILoadFactorParams[],
-    timerCheckRange?: ITimerCheckRange, // Time in ms
+    // Time in ms. A half left out comes from the defaults
+    timerCheckRange?: Partial<ITimerCheckRange>,
     timerCheckMultiplier?: number,
     slowQueryTime?: number,
     redisFactor?: number,

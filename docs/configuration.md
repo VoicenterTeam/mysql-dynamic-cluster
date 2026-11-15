@@ -1,40 +1,48 @@
 # Configuration
 
-`@voicenter-team/mysql-dynamic-cluster` builds its runtime configuration from a [convict](https://www.npmjs.com/package/convict) schema declared in [src/configs/schema.ts](../src/configs/schema.ts), with environment-variable overlay (via `dotenv`), optional JSON file overlays, and finally a deepmerge against the `userSettings` object you pass to `createPoolCluster`. This page documents every key in the schema, the merge precedence, the `redisInstant` seam, and validation behavior.
+`@voicenter-team/mysql-dynamic-cluster` takes its settings from one place: the object you pass to `createPoolCluster`. A [zod](https://zod.dev/) schema in [src/configs/schema.ts](../src/configs/schema.ts) validates that object and fills in the defaults. The library reads no environment variable, no `.env` file and no config file.
+
+Before 4.0.0 the schema was convict, with an environment overlay. See [Migrating from 3.x](#migrating-from-3x).
 
 ## Top-level keys
 
-These keys live at the root of the config object. See [schema.ts:91-153](../src/configs/schema.ts#L91).
+| key | type | default |
+|---|---|---|
+| `clusterName` | `string` | `'demo'` |
+| `hosts` | array of [hosts](#hosts) | `[]` |
+| `defaultPoolSettings` | object | see [below](#defaultpoolsettings) |
+| `errorRetryCount` | `number` | `2` |
+| `useClusterHashing` | `boolean` | `true` |
+| `clusterHashing` | object | see [below](#clusterhashing) |
+| `serviceMetrics` | object | see [below](#servicemetrics) |
+| `redis` | object | see [below](#redis) |
+| `logs` | object | see [below](#logs) |
+| `redisInstant` | `ioredis` `Redis` or `Cluster` instance | none |
+| `logger` | object with `debug`, `info`, `warn`, `error` | console logger |
 
-| key | type | default | env var |
-|---|---|---|---|
-| `showMetricKeys` | `boolean` | `false` | `MYSQL_SHOW_METRIC_KEYS` (deprecated and ignored, was a pm2 display option) |
-| `redisInstant` | `any` (`*`) | `false` | `MYSQL_REDIS_INSTANT` |
-| `hosts` | `array` | `[]` | `MYSQL_HOSTS` |
-| `useClusterHashing` | `boolean` | `true` | `MYSQL_USE_CLUSTER_HASHING` |
-| `clusterName` | `string` | `'demo'` | `MYSQL_CLUSTER_NAME` |
-| `errorRetryCount` | `number` | `2` | `MYSQL_RETRY_COUNT` |
-
-`hosts` is an array of per-host pool overrides; each entry is deepmerged onto `defaultPoolSettings` at load time (see step 5 of the merge order).
+`redisInstant` and `logger` are live objects, not settings. `createPoolCluster` takes them off the object before validation, see [Live objects](#live-objects-redisinstant-and-logger).
 
 ## `defaultPoolSettings`
 
-Base configuration applied to every host in `hosts`. See [schema.ts:11-90](../src/configs/schema.ts#L11).
+Base configuration applied to every host in `hosts`.
 
-| key | type | default | env var |
-|---|---|---|---|
-| `user` | `string` | `''` | `MYSQL_DEFAULT_USER` |
-| `password` | `string` | `''` | `MYSQL_DEFAULT_PASSWORD` |
-| `database` | `string` | `''` | `MYSQL_DEFAULT_DATABASE` |
-| `port` | `number` | `3306` | `MYSQL_DEFAULT_PORT` |
-| `connectionLimit` | `number` | `100` | `MYSQL_DEFAULT_CONNECTION_LIMIT` |
-| `validators` | `array` | see below | _(none)_ |
-| `loadFactors` | `array` | see below | _(none)_ |
-| `timerCheckRange` | `object` | `{ start: 5000, end: 15000 }` | _(none)_ |
-| `timerCheckMultiplier` | `number` | `1.3` | _(none)_ |
-| `queryTimeout` | `number` | `120000` (`2 * 60 * 1000`) | `MYSQL_DEFAULT_QUERY_TIMEOUT` |
-| `slowQueryTime` | `number` | `1` | `MYSQL_DEFAULT_QUERY_SLOW` |
-| `redisFactor` | `number` | `1` | `MYSQL_DEFAULT_REDIS_FACTOR` |
+| key | type | default |
+|---|---|---|
+| `user` | `string` | `''` |
+| `password` | `string` | `''` |
+| `database` | `string` | `''` |
+| `port` | `number` | `3306` |
+| `connectionLimit` | `number` | `10` |
+| `minConnections` | `number` | `1` |
+| `idleTimeout` | `number` (ms) | `30000` |
+| `idleCheckInterval` | `number` (ms) | `10000` |
+| `validators` | array | see below |
+| `loadFactors` | array | see below |
+| `timerCheckRange` | `{ start, end }` (ms), either half may be left out | `{ start: 5000, end: 15000 }` |
+| `timerCheckMultiplier` | `number` | `1.3` |
+| `queryTimeout` | `number` (ms) | `120000` |
+| `slowQueryTime` | `number` (s) | `1` |
+| `redisFactor` | `number` | `1` |
 
 Default `validators`:
 
@@ -46,6 +54,8 @@ Default `validators`:
 ]
 ```
 
+A validator is `{ key: string, operator: '>' | '<' | '=' | 'Like', value: string | number }`.
+
 Default `loadFactors`:
 
 ```js
@@ -55,148 +65,132 @@ Default `loadFactors`:
 ]
 ```
 
+A load factor is `{ key: string, multiplier: number }`.
+
+## `hosts`
+
+One entry per Galera node. `host` is required. Every key of `defaultPoolSettings` may be repeated here to override it for that node.
+
+| key | type | notes |
+|---|---|---|
+| `host` | `string` | required, not empty |
+| `id` | `number` | assigned by the cluster when left out or `0` |
+| `name` | `string` | `host:port` when left out |
+| `redisExpire` | `number` (s) | cache TTL for queries served by this node |
+| any `defaultPoolSettings` key | as above | overrides the default for this node |
+
 ## `serviceMetrics`
 
-Identifies the table that maps a service name to its id. The id drives cluster hashing; the name is a metric attribute. See [schema.ts:97-110](../src/configs/schema.ts#L97).
+Identifies the table that maps a service name to its id. The id drives cluster hashing; the name is a metric attribute.
 
-| key | type | default | env var |
-|---|---|---|---|
-| `database` | `string` | `'swagger_realtime'` | `MYSQL_SERVICE_METRICS_DATABASE` |
-| `table` | `string` | `'Service'` | `MYSQL_SERVICE_METRICS_TABLE` |
+| key | type | default |
+|---|---|---|
+| `database` | `string` | `'swagger_realtime'` |
+| `table` | `string` | `'Service'` |
 
 ## `clusterHashing`
 
-Cluster-hashing watchdog settings. See [schema.ts:111-124](../src/configs/schema.ts#L111).
+Cluster-hashing watchdog settings.
 
-| key | type | default | env var |
-|---|---|---|---|
-| `nextCheckTime` | `number` | `5000` | `MYSQL_CLUSTER_CHECK_TIME` |
-| `dbName` | `string` | `'mysql_dynamic_cluster'` | `MYSQL_CLUSTER_DB_NAME` |
+| key | type | default |
+|---|---|---|
+| `nextCheckTime` | `number` (ms) | `5000` |
+| `dbName` | `string` | `'mysql_dynamic_cluster'` |
 
 ## `redis`
 
-Redis cache configuration. See [schema.ts:155-198](../src/configs/schema.ts#L155).
+Redis cache configuration. The cache also needs a live client in `redisInstant`.
 
-| key | type | default | env var |
-|---|---|---|---|
-| `enabled` | `boolean` | `false` | `MYSQL_REDIS_ENABLE` |
-| `keyPrefix` | `string` | `'mdc:'` | `MYSQL_REDIS_PREFIX` |
-| `expire` | `number` | `1000000` | `MYSQL_REDIS_EXPIRE` |
-| `expiryMode` | enum `'EX'` | `'EX'` | `MYSQL_REDIS_EXPIRE_MODE` |
-| `algorithm` | enum `'md5' \| 'sha256'` | `'md5'` | `MYSQL_REDIS_ALGORITHM` |
-| `encoding` | enum `'base64' \| 'hex'` | `'base64'` | `MYSQL_REDIS_ENCODING` |
-| `clearOnStart` | `boolean` | `false` | `MYSQL_REDIS_CLEAR_ON_START` |
+| key | type | default |
+|---|---|---|
+| `enabled` | `boolean` | `false` |
+| `keyPrefix` | `string` | `'mdc:'` |
+| `expire` | `number` (s) | `1000000` |
+| `expiryMode` | `'EX'` | `'EX'` |
+| `algorithm` | `'md5'` or `'sha256'` | `'md5'` |
+| `encoding` | `'base64'` or `'hex'` | `'base64'` |
+| `clearOnStart` | `boolean` | `false` |
 
 ## `logs`
 
-Logger output options. See [schema.ts:199-212](../src/configs/schema.ts#L199).
+| key | type | default |
+|---|---|---|
+| `level` | `'debug'`, `'info'`, `'warn'`, `'error'` or `'silent'` | `'info'` |
 
-| key | type | default | env var |
-|---|---|---|---|
-| `level` | enum (`LOGLEVEL`) | `LOGLEVEL.INFO` | `LOGGER_LOG_LEVEL` |
-| `output` | `string` | `'console'` | `LOGGER_LOG_OUTPUT` |
+The values are lowercase. `LOGLEVEL` is exported from the package for them. Where the log lines go is decided by the `logger` object, see [subsystems/logger.md](subsystems/logger.md).
 
-`output` accepts a comma-separated list. Only `console` and `amqp` are actually handled by [src/utils/Logger.ts](../src/utils/Logger.ts) (e.g. `'console,amqp'`); other tokens are silently ignored.
+## How settings are built
 
-## `amqp_logs`
+`createPoolCluster(userSettings)` does this, in order ([index.ts](../index.ts), [src/utils/Settings.ts](../src/utils/Settings.ts)):
 
-AMQP transport for log shipping. See [schema.ts:213-306](../src/configs/schema.ts#L213).
+1. **Take the live objects off.** `redisInstant` and `logger` are removed from a copy of the object. The caller's object is not changed.
+2. **Validate and fill defaults.** `parseSettings` runs the zod schema. Keys you left out get their default, also inside nested objects: `redis: { enabled: true }` keeps every other `redis` default. An array you pass replaces the default array.
+3. **Mix every host with the default pool settings.** Each host becomes `deepmerge(defaultPoolSettings, host)`. A host that omits `port`, or sets it to `undefined`, inherits it. Arrays are concatenated in this step: `validators` on a host are added to the default ones, not swapped for them.
+4. **Store.** The result is loaded into the `config` singleton ([src/configs/index.ts](../src/configs/index.ts)). The rest of the library reads `config.current`, a plain typed object.
 
-Top-level fields:
-
-| key | type | default | env var |
-|---|---|---|---|
-| `topic` | `string` | `'MYSQL_CLUSTER_LOGS'` | `LOG_AMQP_TOPIC` |
-| `prefetch` | `number` | `0` | `LOG_AMQP_prefetch` |
-
-### `amqp_logs.connection_master`
-
-See [schema.ts:220-263](../src/configs/schema.ts#L220).
-
-| key | type | default | env var |
-|---|---|---|---|
-| `host` | `string` | `''` | `LOG_AMQP_HOST_MASTER` |
-| `port` | `number` | `5672` | `LOG_AMQP_PORT_MASTER` |
-| `username` | `string` | `''` | `LOG_AMQP_USERNAME_MASTER` |
-| `password` | `string` | `''` | `LOG_AMQP_PASSWORD_MASTER` |
-| `vhost` | `string` | `'/'` | `LOG_AMQP_VHOST_MASTER` |
-| `ssl` | `boolean` | `false` | `LOG_AMQP_SSL_MASTER` |
-| `heartbeat` | `number` | `5` | `LOG_AMQP_HEARTBEAT_MASTER` |
-
-### `amqp_logs.exchage`
-
-Note: the schema key is spelled `exchage` (typo preserved as-is for compatibility). See [schema.ts:264-277](../src/configs/schema.ts#L264).
-
-| key | type | default | env var |
-|---|---|---|---|
-| `name` | `string` | `'Logs'` | `LOG_AMQP_EXCHANGE_NAME` |
-| `type` | enum (`ExchangeType`) | `ExchangeType.TOPIC` | `LOG_AMQP_EXCHANGE_TYPE` |
-
-### `amqp_logs.queue`
-
-See [schema.ts:278-285](../src/configs/schema.ts#L278).
-
-| key | type | default | env var |
-|---|---|---|---|
-| `name` | `string` | `'MYSQL_CLUSTER_LOGS'` | `LOG_AMQP_QUEUE_NAME` |
-
-### `amqp_logs.bindings`
-
-See [schema.ts:286-299](../src/configs/schema.ts#L286).
-
-| key | type | default | env var |
-|---|---|---|---|
-| `enabled` | `boolean` | `true` | `LOG_AMQP_BINDINGS_ENABLED` |
-| `pattern` | `string` | `'mysql_logs'` | `LOG_AMQP_BINDINGS_PATTERN` |
-
-## Settings merge order
-
-The final config seen at runtime is the result of seven steps, in order:
-
-1. **Schema defaults.** `convict(schema)` initialises every key with the default from [schema.ts](../src/configs/schema.ts) ([configs/index.ts:9](../src/configs/index.ts#L9)).
-2. **Environment variables.** convict reads the `env:` field on each key and overlays any present `process.env.*` value over the default. `dotenv.config()` runs first so `.env` is picked up automatically.
-3. **JSON config files.** If `MYSQL_CONFIG_FILES` is set (comma-separated paths), each file is loaded with `config.loadFile(...)` ([configs/index.ts:14-21](../src/configs/index.ts#L14)). These overlay env vars.
-4. **`Settings.mixSettings(userSettings)`.** Deepmerges the `userSettings` argument over `config.get()` using `arrayMerge: overwriteMerge` (incoming arrays replace existing ones) and `isMergeableObject: isPlainObject` ([Settings.ts:17-23](../src/utils/Settings.ts#L17)).
-5. **Per-host pool rebuild.** `userSettings.hosts` is rewritten: each host = `deepmerge(userSettings.defaultPoolSettings, host)` ([Settings.ts:25-27](../src/utils/Settings.ts#L25)). So a host that omits e.g. `port` inherits the default-pool value.
-6. **Write-back into convict.** `config.load(userSettings).validate` is called ([index.ts:15](../index.ts#L15)). Note that `.validate` here is a **property reference, not a call** — no validation runs at this point. The merged object is still loaded back into the singleton.
-7. **Runtime reads.** Consumers read via `config.get('foo.bar')` against the convict singleton — e.g. [GaleraCluster.ts:49-53](../src/cluster/GaleraCluster.ts#L49).
-
-## The `redisInstant` seam
-
-`redisInstant` is declared in the schema with `format: '*'` and `default: false` ([schema.ts:125-130](../src/configs/schema.ts#L125)), but it is not stored in convict at the end. In [index.ts:13-14](../index.ts#L13) `createPoolCluster` extracts it from `userSettings` and `delete`s it before the write-back:
-
-```ts
-let redisInstant = userSettings.redisInstant;
-delete userSettings.redisInstant;
-config.load(userSettings).validate;
-init(redisInstant);
-```
-
-`init(redisInstant)` passes it to `Redis.init(...)` **only** when `redisInstant instanceof Cluster` or `redisInstant?.constructor?.name === 'Redis'` ([index.ts:24-26](../index.ts#L24)). Any other value (the default `false`, plain config booleans, etc.) is silently ignored. In practice this means: pass a live `ioredis` `Redis` or `Cluster` instance via `userSettings.redisInstant` if you want Redis caching to be initialised.
-
-## Environment-variable prefix conventions
-
-Three prefixes are consumed by the schema:
-
-- `MYSQL_*` — every default-pool, top-level, service-metrics, cluster-hashing, hosts, and redis key.
-- `LOGGER_*` — `logs.level` and `logs.output`.
-- `LOG_AMQP_*` — every `amqp_logs.*` key. Note the lowercase `prefetch` env name: `LOG_AMQP_prefetch` ([schema.ts:304](../src/configs/schema.ts#L304)).
-
-The `MYSQL_CONFIG_FILES` env var is special — it is read in [configs/index.ts:14](../src/configs/index.ts#L14) and is not a schema key.
-
-`.env.example` ([.env.example](../.env.example)) lists `DB_HOST1`, `DB_HOST2`, `DB_HOST3`, `DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE`, `REDIS_HOST`, `REDIS_PORT`. **These are not consumed by the library.** They are demo-only env vars read by `demo/index.js` to construct a `userSettings` object before calling `createPoolCluster`.
+Before `createPoolCluster` runs, `config.current` holds the defaults. A second `createPoolCluster` call in one process replaces the settings of the first and logs a warning to the first cluster's logger.
 
 ## Validation
 
-Convict validation runs exactly once, at module load, in [configs/index.ts:23](../src/configs/index.ts#L23):
+Validation runs on every `createPoolCluster` call and is strict:
 
-```ts
-config.validate({ allowed: 'strict' });
+- Anything but a plain settings object is an error, including an array and a call with no argument.
+- A key the schema does not know is an error, at any depth. A typo such as `defualtPoolSettings` no longer passes silently.
+- A value of the wrong type is an error. `port: '3306'` is rejected, strings are not converted to numbers. That includes values read from `process.env`, which are always strings: wrap them in `Number(...)`. `null`, `NaN` and `Infinity` are rejected for a number too.
+- An enum value outside its list is an error, such as `logs.level: 'DEBUG'` or `redis.algorithm: 'sha1'`.
+
+All problems are reported in one `Error`, each with its path:
+
+```
+Invalid mysql-dynamic-cluster settings:
+✖ Unrecognized key: "bogusKey"
+✖ Invalid input: expected number, received string
+  → at errorRetryCount
 ```
 
-With `allowed: 'strict'`, convict throws on any property in the loaded config that is not declared in the schema. Two implications:
+The message names keys and types. It does not print the values you passed, so a password does not end up in a log.
 
-- Adding a new option requires extending [schema.ts](../src/configs/schema.ts) — you cannot just pass an extra key through `userSettings` and read it back via `config.get`.
-- The merge step in `createPoolCluster` ([index.ts:15](../index.ts#L15)) does **not** re-validate (the missing call parens on `.validate`). Unknown keys introduced via `userSettings` will be deepmerged into the singleton but never policed; they may or may not be silently ignored downstream.
+Adding an option means adding it to the schema in [src/configs/schema.ts](../src/configs/schema.ts) and to the matching interface in [src/types/](../src/types/). The hand-written `I*` interfaces are the public types. They are kept apart from the schema on purpose, so the shipped declarations never import zod and still compile for apps on an older TypeScript. `parseSettings` assigns the schema output to `IParsedSettings`. That fails the build when the interface has a required key the schema lacks, or types a key differently. It does not notice an optional key the schema lacks, nor a key that only the schema has, so add new keys to both.
 
-If you need user-settings validation at runtime, replace `config.load(userSettings).validate` with `config.load(userSettings).validate({ allowed: 'strict' })`.
+## Live objects: `redisInstant` and `logger`
+
+- `redisInstant` is passed to `Redis.init(...)` only when it is an `ioredis` `Cluster`, or an object whose constructor is named `Redis`. Anything else is ignored. Pass a live client here if you want the Redis cache.
+- `logger` is passed to `Logger.init(...)`. See [subsystems/logger.md](subsystems/logger.md).
+
+Neither is validated by the schema.
+
+## Environment variables
+
+The library reads none. `.env.example` lists `DB_HOST1`, `DB_HOST2`, `DB_HOST3`, `DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE`, `REDIS_HOST` and `REDIS_PORT`. Those are read by `demo/index.js` and the integration tests, which call `dotenv` themselves to build a settings object.
+
+To configure from the environment, read the variables in your app and pass the values:
+
+```js
+const cluster = galeraCluster.createPoolCluster({
+    clusterName: process.env.MYSQL_CLUSTER_NAME,
+    hosts: process.env.MYSQL_HOSTS.split(',').map(host => ({ host })),
+    defaultPoolSettings: {
+        user: process.env.MYSQL_USER,
+        password: process.env.MYSQL_PASSWORD,
+        database: process.env.MYSQL_DATABASE,
+        port: Number(process.env.MYSQL_PORT || 3306)
+    }
+});
+```
+
+## Migrating from 3.x
+
+| 3.x | 4.0.0 |
+|---|---|
+| `.env` in the app's working directory was loaded by the library | Not loaded. Call `dotenv` in the app if you want it |
+| `MYSQL_*`, `LOGGER_*` and `LOG_AMQP_*` variables changed settings | Ignored. Pass the values in the settings object |
+| `MYSQL_CONFIG_FILES` loaded JSON overrides | Removed. Load the file in the app and pass its content |
+| Unknown keys and wrong types passed silently | `createPoolCluster` throws and names each one |
+| `showMetricKeys` | Removed, was a pm2 display option |
+| `logs.output` and the `amqp_logs` block | Removed, pass a `logger` |
+| `redisSettings` in the TypeScript interface | The key is `redis`. It always was at runtime: `redisSettings` was ignored |
+| `logs.level` accepted any string | Must be one of the lowercase level names |
+| `port: process.env.DB_PORT` and other numeric strings worked | Rejected. Convert first: `Number(process.env.DB_PORT)` |
+| A host with a missing or empty `host` was logged and skipped | `createPoolCluster` throws |
+
+Check your settings object once before upgrading: a key that was ignored in 3.x stops the app at startup in 4.0.0.

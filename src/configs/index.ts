@@ -1,27 +1,34 @@
-/* eslint-disable @typescript-eslint/unbound-method */
-/* eslint-disable no-console */
-import convict from 'convict';
-import dotenv from 'dotenv';
-import { schema } from './schema';
+import { parseSettings } from './schema';
+import Logger from '../utils/Logger';
+import { IParsedSettings } from '../types/SettingsInterfaces';
 
-dotenv.config();
+/**
+ * Settings of the cluster in this process. They come only from what the app passes to
+ * createPoolCluster: the library reads no environment variable, no .env file and no config file
+ */
+class Config {
+    private _current: IParsedSettings;
+    private _loaded: boolean = false;
 
-const config = convict(schema);
+    /**
+     * Validated settings. The defaults until createPoolCluster loads the settings of the app
+     */
+    public get current(): IParsedSettings {
+        if (!this._current) this._current = parseSettings({});
+        return this._current;
+    }
 
-
-// Overwrite default configuration with settings which got defined in
-// optional configuration files
-if (process.env.MYSQL_CONFIG_FILES !== undefined) {
-	const configFiles = process.env.MYSQL_CONFIG_FILES.split(',');
-	if (process.env.NODE_ENV !== 'test') {
-		console.log(`\nLoading configuration overwrites from:\n - ${configFiles.join('\n - ')}\n`);
-	}
-
-	config.loadFile(configFiles);
+    /**
+     * @param settings validated settings
+     */
+    public load(settings: IParsedSettings): void {
+        if (this._loaded) {
+            Logger.warn("createPoolCluster was called again: " +
+                "the settings of the earlier cluster are replaced");
+        }
+        this._loaded = true;
+        this._current = settings;
+    }
 }
 
-config.validate({
-	allowed: 'strict',
-});
-
-export = config;
+export default new Config();

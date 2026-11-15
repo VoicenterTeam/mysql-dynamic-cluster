@@ -242,6 +242,11 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 
 ### 9. `config.load(userSettings).validate` lacks call parens
 
+- **Status:** **fixed in 4.0.0.** convict is gone. `Settings.mixSettings` now
+  validates the user settings with the zod schema (`parseSettings` in
+  [src/configs/schema.ts](../src/configs/schema.ts)) before `config.load`
+  stores them. An unknown key or a wrong type throws one error at boot that
+  lists every problem by its path.
 - **Severity:** **low**
 - **Location:** [index.ts:15](../index.ts#L15)
 - **Description:** The statement reads
@@ -315,9 +320,9 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 - **Description:** The repository README documents the older `dev` branch
   surface: top-level `globalPoolSettings`, top-level `logLevel`, the old AMQP
   configuration shape, and a flat `redisSettings`. V3.0 expects these under
-  `defaultPoolSettings`, the AMQP block to live under
-  `amqpLogger.amqpConnection`, and `redis` (not `redisSettings`) at the top
-  level. Anyone copy-pasting a README example into V3.0 will hit a convict
+  `defaultPoolSettings`, has no AMQP block since 4.0.0 (the app passes its
+  own `logger` instead), and expects `redis` (not `redisSettings`) at the top
+  level. Anyone copy-pasting a README example into V3.0 will hit a
   strict-validation error at boot. See [configuration.md](configuration.md)
   for the V3.0 schema.
 - **Suggested fix:** leave the README untouched for the moment — a future
@@ -328,8 +333,10 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 
 - **Severity:** **medium**
 - **Location:** `tests/` — see [testing.md](testing.md) for the per-file breakdown.
-- **Description:** The suite was written against the dev-branch API and never
-  ported. Failures include a deleted `AmqpLoggerConfig` import in
+- **Description:** Four suites were written against the dev-branch API and
+  never ported (`tests/cluster/hashing.test.ts`, `tests/cluster/query.test.ts`,
+  `tests/pool/query.test.ts`, `tests/utils/settings.test.ts`). The other 13
+  suites pass. Failures include a deleted `AmqpLoggerConfig` import in
   [tests/utils/settings.test.ts:7](../tests/utils/settings.test.ts#L7), wrong
   constructor arity in
   [tests/pool/query.test.ts:11](../tests/pool/query.test.ts#L11) and

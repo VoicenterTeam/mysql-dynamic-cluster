@@ -5,7 +5,7 @@
 ## Repo layout
 
 - `src/` — library source (`cluster/`, `pool/`, `Redis/`, `utils/`, `configs/`, `types/`, `metrics/`).
-- `tests/` — Jest suites (stale on V3.0; see [docs/testing.md](docs/testing.md)).
+- `tests/` — Jest suites (four stale suites fail to compile; see [docs/testing.md](docs/testing.md)).
 - `assets/sql/` — hashing-database DDL + stored routines bundled at publish time.
 - `demo/` — runnable example used by `npm start`.
 - `docs/` — V3.0 documentation set (this file's routing targets).
@@ -13,15 +13,15 @@
 
 ## Working on the V3.0 branch
 
-You are on the **V3.0** line. The `dev` branch ships a different (older) public API: top-level `globalPoolSettings`, flat `redisSettings`, different AMQP shape. Do **not** copy patterns across branches without checking [docs/branch-divergence.md](docs/branch-divergence.md) first — examples that compile on `dev` often hit convict strict-validation errors on V3.0.
+You are on the **V3.0** line. The `dev` branch ships a different (older) public API: top-level `globalPoolSettings`, flat `redisSettings`, an AMQP logger. Do **not** copy patterns across branches without checking [docs/branch-divergence.md](docs/branch-divergence.md) first — examples that compile on `dev` often hit strict-validation errors on V3.0.
 
 ## Commands
 
 From `package.json` (no inventing scripts):
 
 - `npm install` — install dependencies.
-- `npm run build` — `tsc --build` (target es6, commonjs, emits to `dist/`).
-- `npm test` — run Jest. Many suites currently fail to compile on V3.0; see [docs/testing.md](docs/testing.md).
+- `npm run build` — `tsc -p tsconfig.build.json` (target es6, commonjs, emits to `dist/`).
+- `npm test` — run Jest. Four stale suites fail to compile on V3.0, every other suite passes; see [docs/testing.md](docs/testing.md).
 - `npm run coverage` — `jest --coverage`.
 - `npm start` — `npm run build && node demo/index.js`.
 
@@ -34,9 +34,9 @@ There is **no** `lint`, `typecheck`, or `test:load` script. `tslint` is in devDe
 | `GaleraCluster.query` / routing | [docs/subsystems/cluster.md](docs/subsystems/cluster.md) |
 | Pool health checks / scoring | [docs/subsystems/health-and-scoring.md](docs/subsystems/health-and-scoring.md) |
 | Redis caching | [docs/subsystems/redis-cache.md](docs/subsystems/redis-cache.md) |
-| Config / env vars | [docs/configuration.md](docs/configuration.md) |
+| Config / settings | [docs/configuration.md](docs/configuration.md) |
 | Hashing helper DB | [docs/sql-assets.md](docs/sql-assets.md) + [docs/subsystems/cluster-hashing.md](docs/subsystems/cluster-hashing.md) |
-| Tests | [docs/testing.md](docs/testing.md) **first** — they're stale on V3.0 |
+| Tests | [docs/testing.md](docs/testing.md) **first** — four suites are stale on V3.0 |
 
 ## Footguns
 
@@ -45,14 +45,14 @@ There is **no** `lint`, `typecheck`, or `test:load` script. `tslint` is in devDe
 - **`Validator` / `LoadFactor` missing status key** was a crash before 3.2.2; now it's logged by name (validator fails, load factor skipped) — see [docs/known-issues.md#3-validatorcheck-crashes-on-missing-status-key](docs/known-issues.md#3-validatorcheck-crashes-on-missing-status-key) and [#4](docs/known-issues.md#4-loadfactorcheck-crashes-on-missing-status-key).
 - **`Pool.query` error handling was fixed in 3.2.2** (returns after reject, destroys connections after fatal errors/timeouts) — see [docs/known-issues.md#1-poolquery-does-not-return-after-reject](docs/known-issues.md#1-poolquery-does-not-return-after-reject).
 - **`Pool.multiStatementQuery` commit-before-queries bug was fixed in 3.2.2** — see [docs/known-issues.md#2-poolmultistatementquery-commits-before-queries-finish](docs/known-issues.md#2-poolmultistatementquery-commits-before-queries-finish).
-- **Tests in `tests/` don't compile on V3.** Constructor signatures and settings shape have moved — see [docs/known-issues.md#13-tests-dont-compile-on-v30](docs/known-issues.md#13-tests-dont-compile-on-v30).
+- **Four suites in `tests/` don't compile on V3.** Constructor signatures and settings shape have moved — see [docs/known-issues.md#13-tests-dont-compile-on-v30](docs/known-issues.md#13-tests-dont-compile-on-v30).
 - **Hashing tables capped at 127 nodes / 127 services** (signed `TINYINT`) — see [docs/known-issues.md#10-hashing-tables-capped-at-127-entries-each-signed-tinyint](docs/known-issues.md#10-hashing-tables-capped-at-127-entries-each-signed-tinyint).
 - **`ClusterHashing` SQL-asset paths are dist-depth fragile.** Hard-coded `../` traversal against `__dirname`; any `outDir` change breaks it — see [docs/known-issues.md#7-clusterhashing-sql-asset-paths-are-dist-depth-fragile](docs/known-issues.md#7-clusterhashing-sql-asset-paths-are-dist-depth-fragile).
 
 ## Conventions
 
 - **TypeScript:** interfaces named `I*` (e.g. `IClusterSettings`); default exports for singletons (`Logger`, `Redis`, `Metrics`, `config`, `Events`); 2-space indent.
-- **Build:** `tsc --build` only (target `es6`, module `commonjs`). No Babel, esbuild, or bundler.
+- **Build:** `tsc -p tsconfig.build.json` only (target `es6`, module `commonjs`). No Babel, esbuild, or bundler.
 - **Linting:** `tslint` is in deps but no `lint` script. Don't add one as part of feature work.
 - **Layout:** new subsystems live under `src/<area>/`; their types go in `src/types/`.
 - **Adding a metric:** see the "Adding a new metric" section of [docs/subsystems/metrics.md](docs/subsystems/metrics.md).
@@ -72,13 +72,13 @@ Full human-facing index lives in [docs/README.md](docs/README.md). Quick map:
 **Foundation**
 
 - [docs/architecture.md](docs/architecture.md) — boot/runtime diagrams, singletons, lifecycle.
-- [docs/configuration.md](docs/configuration.md) — convict schema, env overlay, `Settings.mixSettings` merge order.
+- [docs/configuration.md](docs/configuration.md) — zod schema, strict validation, `Settings.mixSettings` merge order.
 - [docs/events.md](docs/events.md) — cluster/pool event catalog and the array-wrapping listener quirk.
 - [docs/sql-assets.md](docs/sql-assets.md) — hashing-DB tables, routines, capacity caps, path resolution.
-- [docs/testing.md](docs/testing.md) — Jest layout and why most of the suite is stale on V3.0.
+- [docs/testing.md](docs/testing.md) — Jest layout, which suites run, and the four stale suites.
 - [docs/known-issues.md](docs/known-issues.md) — bugs/footguns with file:line refs (fixes not applied).
 - [docs/branch-divergence.md](docs/branch-divergence.md) — `dev` vs V3 API shapes side-by-side.
-- [docs/glossary.md](docs/glossary.md) — Galera, validator, load factor, hashing, AMQP, OpenTelemetry metric terms.
+- [docs/glossary.md](docs/glossary.md) — Galera, validator, load factor, hashing, OpenTelemetry metric terms.
 
 **Subsystems**
 
@@ -88,4 +88,4 @@ Full human-facing index lives in [docs/README.md](docs/README.md). Quick map:
 - [docs/subsystems/cluster-hashing.md](docs/subsystems/cluster-hashing.md) — service-to-node pinning, hashing DB, pool ordering.
 - [docs/subsystems/redis-cache.md](docs/subsystems/redis-cache.md) — key derivation, TTL, stale fallback, `clearOnStart`.
 - [docs/subsystems/metrics.md](docs/subsystems/metrics.md) — OpenTelemetry metrics, attributes, enabling an exporter, pm2 migration table.
-- [docs/subsystems/logger.md](docs/subsystems/logger.md) — winston setup, console + AMQP outputs, `LOGLEVEL` / `LOGTYPES`.
+- [docs/subsystems/logger.md](docs/subsystems/logger.md) — console logger, app-supplied `logger`, `LOGLEVEL`.

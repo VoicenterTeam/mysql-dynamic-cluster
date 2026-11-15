@@ -15,8 +15,7 @@ interface ISettings {
     serviceMetrics?: IServiceMetricsSettings,
     useClusterHashing?: boolean,
     clusterHashing?: IClusterHashingSettings,
-    redisSettings?: IRedisSettings,
-    showMetricKeys?: boolean,
+    redis?: IRedisSettings,
     logs?: ILoggerSettings,
     // logger of the app, the console when not passed
     logger?: ILogger
@@ -30,12 +29,17 @@ export interface IUserSettings extends ISettings {
 
 export interface IDefaultSettings extends ISettings {
     defaultPoolSettings: IDefaultPoolSettings,
-    redisInstant: Redis | Cluster,
     errorRetryCount: number,
     serviceMetrics: IDefaultServiceMetricsSettings,
     useClusterHashing: boolean,
     clusterHashing: IDefaultClusterHashingSettings,
-    showMetricKeys: boolean,
-    redisSettings: IDefaultRedisSettings,
+    redis: IDefaultRedisSettings,
     logs: ILoggerSettings
+}
+
+// Settings after validation: every default filled in, every host mixed with the default
+// pool settings
+export interface IParsedSettings extends IDefaultSettings {
+    clusterName: string,
+    hosts: IUserPoolSettings[]
 }

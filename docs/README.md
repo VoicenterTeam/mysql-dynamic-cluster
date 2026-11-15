@@ -9,19 +9,19 @@ this index is for humans browsing `docs/` directly.
 If you're new to the project, read in this order:
 1. [glossary.md](glossary.md) — terms used everywhere (Galera, wsrep, validator, …)
 2. [architecture.md](architecture.md) — system overview and lifecycle
-3. [configuration.md](configuration.md) — how settings flow from env → convict → runtime
+3. [configuration.md](configuration.md) — how settings flow from `createPoolCluster` through validation to runtime
 4. [subsystems/cluster.md](subsystems/cluster.md) — the orchestrator and query flow
 
 ## Foundation
 
 - [architecture.md](architecture.md) — boot and runtime diagrams, singletons, and the connect/disconnect lifecycle.
-- [configuration.md](configuration.md) — convict schema, env overlay, `Settings.mixSettings` merge order, defaults.
+- [configuration.md](configuration.md) — zod schema, strict validation, `Settings.mixSettings` merge order, defaults.
 - [events.md](events.md) — catalog of cluster and pool events, their payloads, and the array-wrapping listener quirk.
 - [sql-assets.md](sql-assets.md) — hashing-database tables, routines, capacity caps, and SQL path resolution.
-- [testing.md](testing.md) — Jest layout, why the current suite is stale on V3.0, and what still runs.
+- [testing.md](testing.md) — Jest layout, which suites run, and the four stale suites that still fail to compile.
 - [known-issues.md](known-issues.md) — catalogued bugs/footguns with file:line refs and suggested fixes (not applied).
 - [branch-divergence.md](branch-divergence.md) — side-by-side of `dev` vs V3 API shapes and what stayed the same.
-- [glossary.md](glossary.md) — short defs: Galera, validator, load factor, hashing, AMQP, OpenTelemetry metric terms.
+- [glossary.md](glossary.md) — short defs: Galera, validator, load factor, hashing, OpenTelemetry metric terms.
 
 ## Subsystems
 
@@ -31,4 +31,4 @@ If you're new to the project, read in this order:
 - [subsystems/cluster-hashing.md](subsystems/cluster-hashing.md) — service-to-node pinning, hashing DB, pool ordering.
 - [subsystems/redis-cache.md](subsystems/redis-cache.md) — key derivation, TTL, stale fallback, `clearOnStart`.
 - [subsystems/metrics.md](subsystems/metrics.md) — OpenTelemetry metrics, attributes, enabling an exporter, pm2 migration table.
-- [subsystems/logger.md](subsystems/logger.md) — winston setup, console + AMQP outputs, `LOGLEVEL` / `LOGTYPES` enums.
+- [subsystems/logger.md](subsystems/logger.md) — console logger, app-supplied `logger`, `LOGLEVEL`.

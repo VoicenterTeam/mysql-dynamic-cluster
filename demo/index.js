@@ -9,7 +9,7 @@ const RedisLib = require('ioredis');
 const cfg = {
     clusterName: 'demo',
     logs: {
-        level: 'DEBUG'
+        level: 'debug'
     },
     // Configuration for each pool. At least 2 pools are recommended
     hosts: [

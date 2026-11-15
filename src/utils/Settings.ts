@@ -2,30 +2,45 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { IUserSettings } from "../types/SettingsInterfaces";
+import { IParsedSettings, IUserSettings } from "../types/SettingsInterfaces";
 import { IUserPoolSettings } from "../types/PoolSettingsInterfaces";
-import Logger from "./Logger";
-import config from '../configs';
+import { parseSettings } from "../configs/schema";
 import deepmerge from "deepmerge";
-import { isPlainObject } from 'is-plain-object';
 
 export class Settings {
     /**
-     * Mix user and pool settings with global
-     * @param userSettings user settings
+     * Validate user settings, fill in the defaults and mix every host with the default
+     * pool settings
+     * @param userSettings user settings, without redisInstant and logger
+     * @throws Error that lists every wrong or unknown key by its path
      */
-    public static mixSettings(userSettings: IUserSettings): IUserSettings {
+    public static mixSettings(userSettings: IUserSettings): IParsedSettings {
+        const settings = parseSettings(userSettings);
 
-        const overwriteMerge = (destinationArray, sourceArray) => sourceArray
-        userSettings = deepmerge(config.get(), userSettings, {
-            arrayMerge: overwriteMerge,
-            isMergeableObject: isPlainObject
-        }) as IUserSettings;
-
-        userSettings.hosts = userSettings.hosts.map(host => {
-            return deepmerge(userSettings.defaultPoolSettings, host) as IUserPoolSettings;
+        settings.hosts = settings.hosts.map(host => {
+            const own = Settings._withoutUndefined(host);
+            return deepmerge(settings.defaultPoolSettings, own) as IUserPoolSettings;
         })
 
-        return userSettings;
+        return settings;
+    }
+
+    /**
+     * A copy of the host without the keys set to undefined, so that `port: undefined` means
+     * "not set" and takes the default, where the merge would erase the default
+     * @private
+     */
+    private static _withoutUndefined(host: IUserPoolSettings): IUserPoolSettings {
+        const copy = { ...host };
+        Object.keys(copy).forEach(key => {
+            if (copy[key] === undefined) delete copy[key];
+        });
+        if (copy.timerCheckRange) {
+            const range = { ...copy.timerCheckRange };
+            if (range.start === undefined) delete range.start;
+            if (range.end === undefined) delete range.end;
+            copy.timerCheckRange = range;
+        }
+        return copy;
     }
 }

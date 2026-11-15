@@ -1,12 +1,10 @@
-import { BinaryToTextEncoding } from "crypto";
-
 export interface IRedisSettings {
     enabled: boolean,
     keyPrefix?: string,
     expire?: number,
-    expiryMode?: string,
-    algorithm?: string,
-    encoding?: BinaryToTextEncoding,
+    expiryMode?: 'EX',
+    algorithm?: 'md5' | 'sha256',
+    encoding?: 'base64' | 'hex',
     clearOnStart?: boolean
 }
 
@@ -14,9 +12,9 @@ export interface IDefaultRedisSettings extends IRedisSettings {
     enabled: boolean
     keyPrefix: string,
     expire: number,
-    expiryMode: string,
-    algorithm: string,
-    encoding: BinaryToTextEncoding,
+    expiryMode: 'EX',
+    algorithm: 'md5' | 'sha256',
+    encoding: 'base64' | 'hex',
     clearOnStart: boolean
 }
 
