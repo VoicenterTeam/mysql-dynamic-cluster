@@ -70,20 +70,16 @@ A named AMQP buffer that holds messages until a consumer reads them. The logger 
 
 The rule that connects a queue to an exchange via a routing-key pattern; without a binding, messages published to the exchange never reach the queue. The library binds its queue to its exchange using the pattern `mysql_logs` when `bindings.enabled` is true ([src/configs/schema.ts:286](../src/configs/schema.ts#L286)).
 
-## Metrics (pm2.io)
-
-### Counter
-
-A monotonic integer pm2.io exposes via `pm2io.counter`, incremented or decremented one step at a time. The library uses `Metrics.inc`/`Metrics.dec` for things like active-connection counts; see [src/metrics/Metrics.ts:51](../src/metrics/Metrics.ts#L51).
-
-### Meter
-
-A pm2.io primitive that measures the rate (frequency per second) at which an event is marked. The library calls `Metrics.mark` on each occurrence, e.g. queries-per-second, through `pm2io.meter`; see [src/metrics/Metrics.ts:77](../src/metrics/Metrics.ts#L77).
+## Metrics (OpenTelemetry)
 
 ### Histogram
 
-A pm2.io primitive that records a distribution of numeric samples and reports a summary statistic (mean, by default). The library feeds samples via `Metrics.update` for things like query latency, see [src/metrics/Metrics.ts:85](../src/metrics/Metrics.ts#L85) and the `MetricMeasurements.mean` setting in `_createMetric`.
+An instrument that records a distribution of samples: a count, a sum and bucket counts. Every metric of the library is a histogram of durations in seconds, recorded through `Metrics.recordOperation`, `Metrics.recordQuery` and `Metrics.recordCacheLookup`; see [src/metrics/Metrics.ts](../src/metrics/Metrics.ts). Its count replaces the separate counters and meters the pm2 metrics had.
 
-### Metric (gauge)
+### Attribute
 
-A pm2.io gauge holding a single current value that can be set arbitrarily, used for snapshot-style readings such as a pool's current load score. The library calls `Metrics.set` to update it, see [src/metrics/Metrics.ts:38](../src/metrics/Metrics.ts#L38). Note the type is named `METRIC` in [src/types/MetricsInterfaces.ts](../src/types/MetricsInterfaces.ts) even though it maps to pm2.io's gauge primitive.
+A key-value pair attached to a record, such as `server.address` or `error.type`. Attributes replace the cluster, service and pool prefixes of the old pm2 metric names; see [subsystems/metrics.md](subsystems/metrics.md#attributes).
+
+### MeterProvider
+
+The SDK object the host app registers with `metrics.setGlobalMeterProvider`. The library only uses the OpenTelemetry API, so without a registered provider its metric calls do nothing.

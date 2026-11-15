@@ -142,14 +142,14 @@ overrides win.
 
 ### Metric tagging
 
-A `poolMetricOption` is built with `{ pool: { id, name } }`
-([src/pool/Pool.ts:148-153](../../src/pool/Pool.ts#L148)). If the
-caller passes a `serviceId`, a `service` block is added too —
-`serviceName` defaults to `String(serviceId)` when not provided
-([src/pool/Pool.ts:154-159](../../src/pool/Pool.ts#L154)). The merged
-options are passed to every `Metrics.inc` / `Metrics.mark` / `QueryTimer`
-call so dashboards can break down queries by pool and (optionally) by
-service.
+A `poolMetricOption` is built from the pool's name, host and port, the
+query's database and its SQL (`_metricOptions` in
+[src/pool/Pool.ts](../../src/pool/Pool.ts)). If the caller passes a
+`serviceId`, `serviceName` is added too, defaulting to `String(serviceId)`
+when not provided. The options go to one `Metrics.recordOperation` call
+per attempt, with the error on failure, so `mysql_dynamic_cluster.operation.duration`
+can be broken down by pool, service and error type. See
+[metrics.md](./metrics.md).
 
 ### Execution sequence
 

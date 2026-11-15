@@ -149,18 +149,18 @@ Before entering the pool retry loop, `GaleraCluster.query` performs:
 1. Skip the cache entirely when `queryOptions.redisRefreshCache` is
    set, even if `queryOptions.redis` is true
    ([src/cluster/GaleraCluster.ts:190](../../src/cluster/GaleraCluster.ts#L190)).
-2. Otherwise time-box a `Redis.get(sql)` call (recorded against
-   `MetricNames.redis.latency`,
-   [src/cluster/GaleraCluster.ts:191-198](../../src/cluster/GaleraCluster.ts#L191))
-   and increment `MetricNames.redis.uses`.
+2. Otherwise time a `Redis.get(sql)` call. Its duration is recorded as
+   `mysql_dynamic_cluster.cache.lookup.duration` with the result `hit`,
+   `expired` or `miss`
+   ([src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts)).
 3. If `Redis.get` returns a JSON string, parse it into `redisData` and
    compare `redisData.expired` to `Date.now()`
    ([src/cluster/GaleraCluster.ts:200-209](../../src/cluster/GaleraCluster.ts#L200)).
-   - **Fresh** (`expired > Date.now()`): bump
-     `MetricNames.cluster.successfulQueries` and return
+   - **Fresh** (`expired > Date.now()`): record the cluster query with
+     source `cache` and return
      `redisData.data` immediately. MySQL is not touched.
-   - **Stale** (`expired <= Date.now()`): bump
-     `MetricNames.redis.expired` and **keep `redisData` in scope** while
+   - **Stale** (`expired <= Date.now()`): record the lookup as
+     `expired` and **keep `redisData` in scope** while
      falling through to the pool retry loop.
 
 A Redis miss (`get` returns `null`) is treated the same as the cache
@@ -173,8 +173,8 @@ back by the write path above.
 
 After every pool in the retry loop has failed, `GaleraCluster.query`
 checks whether it has a stashed `redisData` from the earlier read
-attempt. If so, it logs a warning, increments
-`MetricNames.cluster.successfulQueries`, and returns the **expired**
+attempt. If so, it logs a warning, records the cluster query with source
+`stale_cache`, and returns the **expired**
 cached `data` rather than throwing. The behaviour:
 
 - Only triggers when the entry was found in Redis but was older than

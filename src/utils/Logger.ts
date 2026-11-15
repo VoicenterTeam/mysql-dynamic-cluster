@@ -1,5 +1,4 @@
 import winston from 'winston';
-import winstonTransport from '@voicenter-team/failover-amqp-pool/WinstonAMQPPoolTransport';
 import { LOGLEVEL, LOGTYPES } from '../types/LoggerInterfaces';
 import config from "../configs";
 import { IDefaultAmqpConfig } from "../types/AmqpInterfaces";
@@ -50,6 +49,9 @@ class Logger {
           prefetch: config.get('amqp_logs.prefetch')
         }
       })
+      // loaded only for amqp output: failover-amqp-pool 2.x brings its own @pm2/io,
+      // which adds process listeners for unhandled rejections and exceptions when it loads
+      const winstonTransport = require('@voicenter-team/failover-amqp-pool/WinstonAMQPPoolTransport');
       this.logger.add( new winstonTransport(amqpConfig))
     }
   }

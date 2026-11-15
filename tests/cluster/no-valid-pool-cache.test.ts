@@ -4,7 +4,7 @@ jest.mock('../../src/utils/Logger', () => ({
 }));
 jest.mock('../../src/metrics/Metrics', () => ({
     __esModule: true,
-    default: { inc: jest.fn(), mark: jest.fn(), set: jest.fn(), avg: jest.fn() }
+    default: { recordOperation: jest.fn(), recordQuery: jest.fn(), recordCacheLookup: jest.fn() }
 }));
 jest.mock('../../src/Redis/Redis', () => ({
     __esModule: true,
@@ -14,7 +14,6 @@ jest.mock('../../src/Redis/Redis', () => ({
 import { GaleraCluster } from '../../src/cluster/GaleraCluster';
 import Redis from '../../src/Redis/Redis';
 import Metrics from '../../src/metrics/Metrics';
-import MetricNames from '../../src/metrics/MetricNames';
 
 // a cluster whose pools are all invalid, built without the config singletons
 const makeCluster = (): GaleraCluster => Object.assign(Object.create(GaleraCluster.prototype), {
@@ -32,7 +31,7 @@ describe('GaleraCluster.query when no pool is valid', () => {
     it('serves cached data, even expired', async () => {
         (Redis.get as jest.Mock).mockResolvedValue(JSON.stringify({ data: [{ a: 1 }], expired: 0 }));
         await expect(makeCluster().query('SELECT 1')).resolves.toEqual([{ a: 1 }]);
-        expect(Metrics.inc).toHaveBeenCalledWith(MetricNames.redis.staleServed);
+        expect(Metrics.recordQuery).toHaveBeenCalledWith(expect.any(Number), expect.objectContaining({ source: 'stale_cache' }));
     });
 
     it('throws when there is nothing cached', async () => {

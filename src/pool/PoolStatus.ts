@@ -11,7 +11,6 @@ import { Validator } from "./Validator";
 import { LoadFactor } from "./LoadFactor";
 import { ITimerCheckRange, IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
-import MetricNames from "../metrics/MetricNames";
 
 export class PoolStatus {
     public active: boolean;
@@ -89,7 +88,7 @@ export class PoolStatus {
      * Check pool status
      */
     public async checkStatus() {
-        const queryTimer = new QueryTimer(MetricNames.pool.queryTime);
+        const queryTimer = new QueryTimer();
         try {
             if (!this.active) return;
 

@@ -4,7 +4,7 @@ jest.mock('../../src/utils/Logger', () => ({
 }));
 jest.mock('../../src/metrics/Metrics', () => ({
     __esModule: true,
-    default: { inc: jest.fn(), mark: jest.fn(), set: jest.fn(), avg: jest.fn() }
+    default: { recordOperation: jest.fn(), recordQuery: jest.fn(), recordCacheLookup: jest.fn() }
 }));
 jest.mock('../../src/Redis/Redis', () => ({
     __esModule: true,

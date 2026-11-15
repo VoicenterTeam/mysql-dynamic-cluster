@@ -6,12 +6,11 @@ import mysql from "mysql2";
 import Logger from "../utils/Logger";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
-import MetricNames from "../metrics/MetricNames";
 import { IQueryOptions, QueryResult } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
 import { IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
-import { IMetricOptions } from "../types/MetricsInterfaces";
+import { IOperationMetricOptions } from "../types/MetricsInterfaces";
 import Redis from "../Redis/Redis";
 import { IRedisData } from "../types/RedisInterfaces";
 import { IdleConnectionReaper } from './IdleConnectionReaper';
@@ -166,23 +165,17 @@ export class Pool {
                 redisExpire: this._redisExpire,
                 ...queryOptions
             }
-            const poolMetricOption: IMetricOptions = {
-                pool: {
-                    id: this.id,
-                    name: this.name
-                }
+            const poolMetricOption: IOperationMetricOptions = {
+                ...this._metricOptions(queryOptions.database),
+                sql
             }
             if (queryOptions?.serviceId) {
-                poolMetricOption.service = {
-                    id: queryOptions.serviceId,
-                    name: queryOptions?.serviceName ? queryOptions.serviceName : String(queryOptions.serviceId)
-                }
+                poolMetricOption.serviceName = queryOptions?.serviceName
+                    ? queryOptions.serviceName
+                    : String(queryOptions.serviceId);
             }
 
-            const queryTimer = new QueryTimer(MetricNames.pool.queryTime);
-
-            Metrics.inc(MetricNames.pool.allQueries, poolMetricOption);
-            Metrics.mark(MetricNames.pool.queryPerMinute, poolMetricOption);
+            const queryTimer = new QueryTimer();
             queryTimer.start();
 
             // mysql2 can call back twice (timeout, then a late server error), settle only once
@@ -190,9 +183,8 @@ export class Pool {
             const fail = (error: any, conn?: mysql.PoolConnection) => {
                 if (settled) return;
                 settled = true;
-                Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
                 queryTimer.end();
-                queryTimer.save(poolMetricOption);
+                Metrics.recordOperation(queryTimer.get(), { ...poolMetricOption, error });
                 Pool._handBack(conn, error);
                 reject(error);
             }
@@ -214,12 +206,10 @@ export class Pool {
                         conn.release();
 
                         queryTimer.end();
-                        queryTimer.save(poolMetricOption);
+                        Metrics.recordOperation(queryTimer.get(), poolMetricOption);
                         if (queryTimer.get() >= this._slowQueryTime) {
                             Logger.warn(`Query in pool named ${this.name} takes ${queryTimer.get()} sec`);
                         }
-
-                        Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
 
                         if (queryOptions.redis) {
                             const redisExpired = new Date().getTime() + queryTimer.get() * 1000 * queryOptions.redisFactor;
@@ -249,22 +239,19 @@ export class Pool {
                 database: this._database,
                 ...queryOptions
             }
-            const poolMetricOption = {
-                pool: {
-                    id: this.id,
-                    name: this.name
-                }
-            }
+            // no sql: a transaction has no single operation name
+            const poolMetricOption = this._metricOptions(queryOptions.database);
 
-            Metrics.inc(MetricNames.pool.allQueries, poolMetricOption);
-            Metrics.mark(MetricNames.pool.queryPerMinute, poolMetricOption);
+            const queryTimer = new QueryTimer();
+            queryTimer.start();
             const results: T[] = [];
 
             let settled = false;
             const fail = (error: any, conn?: mysql.PoolConnection, rollback: boolean = false) => {
                 if (settled) return;
                 settled = true;
-                Metrics.inc(MetricNames.pool.errorQueries, poolMetricOption);
+                queryTimer.end();
+                Metrics.recordOperation(queryTimer.get(), { ...poolMetricOption, error });
                 // a broken connection can't roll back; destroying it makes the server discard the transaction
                 if (rollback && !Pool._isBroken(error)) {
                     conn.query({ sql: 'ROLLBACK', timeout: queryOptions.timeout }, (errorR) => {
@@ -295,7 +282,8 @@ export class Pool {
                             if (settled) return;
                             settled = true;
 
-                            Metrics.inc(MetricNames.pool.successfulQueries, poolMetricOption);
+                            queryTimer.end();
+                            Metrics.recordOperation(queryTimer.get(), poolMetricOption);
                             conn.release();
                             resolve(results);
                         });
@@ -322,6 +310,20 @@ export class Pool {
                 })
             })
         })
+    }
+
+    /**
+     * Metric attributes of a query attempt in this pool
+     * @param database database the query runs in
+     * @private
+     */
+    private _metricOptions(database: string): IOperationMetricOptions {
+        return {
+            poolName: this.name,
+            host: this.host,
+            port: this.port,
+            database
+        }
     }
 
     /**

@@ -78,7 +78,7 @@ Full human-facing index lives in [docs/README.md](docs/README.md). Quick map:
 - [docs/testing.md](docs/testing.md) — Jest layout and why most of the suite is stale on V3.0.
 - [docs/known-issues.md](docs/known-issues.md) — bugs/footguns with file:line refs (fixes not applied).
 - [docs/branch-divergence.md](docs/branch-divergence.md) — `dev` vs V3 API shapes side-by-side.
-- [docs/glossary.md](docs/glossary.md) — Galera, validator, load factor, hashing, AMQP, pm2 metric types.
+- [docs/glossary.md](docs/glossary.md) — Galera, validator, load factor, hashing, AMQP, OpenTelemetry metric terms.
 
 **Subsystems**
 
@@ -87,5 +87,5 @@ Full human-facing index lives in [docs/README.md](docs/README.md). Quick map:
 - [docs/subsystems/health-and-scoring.md](docs/subsystems/health-and-scoring.md) — `PoolStatus`, `Validator`, `LoadFactor`.
 - [docs/subsystems/cluster-hashing.md](docs/subsystems/cluster-hashing.md) — service-to-node pinning, hashing DB, pool ordering.
 - [docs/subsystems/redis-cache.md](docs/subsystems/redis-cache.md) — key derivation, TTL, stale fallback, `clearOnStart`.
-- [docs/subsystems/metrics.md](docs/subsystems/metrics.md) — pm2.io metric types, naming, two-write service scoping.
+- [docs/subsystems/metrics.md](docs/subsystems/metrics.md) — OpenTelemetry metrics, attributes, enabling an exporter, pm2 migration table.
 - [docs/subsystems/logger.md](docs/subsystems/logger.md) — winston setup, console + AMQP outputs, `LOGLEVEL` / `LOGTYPES`.

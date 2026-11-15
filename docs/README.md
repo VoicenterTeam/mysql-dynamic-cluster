@@ -21,7 +21,7 @@ If you're new to the project, read in this order:
 - [testing.md](testing.md) — Jest layout, why the current suite is stale on V3.0, and what still runs.
 - [known-issues.md](known-issues.md) — catalogued bugs/footguns with file:line refs and suggested fixes (not applied).
 - [branch-divergence.md](branch-divergence.md) — side-by-side of `dev` vs V3 API shapes and what stayed the same.
-- [glossary.md](glossary.md) — short defs: Galera, validator, load factor, hashing, AMQP, pm2 metric types.
+- [glossary.md](glossary.md) — short defs: Galera, validator, load factor, hashing, AMQP, OpenTelemetry metric terms.
 
 ## Subsystems
 
@@ -30,5 +30,5 @@ If you're new to the project, read in this order:
 - [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md) — `PoolStatus`, `Validator`, `LoadFactor`.
 - [subsystems/cluster-hashing.md](subsystems/cluster-hashing.md) — service-to-node pinning, hashing DB, pool ordering.
 - [subsystems/redis-cache.md](subsystems/redis-cache.md) — key derivation, TTL, stale fallback, `clearOnStart`.
-- [subsystems/metrics.md](subsystems/metrics.md) — pm2.io metric types, naming, two-write service scoping, adding.
+- [subsystems/metrics.md](subsystems/metrics.md) — OpenTelemetry metrics, attributes, enabling an exporter, pm2 migration table.
 - [subsystems/logger.md](subsystems/logger.md) — winston setup, console + AMQP outputs, `LOGLEVEL` / `LOGTYPES` enums.

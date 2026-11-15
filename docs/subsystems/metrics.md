@@ -1,226 +1,181 @@
 # Subsystem: Metrics
 
-The `Metrics` singleton publishes **real-time runtime numbers** to
-`@pm2/io` so they can be inspected from pm2 dashboards (`pm2 monit`,
-Keymetrics) without instrumenting the calling code beyond a single
-method call. Every counter, rate, distribution, and gauge in the library
-flows through this one wrapper.
+The `Metrics` singleton records query and cache timings through the
+[OpenTelemetry API](https://opentelemetry.io/docs/languages/js/instrumentation/).
+The package depends only on `@opentelemetry/api`, as a peer dependency. It
+never starts an SDK or an exporter, and requiring it adds no process
+listeners. Until the host app registers a `MeterProvider`, every call is a
+no-op.
+
+Before 4.0.0 the metrics went to `@pm2/io`. That dependency is gone, see
+[Migrating from the pm2 metrics](#migrating-from-the-pm2-metrics).
 
 Source:
 [src/metrics/Metrics.ts](../../src/metrics/Metrics.ts),
 [src/metrics/MetricNames.ts](../../src/metrics/MetricNames.ts),
 [src/types/MetricsInterfaces.ts](../../src/types/MetricsInterfaces.ts).
-See [../glossary.md](../glossary.md) for definitions of *counter*,
-*meter*, *histogram*, and *metric (gauge)*.
 
-## Metric types
+## Enabling an exporter in your app
 
-The four supported primitives are enumerated in `MetricType`
-([src/types/MetricsInterfaces.ts:11-16](../../src/types/MetricsInterfaces.ts#L11)):
+Install the API plus the SDK and exporter you want. The library needs only
+the API, the rest is the app's choice:
 
-| `MetricType` | pm2.io primitive | Library API | Use case |
-|---|---|---|---|
-| `METRIC` | gauge | `Metrics.set(metric, value, options?)` | Set a current value (snapshot) |
-| `METER` | meter | `Metrics.mark(metric, options?)` | Mark an event for rate measurement |
-| `COUNTER` | counter | `Metrics.inc` / `Metrics.dec` | Monotonic-ish integer increments/decrements |
-| `HISTOGRAM` | histogram | `Metrics.update(metric, value, options?)` | Record a sample (mean is reported) |
-
-The corresponding methods are defined at
-[src/metrics/Metrics.ts:38](../../src/metrics/Metrics.ts#L38) (`set`),
-[src/metrics/Metrics.ts:51](../../src/metrics/Metrics.ts#L51) (`inc`),
-[src/metrics/Metrics.ts:64](../../src/metrics/Metrics.ts#L64) (`dec`),
-[src/metrics/Metrics.ts:77](../../src/metrics/Metrics.ts#L77) (`mark`),
-and
-[src/metrics/Metrics.ts:85](../../src/metrics/Metrics.ts#L85) (`update`).
-Each verifies the metric's declared `type` matches the call (`_isMetricTypeValid`,
-[src/metrics/Metrics.ts:99-104](../../src/metrics/Metrics.ts#L99));
-a mismatch logs an error and skips the write.
-
-> Note: pm2.io calls its single-value primitive a *gauge*, but the
-> library's enum names it `METRIC`. See
-> [../glossary.md](../glossary.md#metric-gauge).
-
-## Initialisation
-
-[src/metrics/Metrics.ts:27-30](../../src/metrics/Metrics.ts#L27).
-
-`Metrics.init(clusterName, showKeys)` is called once at cluster
-construction. It stores:
-
-- `clusterName` — used as the leading prefix in every metric's display
-  name and internal key.
-- `showKeys` — when `true`, the internal key is shown instead of the
-  human-readable name in pm2 dashboards. Useful when keys must be
-  matched programmatically.
-
-No pm2 metrics are registered at init time; registration is lazy (see
-[Repository](#repository-lazy-registry) below).
-
-## Naming
-
-`_generatePrefixes`
-([src/metrics/Metrics.ts:113-131](../../src/metrics/Metrics.ts#L113))
-builds two parallel strings for each write:
-
-- **Display name** (shown in pm2 dashboards):
-  ```
-  [clusterName] [serviceName?] [poolName?] <metric.name>
-  ```
-- **Internal key** (used as the registry key and as a fallback display
-  name when `showKeys` is on):
-  ```
-  ${clusterName}_${serviceId?}_${poolId?}_${metric.key}
-  ```
-
-The service segment is only included when `useService` is true (i.e.
-when building the service-scoped variant — see
-[Two-write rule](#two-write-rule)). The pool segment is included
-whenever `options.pool` is set.
-
-If `metric.name` is missing or `showMetricKeys` is true, the display
-name collapses to the internal key
-([src/metrics/Metrics.ts:128](../../src/metrics/Metrics.ts#L128)).
-
-## Two-write rule
-
-`_getMetricValues`
-([src/metrics/Metrics.ts:139-156](../../src/metrics/Metrics.ts#L139))
-implements a deliberate fan-out:
-
-- If `options.service` is supplied, the metric is written to **two**
-  pm2 metrics:
-  1. A **service-scoped** variant whose key includes
-     `options.service.id` and whose display name includes
-     `options.service.name`.
-  2. The **global** variant (no service segment).
-- If no `service` is supplied, only the global variant is written.
-
-This lets pm2 dashboards drill in by service while preserving the
-overall numbers. The pool segment, when present, appears in **both**
-variants — service-scoped writes also include the pool, so a service
-that pins to a single pool gets a single per-pool counter plus the
-global counter.
-
-`IMetricOptions`
-([src/types/MetricsInterfaces.ts:32-41](../../src/types/MetricsInterfaces.ts#L32))
-carries both segments:
-
-```ts
-interface IMetricOptions {
-    pool?:    { id: number, name: string },
-    service?: { id: number, name: string }
-}
+```bash
+npm i @opentelemetry/api @opentelemetry/sdk-metrics @opentelemetry/exporter-metrics-otlp-http
 ```
 
-## Repository (lazy registry)
+Register a `MeterProvider` once at startup:
 
-`metricsRepository` is an in-memory map
-([src/types/MetricsInterfaces.ts:28-30](../../src/types/MetricsInterfaces.ts#L28))
-keyed by the fully-qualified internal key. `_getMetricValues` checks
-the map on every call; if the key is missing, `_createMetric`
-([src/metrics/Metrics.ts:163-192](../../src/metrics/Metrics.ts#L163))
-constructs the matching pm2.io primitive on demand:
+```js
+const { metrics } = require('@opentelemetry/api');
+const { MeterProvider, PeriodicExportingMetricReader } = require('@opentelemetry/sdk-metrics');
+const { OTLPMetricExporter } = require('@opentelemetry/exporter-metrics-otlp-http');
 
-- `MetricType.METRIC`     -> `pm2io.metric({ name })`
-- `MetricType.COUNTER`    -> `pm2io.counter({ name })`
-- `MetricType.METER`      -> `pm2io.meter({ name })`
-- `MetricType.HISTOGRAM`  -> `pm2io.histogram({ name, measurement: MetricMeasurements.mean })`
+metrics.setGlobalMeterProvider(new MeterProvider({
+    readers: [
+        new PeriodicExportingMetricReader({
+            exporter: new OTLPMetricExporter({ url: 'http://localhost:4318/v1/metrics' }),
+            exportIntervalMillis: 60000
+        })
+    ]
+}));
 
-Histograms always report the **mean** (see
-[src/metrics/Metrics.ts:186](../../src/metrics/Metrics.ts#L186)).
+const galeraCluster = require('@voicenter-team/mysql-dynamic-cluster');
+const cluster = galeraCluster.createPoolCluster(cfg);
+```
 
-Because creation is lazy, a metric never appears in pm2 until it is
-actually written at least once. This keeps dashboards tidy when, for
-example, Redis is disabled (the `redis.*` metrics simply never
-materialise).
+`@opentelemetry/sdk-node` or the `--require @opentelemetry/auto-instrumentations-node/register`
+flag work the same way, since both register the global provider.
 
-## Available metric names
+The order does not matter. The library looks up the global provider on every
+record and creates its instruments again when the provider changed, so an app
+may register its SDK after the cluster already ran queries. Records made
+before that are dropped.
 
-The full registry lives in
-[src/metrics/MetricNames.ts](../../src/metrics/MetricNames.ts) and is
-organised into three groups: `cluster`, `pool`, `redis`.
+An app without OpenTelemetry does nothing. npm 7 and later install the peer
+dependency on their own, and the calls stay no-ops. npm 6 and Yarn 1 do not
+install peers: there the app must add `@opentelemetry/api` itself, or
+requiring the library fails.
 
-| Group | Property | Key | Type | Source |
-|---|---|---|---|---|
-| `cluster` | `allQueries`        | `cluster_all_queries`        | `COUNTER`   | [MetricNames.ts:25-29](../../src/metrics/MetricNames.ts#L25) |
-| `cluster` | `successfulQueries` | `cluster_successful_queries` | `COUNTER`   | [MetricNames.ts:30-34](../../src/metrics/MetricNames.ts#L30) |
-| `cluster` | `errorQueries`      | `cluster_error_queries`      | `COUNTER`   | [MetricNames.ts:35-39](../../src/metrics/MetricNames.ts#L35) |
-| `cluster` | `queryTime`         | `cluster_query_time`         | `HISTOGRAM` | [MetricNames.ts:40-44](../../src/metrics/MetricNames.ts#L40) |
-| `cluster` | `queryPerMinute`    | `cluster_query_per_minute`   | `METER`     | [MetricNames.ts:45-49](../../src/metrics/MetricNames.ts#L45) |
-| `pool`    | `allQueries`        | `pool_all_queries`           | `COUNTER`   | [MetricNames.ts:52-56](../../src/metrics/MetricNames.ts#L52) |
-| `pool`    | `successfulQueries` | `pool_successful_queries`    | `COUNTER`   | [MetricNames.ts:57-61](../../src/metrics/MetricNames.ts#L57) |
-| `pool`    | `errorQueries`      | `pool_error_queries`         | `COUNTER`   | [MetricNames.ts:62-66](../../src/metrics/MetricNames.ts#L62) |
-| `pool`    | `queryTime`         | `pool_query_time`            | `HISTOGRAM` | [MetricNames.ts:67-71](../../src/metrics/MetricNames.ts#L67) |
-| `pool`    | `queryPerMinute`    | `pool_query_per_minute`      | `METER`     | [MetricNames.ts:72-76](../../src/metrics/MetricNames.ts#L72) |
-| `redis`   | `uses`              | `redis_uses`                 | `COUNTER`   | [MetricNames.ts:79-83](../../src/metrics/MetricNames.ts#L79) |
-| `redis`   | `expired`           | `redis_expired`              | `COUNTER`   | [MetricNames.ts:84-88](../../src/metrics/MetricNames.ts#L84) |
-| `redis`   | `latency`           | `redis_latency`              | `HISTOGRAM` | [MetricNames.ts:89-93](../../src/metrics/MetricNames.ts#L89) |
+## Instrumentation scope
 
-Display names (the human-readable strings shown in pm2 dashboards) are
-the values' `name` fields (e.g. `'Cluster all queries'`) prefixed as
-described in [Naming](#naming).
+Instruments come from `getMeter('@voicenter-team/mysql-dynamic-cluster', <package version>)`.
+The version is read from the package's own `package.json`.
 
-`redis.staleServed` (`redis_stale_served`, counter, since 3.2.2) counts
-queries answered from stale Redis data because no pool answered: either no
-pool was valid, or every pool errored. Those queries also count as
-`cluster.successfulQueries`, so watch this one to see outages hidden by
-the cache.
+## Metrics
+
+All three are histograms in seconds with the bucket boundaries the database
+conventions recommend: `0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10`.
+A histogram carries its own count, so there are no separate counters. Totals
+and rates come from the count, errors from the `error.type` attribute.
+
+| Metric | One record per | Recorded in |
+|---|---|---|
+| `mysql_dynamic_cluster.operation.duration` | Query attempt in one pool. A transaction (`multiStatementQuery`) is one record. Health checks count too, since they run through `Pool.query`. | [src/pool/Pool.ts](../../src/pool/Pool.ts) |
+| `mysql_dynamic_cluster.query.duration` | `GaleraCluster.query` call, including the cache lookup and every retry. | [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts) |
+| `mysql_dynamic_cluster.cache.lookup.duration` | Redis cache lookup on the normal query path. | [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts) |
+
+All three names live in the package's own namespace. The per-attempt metric
+has the shape of `db.client.operation.duration` from the
+[database client semantic conventions](https://opentelemetry.io/docs/specs/semconv/db/database-metrics/):
+seconds, the same buckets and the same attribute keys. It does not take that
+name on purpose. A wrapper or app that already records the convention metric
+for the same calls would otherwise show two series under one name, and a
+dashboard that sums by metric name would count MySQL time twice.
+
+## Attributes
+
+| Attribute | Value | On |
+|---|---|---|
+| `db.system.name` | `mysql` | operation, query |
+| `db.namespace` | Database of the query. On the cluster metric only when the caller passed `database`. | operation, query |
+| `db.operation.name` | First SQL keyword, see below | operation, query |
+| `error.type` | mysql2 error `code` such as `ER_ACCESS_DENIED_ERROR` or `ECONNREFUSED`, or `_OTHER`. Set only on failure. | operation, query |
+| `db.response.status_code` | mysql `errno` as a string, when the error has one | operation, query |
+| `server.address`, `server.port` | Host and port of the pool | operation |
+| `db.client.connection.pool.name` | Pool `name` setting, `host:port` by default | operation |
+| `mysql_dynamic_cluster.cluster.name` | `clusterName` setting | all three |
+| `mysql_dynamic_cluster.service.name` | `serviceName` of the query, or the `serviceId` as text. Left out for queries without a service. | operation, query |
+| `mysql_dynamic_cluster.result.source` | `pool`, `cache` or `stale_cache`. Left out when the query failed. | query |
+| `mysql_dynamic_cluster.cache.result` | `hit`, `expired` or `miss` | cache lookup |
+
+Notes on cardinality and content:
+
+- **SQL text is never recorded.** `db.operation.name` is the first keyword of
+  the statement, and only when it is in a fixed list (`SELECT`, `INSERT`,
+  `UPDATE`, `DELETE`, `REPLACE`, `CALL`, `SHOW`, `SET`, `CREATE`, `ALTER`,
+  `DROP`, `TRUNCATE`, `USE`, `START`, `BEGIN`, `COMMIT`, `ROLLBACK`). It is
+  left out for other keywords, for text with anything but whitespace after a
+  `;` that stands outside quotes, and for transactions. The text is scanned
+  once, with no regular expression.
+- **The cluster metric's `error.type` is `_OTHER` for now.** The cluster wraps
+  pool errors in a plain `Error` without a code. The per-attempt
+  `mysql_dynamic_cluster.operation.duration` carries the real code.
+- **`stale_cache` shows outages hidden by the cache.** Those queries succeed
+  for the caller although no pool answered, either because no pool was valid
+  or because every pool failed.
+- **Two values come from the caller.** `mysql_dynamic_cluster.service.name`
+  and `db.namespace` are whatever the query passes as `serviceName` (or
+  `serviceId`) and `database`. Passing per-tenant or per-request values there
+  grows the number of series with them.
+- **A query that throws while its SQL is formatted or while Redis is read is
+  not recorded.** A cached value that does not parse is recorded as a failed
+  query.
+- Recording is best effort: an error thrown by the registered SDK never fails
+  a query. The first one is logged at `warn`, later ones are not.
+- `db.client.connection.pool.name` comes from the connection pool part of the
+  conventions, which is still marked Development.
+
+## Migrating from the pm2 metrics
+
+The pm2 metrics had the cluster, service and pool baked into each name, and a
+write with a service was recorded twice. Those are attributes now.
+
+| Old pm2 key | Now |
+|---|---|
+| `pool_all_queries`, `pool_query_per_minute` | count of `mysql_dynamic_cluster.operation.duration` |
+| `pool_successful_queries` | same, where `error.type` is not set |
+| `pool_error_queries` | same, where `error.type` is set |
+| `pool_query_time`, `cluster_query_time` | `mysql_dynamic_cluster.operation.duration` |
+| `cluster_all_queries`, `cluster_query_per_minute` | count of `mysql_dynamic_cluster.query.duration` |
+| `cluster_successful_queries` | same, where `error.type` is not set |
+| `cluster_error_queries` | same, where `error.type` is set |
+| `redis_stale_served` | same, where `mysql_dynamic_cluster.result.source` is `stale_cache` |
+| `redis_uses` | count of `mysql_dynamic_cluster.cache.lookup.duration` |
+| `redis_expired` | same, where `mysql_dynamic_cluster.cache.result` is `expired` |
+| `redis_latency` | `mysql_dynamic_cluster.cache.lookup.duration` |
+
+Other changes:
+
+- There are no aliases for the old names.
+- `showMetricKeys` is still accepted so existing configs validate, but it is
+  ignored and deprecated.
+- `serviceMetrics` is unchanged. It names the table that maps a service name
+  to an id, which cluster hashing needs for routing.
+- Transactions get a duration, which the pm2 metrics did not record.
+- With `logs.output` including `amqp`, the 2.x `@voicenter-team/failover-amqp-pool`
+  transport still loads its own `@pm2/io`, and that adds process listeners
+  for unhandled rejections and exceptions. The transport is loaded only when
+  amqp output is on.
 
 ## Adding a new metric
 
-Three steps.
-
-**1. Declare the metric.** Add an entry under the appropriate group in
-[src/metrics/MetricNames.ts](../../src/metrics/MetricNames.ts) with
-`key`, `name`, and `type` (one of `MetricType.COUNTER`, `.METER`,
-`.HISTOGRAM`, `.METRIC`):
-
-```ts
-// inside MetricNames.cluster
-mySample: {
-    key: 'cluster_my_sample',
-    name: 'Cluster my sample',
-    type: MetricType.HISTOGRAM
-}
-```
-
-The `key` becomes part of the internal map key (and the dashboard label
-when `showMetricKeys` is on); the `name` is the human-readable label.
-
-**2. Write to it from the call site.** Pick the method matching the
-type:
-
-| Type | Method |
-|---|---|
-| `COUNTER` | `Metrics.inc(metric)` / `Metrics.dec(metric)` |
-| `METER` | `Metrics.mark(metric)` |
-| `HISTOGRAM` | `Metrics.update(metric, value)` |
-| `METRIC` | `Metrics.set(metric, value)` |
-
-The method validates the metric's declared type
-([src/metrics/Metrics.ts:99-104](../../src/metrics/Metrics.ts#L99)) and
-logs an error if it does not match.
-
-**3. (Optional) Pass `IMetricOptions` for scoped variants.** Supply
-`pool` to get a per-pool variant, `service` to fan out into a global +
-service-scoped pair (see [Two-write rule](#two-write-rule)):
-
-```ts
-Metrics.update(MetricNames.cluster.queryTime, durationMs, {
-    pool:    { id: pool.id, name: pool.name },
-    service: { id: service.id, name: service.name }
-});
-```
-
-No extra registration step is needed — the new pm2.io primitive is
-created lazily the first time the key is written.
+1. Add the name and description to
+   [src/metrics/MetricNames.ts](../../src/metrics/MetricNames.ts), and any
+   new attribute key to `MetricAttributes`. Metric names go in the
+   `mysql_dynamic_cluster.` namespace. Attribute keys use a convention key
+   when one fits.
+2. Create the instrument in `_getInstruments` in
+   [src/metrics/Metrics.ts](../../src/metrics/Metrics.ts) and add a `record*`
+   method. Never create an instrument at module load: it would be bound to
+   the no-op provider.
+3. Call the method from the call site. Keep attribute values to a small fixed
+   set, never raw SQL, ids of rows or error messages.
+4. Cover it in [tests/metrics/otel-metrics.test.ts](../../tests/metrics/otel-metrics.test.ts),
+   which reads the metrics back through an in-memory exporter.
 
 ## See also
 
-- [../glossary.md](../glossary.md) — definitions of counter, meter,
-  histogram, and gauge.
-- [./pool.md](./pool.md) — call sites for the `pool.*` metrics.
-- [./cluster.md](./cluster.md) — call sites for the `cluster.*`
-  metrics.
-- [./redis-cache.md](./redis-cache.md) — call sites for the `redis.*`
-  metrics.
+- [./pool.md](./pool.md) for the call sites of the per-attempt metric.
+- [./cluster.md](./cluster.md) for the call sites of the cluster metric.
+- [./redis-cache.md](./redis-cache.md) for the cache lookup.

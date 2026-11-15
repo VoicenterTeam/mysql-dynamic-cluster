@@ -2,7 +2,7 @@
 
 `@voicenter-team/mysql-dynamic-cluster` wraps `mysql2` to route queries
 across a Galera cluster with health-aware pool selection, service-sticky
-routing via cluster hashing, optional Redis caching, pm2.io metrics, and
+routing via cluster hashing, optional Redis caching, OpenTelemetry metrics, and
 a winston-based logger with an optional AMQP transport. The library
 exposes a single factory, `createPoolCluster`, that assembles a process-
 wide `GaleraCluster` instance backed by a shared configuration, metric
@@ -36,8 +36,9 @@ constructing `GaleraCluster`:
    [index.ts:20-28](../index.ts#L20):
    - `Logger.init()` ([index.ts:21](../index.ts#L21)) builds the winston
      transports, including the optional AMQP transport.
-   - `Metrics.init(clusterName, showMetricKeys)`
-     ([index.ts:22](../index.ts#L22)) registers the pm2.io metric set.
+   - `Metrics.init(clusterName)`
+     ([index.ts:22](../index.ts#L22)) stores the cluster name that every
+     metric carries as an attribute. Instruments are created on first use.
    - `Redis.init(...)` is called only when `redisInstant` is an
      `ioredis` `Cluster` or `Redis` instance
      ([index.ts:24-26](../index.ts#L24)).
@@ -146,7 +147,7 @@ is exactly one instance per Node process, regardless of how many times
 | --- | --- | --- |
 | `Logger` | [src/utils/Logger.ts:85](../src/utils/Logger.ts#L85) | A second logger would overwrite winston transports and AMQP credentials configured by the first cluster. |
 | `Redis` | [src/Redis/Redis.ts:93](../src/Redis/Redis.ts#L93) | A second Redis singleton would overwrite the `clusterName` prefix and the injected `ioredis` client, mixing cache keys between clusters. |
-| `Metrics` | [src/metrics/Metrics.ts:195](../src/metrics/Metrics.ts#L195) | The pm2.io metric registry is shared; the second `init()` would clobber names emitted by the first. |
+| `Metrics` | [src/metrics/Metrics.ts](../src/metrics/Metrics.ts) | The cluster name attribute is stored once; a second `init()` would relabel the metrics of the first cluster. |
 | `config` | [src/configs/index.ts:27](../src/configs/index.ts#L27) | Convict is loaded once and validated at import; calling `config.load(...)` again overwrites the first cluster's hosts, validators, and Redis settings. |
 | `Events` | [src/utils/Events.ts:4](../src/utils/Events.ts#L4) | The single `EventEmitter` would fan out `connected` / `disconnected` / `hashing_created` events from both clusters into every subscriber. |
 

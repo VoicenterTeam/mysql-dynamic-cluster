@@ -4,7 +4,7 @@ jest.mock('../../src/utils/Logger', () => ({
 }));
 jest.mock('../../src/metrics/Metrics', () => ({
     __esModule: true,
-    default: { inc: jest.fn(), mark: jest.fn(), set: jest.fn(), avg: jest.fn() }
+    default: { recordOperation: jest.fn(), recordQuery: jest.fn(), recordCacheLookup: jest.fn() }
 }));
 jest.mock('../../src/Redis/Redis', () => ({
     __esModule: true,
@@ -12,7 +12,7 @@ jest.mock('../../src/Redis/Redis', () => ({
 }));
 jest.mock('../../src/utils/QueryTimer', () => ({
     QueryTimer: jest.fn().mockImplementation(() => ({
-        start: jest.fn(), end: jest.fn(), save: jest.fn(), get: jest.fn(() => 1000)
+        start: jest.fn(), end: jest.fn(), get: jest.fn(() => 1000)
     }))
 }));
 

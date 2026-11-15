@@ -9,7 +9,6 @@ import Logger from "../utils/Logger";
 import { format as MySQLFormat } from 'mysql2';
 import { Pool } from "../pool/Pool";
 import { ClusterHashing } from "./ClusterHashing";
-import MetricNames from "../metrics/MetricNames";
 import Metrics from "../metrics/Metrics";
 import Events from "../utils/Events";
 import Redis from "../Redis/Redis";
@@ -17,6 +16,7 @@ import { IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
 import ServiceNames from "../utils/ServiceNames";
 import { IRedisData } from "../types/RedisInterfaces";
+import { QueryResultSource } from "../types/MetricsInterfaces";
 import config from "../configs";
 
 export class GaleraCluster {
@@ -164,8 +164,22 @@ export class GaleraCluster {
         let retryCount; // max retry query count after error
         let serviceId = queryOptions?.serviceId;
 
-        Metrics.mark(MetricNames.cluster.queryPerMinute);
-        Metrics.inc(MetricNames.cluster.allQueries);
+        const queryTimer = new QueryTimer();
+        queryTimer.start();
+        const originalSql = sql;
+        // one metric record per cluster query, whatever way it ends
+        const record = (source?: QueryResultSource, error?: any) => {
+            queryTimer.end();
+            Metrics.recordQuery(queryTimer.get(), {
+                source,
+                error,
+                sql: originalSql,
+                database: queryOptions.database,
+                serviceName: queryOptions.serviceId
+                    ? queryOptions.serviceName ?? String(queryOptions.serviceId)
+                    : undefined
+            });
+        }
 
         try {
             if (!serviceId && queryOptions?.serviceName) {
@@ -185,12 +199,19 @@ export class GaleraCluster {
                 const redisResult = await Redis.get(this._formatSQL(sql, values));
                 if (redisResult) {
                     Logger.warn("No valid pool. Use old data from Redis");
-                    Metrics.inc(MetricNames.redis.staleServed);
-                    Metrics.inc(MetricNames.cluster.successfulQueries);
-                    return (JSON.parse(redisResult) as IRedisData).data;
+                    // parsed before the record: a cached value that doesn't parse is a failed query
+                    let cached: IRedisData;
+                    try {
+                        cached = JSON.parse(redisResult);
+                    } catch (parseError) {
+                        record(undefined, parseError);
+                        throw parseError;
+                    }
+                    record('stale_cache');
+                    return cached.data;
                 }
             }
-            Metrics.inc(MetricNames.cluster.errorQueries);
+            record(undefined, e);
             throw new Error(e);
         }
 
@@ -198,24 +219,31 @@ export class GaleraCluster {
         Logger.debug("formatSQL", {sql, values})
         let redisData: IRedisData = null;
         if (queryOptions.redis && !queryOptions.redisRefreshCache) {
-            const redisLatency = new QueryTimer(MetricNames.redis.latency);
+            const redisLatency = new QueryTimer();
             redisLatency.start();
 
-            Metrics.inc(MetricNames.redis.uses);
             const redisResult = await Redis.get(sql);
 
             redisLatency.end();
-            redisLatency.save();
 
             if (redisResult) {
                 Logger.debug("Get result of query from redis");
-                redisData = JSON.parse(redisResult);
+                try {
+                    redisData = JSON.parse(redisResult);
+                } catch (parseError) {
+                    Metrics.recordCacheLookup(redisLatency.get(), 'miss');
+                    record(undefined, parseError);
+                    throw parseError;
+                }
                 if (redisData.expired > Date.now()) {
-                    Metrics.inc(MetricNames.cluster.successfulQueries);
+                    Metrics.recordCacheLookup(redisLatency.get(), 'hit');
+                    record('cache');
                     return redisData.data;
                 }
 
-                Metrics.inc(MetricNames.redis.expired);
+                Metrics.recordCacheLookup(redisLatency.get(), 'expired');
+            } else {
+                Metrics.recordCacheLookup(redisLatency.get(), 'miss');
             }
         }
 
@@ -228,7 +256,7 @@ export class GaleraCluster {
             try {
                 Logger.debug("Query use host: " + activePools[i].host);
                 const res = await this._queryRequest(sql, activePools[i], queryOptions) as T;
-                Metrics.inc(MetricNames.cluster.successfulQueries);
+                record('pool');
                 return res;
             } catch (e) {
                 errorList.push({
@@ -250,13 +278,13 @@ export class GaleraCluster {
         Logger.error("All pools have error. Error messages: \n" + errorMessage);
         if (redisData) {
             Logger.warn("Use old data from Redis");
-            Metrics.inc(MetricNames.redis.staleServed);
-            Metrics.inc(MetricNames.cluster.successfulQueries);
+            record('stale_cache');
             return redisData.data;
         }
 
-        Metrics.inc(MetricNames.cluster.errorQueries);
-        throw new Error(errorMessage);
+        const error = new Error(errorMessage);
+        record(undefined, error);
+        throw error;
     }
 
     /**
@@ -267,22 +295,14 @@ export class GaleraCluster {
      * @private
      */
     private async _queryRequest<T extends QueryResult>(sql: string, pool: Pool, queryOptions: IQueryOptions): Promise<T> {
-        const queryTimer = new QueryTimer(MetricNames.cluster.queryTime);
         try {
-            queryTimer.start();
-
             const result = await pool.query(sql, queryOptions) as T;
-
-            queryTimer.end();
-            queryTimer.save();
 
             if (queryOptions?.serviceId && this._clusterHashing.connected) {
                 await this._clusterHashing?.updateNodeForService(queryOptions?.serviceId, pool.id);
             }
             return result;
         } catch (e) {
-            queryTimer.end();
-            queryTimer.save();
             throw new Error("Query error: " + e.message);
         }
     }

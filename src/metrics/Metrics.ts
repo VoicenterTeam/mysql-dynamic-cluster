@@ -2,194 +2,261 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import pm2io from '@pm2/io'
-import { IMetric, IMetricOptions, IMetricsRepository, MetricType, MetricValue } from "../types/MetricsInterfaces";
+import { metrics, Attributes, Histogram, MeterProvider } from '@opentelemetry/api';
+import MetricNames, { MetricAttributes, SCOPE_NAME } from "./MetricNames";
 import Logger from "../utils/Logger";
-import Gauge from "@pm2/io/build/main/utils/metrics/gauge";
-import Counter from "@pm2/io/build/main/utils/metrics/counter";
-import Meter from "@pm2/io/build/main/utils/metrics/meter";
-import { MetricMeasurements } from "@pm2/io/build/main/services/metrics";
-import Histogram from "@pm2/io/build/main/utils/metrics/histogram";
+import {
+    CacheLookupResult,
+    IOperationMetricOptions,
+    IQueryMetricOptions
+} from "../types/MetricsInterfaces";
+
+// Bucket boundaries the database client conventions recommend for operation durations, in seconds
+const DURATION_BUCKETS = [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10];
+
+// Operation names that may become an attribute value. Anything else is left out, to keep
+// cardinality fixed
+const OPERATION_NAMES = new Set([
+    'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'CALL', 'SHOW', 'SET',
+    'CREATE', 'ALTER', 'DROP', 'TRUNCATE', 'USE', 'START', 'BEGIN', 'COMMIT', 'ROLLBACK'
+]);
+
+interface IInstruments {
+    operationDuration: Histogram,
+    queryDuration: Histogram,
+    cacheLookupDuration: Histogram
+}
 
 /**
- * Real-time metrics
+ * Metrics through the OpenTelemetry API. The package never starts an SDK or an exporter:
+ * until the host app registers a MeterProvider every call here is a no-op
  */
 class Metrics {
-    private metricsRepository: IMetricsRepository = {};
     private clusterName: string;
-    private showKeys: boolean;
+    private _provider: MeterProvider;
+    private _instruments: IInstruments;
+    private _failureLogged: boolean = false;
 
     /**
      * Initialize metrics
-     * @param clusterName cluster name used for prefix in metric names
-     * @param showKeys show keys instead names
+     * @param clusterName cluster name added to every metric as an attribute
      */
-    public init(clusterName: string, showKeys: boolean) {
+    public init(clusterName: string) {
         this.clusterName = clusterName;
-        this.showKeys = showKeys;
     }
 
     /**
-     * set value in metric with type Metric
-     * @param metric metric object
-     * @param value the value what need to change
-     * @param options extra options for metric like pool name or service name
+     * Record one query attempt in a pool
+     * @param seconds how long the attempt took
+     * @param options pool, database, service and error of the attempt
      */
-    public set(metric: IMetric, value: number, options?: IMetricOptions) {
-        if (!Metrics._isMetricTypeValid(metric, MetricType.METRIC)) return;
+    public recordOperation(seconds: number, options: IOperationMetricOptions) {
+        this._safely(() => {
+            const attributes = this._baseAttributes(options);
+            attributes[MetricAttributes.serverAddress] = options.host;
+            attributes[MetricAttributes.serverPort] = options.port;
+            attributes[MetricAttributes.poolName] = options.poolName;
 
-        this._getMetricValues(metric, options).forEach(metricValue => {
-            (metricValue as Gauge).set(value);
-        })
+            this._getInstruments().operationDuration.record(seconds, attributes);
+        });
     }
 
     /**
-     * Increase value by 1 in metric with type Counter
-     * @param metric metric object
-     * @param options extra options for metric like pool name or service name
+     * Record one cluster query, after cache and retries
+     * @param seconds how long the query took
+     * @param options result source, database, service and error of the query
      */
-    public inc(metric: IMetric, options?: IMetricOptions) {
-        if (!Metrics._isMetricTypeValid(metric, MetricType.COUNTER)) return;
+    public recordQuery(seconds: number, options: IQueryMetricOptions) {
+        this._safely(() => {
+            const attributes = this._baseAttributes(options);
+            if (options.source) attributes[MetricAttributes.resultSource] = options.source;
 
-        this._getMetricValues(metric, options).forEach(metricValue => {
-            (metricValue as Counter).inc();
-        })
+            this._getInstruments().queryDuration.record(seconds, attributes);
+        });
     }
 
     /**
-     * Decrease value by 1 in metric with type Counter
-     * @param metric metric object
-     * @param options extra options for metric like pool name or service name
+     * Record one Redis cache lookup
+     * @param seconds how long the lookup took
+     * @param result was the key found and still fresh
      */
-    public dec(metric: IMetric, options?: IMetricOptions) {
-        if (!Metrics._isMetricTypeValid(metric, MetricType.COUNTER)) return;
+    public recordCacheLookup(seconds: number, result: CacheLookupResult) {
+        this._safely(() => {
+            const attributes: Attributes = { [MetricAttributes.cacheResult]: result };
+            if (this.clusterName) attributes[MetricAttributes.clusterName] = this.clusterName;
 
-        this._getMetricValues(metric, options).forEach(metricValue => {
-            (metricValue as Counter).dec();
-        })
+            this._getInstruments().cacheLookupDuration.record(seconds, attributes);
+        });
     }
 
     /**
-     * Mark the state to compute frequency in metric with type Meter
-     * @param metric metric object
-     * @param options extra options for metric like pool name or service name
+     * Operation name of a single statement: its first keyword, when it is a known one.
+     * Left out for anything else, including text with more than one statement.
+     * A plain scan, one pass over the text: a regex here backtracked on runs of whitespace
+     * or comments
+     * @param sql sql string
      */
-    public mark(metric: IMetric, options?: IMetricOptions) {
-        if (!Metrics._isMetricTypeValid(metric, MetricType.METER)) return;
+    public static operationName(sql?: string): string | undefined {
+        if (!sql) return undefined;
 
-        this._getMetricValues(metric, options).forEach(metricValue => {
-            (metricValue as Meter).mark();
-        })
-    }
+        const start = Metrics._skipLeading(sql);
+        let end = start;
+        while (end < sql.length && Metrics._isLetter(sql.charCodeAt(end))) end++;
+        if (end === start) return undefined;
 
-    public update(metric: IMetric, value: number, options?: IMetricOptions) {
-        if (!Metrics._isMetricTypeValid(metric, MetricType.HISTOGRAM)) return;
+        const name = sql.slice(start, end).toUpperCase();
+        if (!OPERATION_NAMES.has(name)) return undefined;
+        // a second statement after the first one: no single operation describes the call
+        if (Metrics._hasSecondStatement(sql, end)) return undefined;
 
-        this._getMetricValues(metric, options).forEach(metricValue => {
-            (metricValue as Histogram).update(value);
-        })
+        return name;
     }
 
     /**
-     * Check if type is valid for current metric
-     * @param metric metric object
-     * @param type type what need to compare with current metric
+     * Index of the first character after leading whitespace, comments and brackets.
+     * The length of the text when a comment never ends
      * @private
      */
-    private static _isMetricTypeValid(metric: IMetric, type: MetricType): boolean {
-        if (metric.type === type) return true;
+    private static _skipLeading(sql: string): number {
+        let i = 0;
+        while (i < sql.length) {
+            const char = sql[i];
+            if (char === ' ' || char === '\t' || char === '\n' || char === '\r' || char === '(') {
+                i++;
+            } else if (char === '/' && sql[i + 1] === '*') {
+                const close = sql.indexOf('*/', i + 2);
+                i = close === -1 ? sql.length : close + 2;
+            } else if (char === '#' || (char === '-' && sql[i + 1] === '-')) {
+                const lineEnd = sql.indexOf('\n', i);
+                i = lineEnd === -1 ? sql.length : lineEnd + 1;
+            } else {
+                break;
+            }
+        }
+        return i;
+    }
 
-        Logger.error(`Metric type of ${metric.key} is not valid. Should be ${MetricType[type]}`);
+    /**
+     * Is there anything but whitespace after a `;` that stands outside quotes
+     * @private
+     */
+    private static _hasSecondStatement(sql: string, from: number): boolean {
+        let quote = '';
+        let ended = false;
+        for (let i = from; i < sql.length; i++) {
+            const char = sql[i];
+            if (quote) {
+                if (char === '\\') i++;
+                else if (char === quote) quote = '';
+            } else if (ended) {
+                if (char !== ' ' && char !== '\t' && char !== '\n' && char !== '\r') return true;
+            } else if (char === "'" || char === '"' || char === '`') {
+                quote = char;
+            } else if (char === ';') {
+                ended = true;
+            }
+        }
         return false;
     }
 
-    /**
-     * Get formatted metric key and name with prefix by cluster name and extra options
-     * @param metric metric object
-     * @param useService use service options to generate prop
-     * @param options extra options for metric like pool name or service name
-     * @private
-     */
-    private _generatePrefixes(metric: IMetric, options?: IMetricOptions, useService: boolean = false): IMetric {
-        const newMetric: IMetric = {
-            key: `${this.clusterName}_`,
-            name: `[${this.clusterName}] `,
-            type: metric.type
-        }
-        if (options?.service && useService) {
-            newMetric.key += `${options.service.id}_`;
-            newMetric.name += `[${options.service.name}] `;
-        }
-        if (options?.pool) {
-            newMetric.key += `${options.pool.id}_`;
-            newMetric.name += `[${options.pool.name}] `;
-        }
-        newMetric.key += metric.key;
-        newMetric.name = metric.name && !this.showKeys ? newMetric.name + metric.name : newMetric.key;
-
-        return newMetric;
+    private static _isLetter(code: number): boolean {
+        return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
     }
 
     /**
-     * Get all metric separated to service metric and common
-     * @param metric metric object
-     * @param options extra options for metric like pool name or/and service name
+     * Run a record and swallow whatever it throws. The record goes into the MeterProvider the
+     * host app registered, and a failure there must never fail a query or run it twice
      * @private
      */
-    private _getMetricValues(metric: IMetric, options?: IMetricOptions): MetricValue[] {
-        const metrics: IMetric[] = [];
-        const metricValues: MetricValue[] = [];
-
-        if (options?.service) {
-            metrics.push(this._generatePrefixes(metric, options, true));
-        }
-        metrics.push(this._generatePrefixes(metric, options));
-
-        metrics.forEach(metricProp => {
-            if (!this.metricsRepository[metricProp.key]) {
-                this._createMetric(metricProp)
+    private _safely(record: () => void) {
+        try {
+            record();
+        } catch (e) {
+            // metrics are best effort. The first failure is logged once, so a broken SDK
+            // is not silent
+            if (this._failureLogged) return;
+            this._failureLogged = true;
+            try {
+                const reason = e && e.message;
+                Logger.warn("Recording a metric failed, further failures are not logged: " + reason);
+            } catch (logError) {
+                // the logger is not ready
             }
-            metricValues.push(this.metricsRepository[metricProp.key])
-        })
-
-        return metricValues
+        }
     }
 
     /**
-     * Create metric
-     * @param metric metric object
+     * Attributes shared by the query metrics
      * @private
      */
-    private _createMetric(metric: IMetric): void {
-        const metricKey = metric.key;
-        const metricName = metric.name;
+    private _baseAttributes(options: IQueryMetricOptions): Attributes {
+        const { database, serviceName, sql, error } = options;
+        const attributes: Attributes = { [MetricAttributes.dbSystem]: 'mysql' };
 
-        switch (metric.type) {
-            case MetricType.METRIC:
-                this.metricsRepository[metricKey] = pm2io.metric({
-                    name: metricName
-                })
-                break;
-            case MetricType.COUNTER:
-                this.metricsRepository[metricKey] = pm2io.counter({
-                    name: metricName
-                });
-                break;
-            case MetricType.METER:
-                this.metricsRepository[metricKey] = pm2io.meter({
-                    name: metricName
-                })
-                break;
-            case MetricType.HISTOGRAM:
-                this.metricsRepository[metricKey] = pm2io.histogram({
-                    name: metricName,
-                    measurement: MetricMeasurements.mean
-                })
-                break;
-            default:
-                Logger.error(`Metric type ${MetricType[metric.type]} doesn't exist`);
+        if (this.clusterName) attributes[MetricAttributes.clusterName] = this.clusterName;
+        if (database) attributes[MetricAttributes.dbNamespace] = database;
+        if (serviceName) attributes[MetricAttributes.serviceName] = serviceName;
+
+        const operation = Metrics.operationName(sql);
+        if (operation) attributes[MetricAttributes.dbOperation] = operation;
+
+        if (error) {
+            // mysql2 error code like ER_ACCESS_DENIED_ERROR or ECONNREFUSED
+            const code = typeof error.code === 'string' && error.code ? error.code : '_OTHER';
+            attributes[MetricAttributes.errorType] = code;
+            if (typeof error.errno === 'number') {
+                attributes[MetricAttributes.dbStatusCode] = String(error.errno);
+            }
         }
+
+        return attributes;
+    }
+
+    /**
+     * Instruments of the current global MeterProvider. They are created again when the app
+     * registers its provider after the first record, otherwise they would stay no-op forever
+     * @private
+     */
+    private _getInstruments(): IInstruments {
+        const provider = metrics.getMeterProvider();
+        if (this._instruments && provider === this._provider) return this._instruments;
+
+        const meter = provider.getMeter(SCOPE_NAME, Metrics._packageVersion());
+        const histogram = (metric: { name: string, description: string }) => {
+            return meter.createHistogram(metric.name, {
+                description: metric.description,
+                unit: 's',
+                advice: { explicitBucketBoundaries: DURATION_BUCKETS }
+            });
+        };
+
+        this._provider = provider;
+        this._instruments = {
+            operationDuration: histogram(MetricNames.operationDuration),
+            queryDuration: histogram(MetricNames.queryDuration),
+            cacheLookupDuration: histogram(MetricNames.cacheLookupDuration)
+        };
+
+        return this._instruments;
+    }
+
+    /**
+     * Version from the package's own package.json: three levels up from dist, two from the sources
+     * @private
+     */
+    private static _packageVersion(): string | undefined {
+        for (const path of ['../../../package.json', '../../package.json']) {
+            try {
+                const pkg = require(path);
+                if (pkg.name === SCOPE_NAME) return pkg.version;
+            } catch (e) {
+                // not at this depth
+            }
+        }
+
+        return undefined;
     }
 }
 
+export { Metrics as MetricsClass };
 export default new Metrics();

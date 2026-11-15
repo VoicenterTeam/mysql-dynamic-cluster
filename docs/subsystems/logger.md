@@ -60,8 +60,9 @@ Then it conditionally adds transports:
   ([src/utils/Logger.ts:39-54](../../src/utils/Logger.ts#L39)), it
   assembles an `IDefaultAmqpConfig` object from the `amqp_logs.*` block
   and adds `WinstonAMQPPoolTransport` from the failover-amqp-pool
-  package
-  ([src/utils/Logger.ts:2](../../src/utils/Logger.ts#L2)).
+  package. The transport is required here and not at module load,
+  because failover-amqp-pool 2.x loads its own `@pm2/io`, which adds
+  process listeners for unhandled rejections and exceptions.
 
 Both checks use `Array.prototype.includes` against the split output, so
 order is irrelevant and unknown tokens are silently ignored.

@@ -63,7 +63,7 @@ Private members worth knowing about:
 
 Async, idempotent against the `active` flag. Sequence on every tick:
 
-1. Start a `QueryTimer(MetricNames.pool.queryTime)`.
+1. Start a `QueryTimer`.
 2. Bail if `!this.active`
    ([:87](../../src/pool/PoolStatus.ts#L87)) — covers the window
    between `disconnect()` setting `active = false` and the timer

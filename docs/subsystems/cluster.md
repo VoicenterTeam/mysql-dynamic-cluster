@@ -198,15 +198,16 @@ re-wrapped before being rethrown
 
 Runs before any pool query when `queryOptions.redis && !queryOptions.redisRefreshCache`:
 
-1. Start a `QueryTimer` against `MetricNames.redis.latency`.
-2. Increment `redis.uses`.
-3. `Redis.get(sql)` — the formatted SQL is the cache key.
-4. End and save the latency timer.
-5. If a value comes back, `JSON.parse` it into `IRedisData`. If
-   `redisData.expired > Date.now()`, increment `successfulQueries` and
-   **return** `redisData.data` immediately (cache hit).
-6. Otherwise increment `redis.expired` and fall through, **keeping a
-   reference to `redisData` for stale-while-down** (step 9).
+1. Start a `QueryTimer` for the lookup.
+2. `Redis.get(sql)` — the formatted SQL is the cache key.
+3. End the timer. Its value is recorded as
+   `mysql_dynamic_cluster.cache.lookup.duration` with the result `hit`,
+   `expired` or `miss`.
+4. If a value comes back, `JSON.parse` it into `IRedisData`. If
+   `redisData.expired > Date.now()`, record the cluster query with source
+   `cache` and **return** `redisData.data` immediately (cache hit).
+5. Otherwise fall through, **keeping a reference to `redisData` for
+   stale-while-down** (step 9).
 
 ### 8. Retry loop
 
@@ -234,15 +235,14 @@ When every pool has failed:
 ### 10. `_queryRequest`
 
 [src/cluster/GaleraCluster.ts:258-277](../../src/cluster/GaleraCluster.ts#L258).
-Wraps a single `pool.query(sql, queryOptions)` call with a
-`QueryTimer(MetricNames.cluster.queryTime)` HISTOGRAM. On success:
+Wraps a single `pool.query(sql, queryOptions)` call. The pool records
+the attempt as `mysql_dynamic_cluster.operation.duration`. On success:
 
-- Saves the histogram sample.
 - If `queryOptions.serviceId` is truthy and `_clusterHashing.connected`,
   awaits `_clusterHashing.updateNodeForService(serviceId, pool.id)` to
   pin the service to the pool that just served it.
 
-On failure the timer is still ended and saved, then the error is
+On failure the error is
 rewrapped as `"Query error: " + e.message` and rethrown to the retry
 loop in `query`.
 

@@ -8,7 +8,7 @@ These keys live at the root of the config object. See [schema.ts:91-153](../src/
 
 | key | type | default | env var |
 |---|---|---|---|
-| `showMetricKeys` | `boolean` | `false` | `MYSQL_SHOW_METRIC_KEYS` |
+| `showMetricKeys` | `boolean` | `false` | `MYSQL_SHOW_METRIC_KEYS` (deprecated and ignored, was a pm2 display option) |
 | `redisInstant` | `any` (`*`) | `false` | `MYSQL_REDIS_INSTANT` |
 | `hosts` | `array` | `[]` | `MYSQL_HOSTS` |
 | `useClusterHashing` | `boolean` | `true` | `MYSQL_USE_CLUSTER_HASHING` |
@@ -57,7 +57,7 @@ Default `loadFactors`:
 
 ## `serviceMetrics`
 
-Identifies the metrics table consulted by the cluster. See [schema.ts:97-110](../src/configs/schema.ts#L97).
+Identifies the table that maps a service name to its id. The id drives cluster hashing; the name is a metric attribute. See [schema.ts:97-110](../src/configs/schema.ts#L97).
 
 | key | type | default | env var |
 |---|---|---|---|

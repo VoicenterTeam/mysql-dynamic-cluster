@@ -19,7 +19,7 @@ function createPoolCluster(userSettings: IUserSettings): GaleraCluster {
 
 function init(redisInstant): void {
     Logger.init();
-    Metrics.init(config.get('clusterName'), config.get('showMetricKeys'));
+    Metrics.init(config.get('clusterName'));
     // tslint:disable-next-line:no-bitwise
     if(redisInstant instanceof Cluster ||  redisInstant?.constructor?.name === 'Redis'){
         Redis.init(redisInstant, config.get('clusterName'), config.get('redis'));

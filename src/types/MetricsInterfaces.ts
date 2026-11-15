@@ -1,43 +1,33 @@
 /**
  * Created by Bohdan on Sep, 2021
  */
-import Gauge from "@pm2/io/build/main/utils/metrics/gauge";
-import Meter from "@pm2/io/build/main/utils/metrics/meter";
-import Counter from "@pm2/io/build/main/utils/metrics/counter";
-import Histogram from "@pm2/io/build/main/utils/metrics/histogram";
 
-export type MetricValue = Gauge | Meter | Counter | Histogram;
+// Where the result of a cluster query came from
+export type QueryResultSource = 'pool' | 'cache' | 'stale_cache';
 
-export enum MetricType {
-    METRIC,
-    METER,
-    COUNTER,
-    HISTOGRAM
+// Outcome of a Redis cache lookup
+export type CacheLookupResult = 'hit' | 'expired' | 'miss';
+
+// One query attempt in a pool
+export interface IOperationMetricOptions {
+    poolName: string,
+    host: string,
+    port: number,
+    database?: string,
+    serviceName?: string,
+    // sql of a single statement, used only to read the operation name (SELECT, CALL...)
+    sql?: string,
+    error?: any
 }
 
-export interface IMetricGroup {
-    [metric: string]: IMetric
-}
-
-export interface IMetric {
-    key: string,
-    name?: string,
-    type: MetricType
-}
-
-export interface IMetricsRepository {
-    [metric: string]: MetricValue
-}
-
-export interface IMetricOptions {
-    pool?: {
-        id: number,
-        name: string
-    },
-    service?: {
-        id: number,
-        name: string
-    }
+// One cluster query, after cache and retries
+export interface IQueryMetricOptions {
+    // not set when the query failed
+    source?: QueryResultSource,
+    database?: string,
+    serviceName?: string,
+    sql?: string,
+    error?: any
 }
 
 export interface IServiceMetricsSettings {

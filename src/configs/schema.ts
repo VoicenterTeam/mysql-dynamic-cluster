@@ -107,7 +107,7 @@ export const schema = {
         }
     },
     showMetricKeys: {
-        doc: 'show metric keys',
+        doc: 'deprecated: was a pm2 display option, ignored since metrics moved to OpenTelemetry',
         format:  Boolean,
         default: false,
         env: "MYSQL_SHOW_METRIC_KEYS"
