@@ -41,13 +41,11 @@
     "coverage": "jest --coverage"
   },
   "dependencies": {
-    "@voicenter-team/failover-amqp-pool": "^2.3.10",
     "convict": "^6.2.3",
     "deepmerge": "^4.2.2",
     "ioredis": "^4.28.3",
     "is-plain-object": "^5.0.0",
-    "mysql2": "^3.24.4",
-    "winston": "^3.8.1"
+    "mysql2": "^3.24.4"
   },
   "peerDependencies": {
     "@opentelemetry/api": "^1.7.0"

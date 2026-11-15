@@ -153,10 +153,6 @@ Other changes:
 - `serviceMetrics` is unchanged. It names the table that maps a service name
   to an id, which cluster hashing needs for routing.
 - Transactions get a duration, which the pm2 metrics did not record.
-- With `logs.output` including `amqp`, the 2.x `@voicenter-team/failover-amqp-pool`
-  transport still loads its own `@pm2/io`, and that adds process listeners
-  for unhandled rejections and exceptions. The transport is loaded only when
-  amqp output is on.
 
 ## Adding a new metric
 

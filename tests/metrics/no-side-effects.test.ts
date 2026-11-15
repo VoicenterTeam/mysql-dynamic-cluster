@@ -26,7 +26,7 @@ const run = (script: string) => spawnSync(process.execPath, ['-e', loadPackage +
 });
 
 describe('requiring the package', () => {
-    it('adds no process listeners and loads neither @pm2/io nor an OpenTelemetry SDK', () => {
+    it('adds no process listeners and loads neither @pm2/io, a log transport nor an OpenTelemetry SDK', () => {
         const res = run(`
             const loaded = Object.keys(require.cache);
             console.log(JSON.stringify({
@@ -34,6 +34,7 @@ describe('requiring the package', () => {
                 before,
                 after: count(),
                 pm2: loaded.filter(file => file.includes('@pm2')),
+                transports: loaded.filter(file => /node_modules[\\\\/](winston|@voicenter-team[\\\\/]failover-amqp-pool)[\\\\/]/.test(file)),
                 sdk: loaded.filter(file => /@opentelemetry[\\\\/]sdk-/.test(file)),
                 api: loaded.some(file => /@opentelemetry[\\\\/]api/.test(file))
             }));
@@ -45,6 +46,7 @@ describe('requiring the package', () => {
         expect(out.after).toEqual(out.before);
         expect(out.after).toEqual([0, 0]);
         expect(out.pm2).toEqual([]);
+        expect(out.transports).toEqual([]);
         expect(out.sdk).toEqual([]);
         expect(out.api).toBe(true);
     });

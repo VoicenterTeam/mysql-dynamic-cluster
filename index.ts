@@ -1,6 +1,6 @@
 import { IUserSettings } from "./src/types/SettingsInterfaces";
 import { GaleraCluster } from "./src/cluster/GaleraCluster";
-import { LOGLEVEL } from './src/types/LoggerInterfaces';
+import { ILogger, LOGLEVEL } from './src/types/LoggerInterfaces';
 import Logger from "./src/utils/Logger";
 import { Settings } from "./src/utils/Settings";
 import Redis from "./src/Redis/Redis";
@@ -9,16 +9,18 @@ import config from './src/configs';
 import { Redis as RedisLib, Cluster}  from 'ioredis'
 
 function createPoolCluster(userSettings: IUserSettings): GaleraCluster {
-    userSettings = Settings.mixSettings(userSettings);
+    // the logger is a live object of the app: taken off before the merge, which would copy it
+    const { logger, ...settings } = userSettings;
+    userSettings = Settings.mixSettings(settings as IUserSettings);
     let redisInstant = userSettings.redisInstant;
     delete userSettings.redisInstant;
     config.load(userSettings).validate;
-    init(redisInstant);
+    init(redisInstant, logger);
     return new GaleraCluster();
 }
 
-function init(redisInstant): void {
-    Logger.init();
+function init(redisInstant, logger?: ILogger): void {
+    Logger.init(config.get('logs.level'), logger);
     Metrics.init(config.get('clusterName'));
     // tslint:disable-next-line:no-bitwise
     if(redisInstant instanceof Cluster ||  redisInstant?.constructor?.name === 'Redis'){
@@ -30,5 +32,6 @@ function init(redisInstant): void {
 export {
     createPoolCluster,
     LOGLEVEL,
-    IUserSettings
+    IUserSettings,
+    ILogger
 };

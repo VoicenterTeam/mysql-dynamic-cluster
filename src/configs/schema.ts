@@ -1,6 +1,5 @@
 import path from 'path';
-import {ExchangeType} from '../types/AmqpInterfaces'
-import { LOGLEVEL, LOGTYPES } from '../types/LoggerInterfaces';
+import { LOGLEVEL } from '../types/LoggerInterfaces';
 import { Redis, Cluster } from 'ioredis';
 import { BinaryToTextEncoding, } from "crypto";
 
@@ -221,105 +220,5 @@ export const schema = {
             default: LOGLEVEL.INFO,
             env: "LOGGER_LOG_LEVEL"
         },
-        output: {
-            doc: 'Where to output logs. Options are: console, file. Multiple can be separated by comma (",")',
-            format:  String,
-            default: 'console',
-            env: "LOGGER_LOG_OUTPUT"
-        },
-    },
-    amqp_logs: {
-        topic: {
-            doc: 'Amqp topic',
-            format: String,
-            default: 'MYSQL_CLUSTER_LOGS',
-            env: 'LOG_AMQP_TOPIC',
-        },
-        connection_master: {
-            host: {
-                doc: 'Amqp host',
-                format: String,
-                default: '',
-                env: 'LOG_AMQP_HOST_MASTER',
-            },
-            port: {
-                doc: 'Amqp port',
-                format: Number,
-                default: 5672,
-                env: 'LOG_AMQP_PORT_MASTER',
-            },
-            username: {
-                doc: 'Amqp username',
-                format: String,
-                default: '',
-                env: 'LOG_AMQP_USERNAME_MASTER',
-            },
-            password: {
-                doc: 'Amqp password',
-                format: String,
-                default: '',
-                env: 'LOG_AMQP_PASSWORD_MASTER',
-            },
-            vhost: {
-                doc: 'Amqp vhost',
-                format: String,
-                default: '/',
-                env: 'LOG_AMQP_VHOST_MASTER',
-            },
-            ssl: {
-                doc: 'Amqp ssl',
-                format: Boolean,
-                default: false,
-                env: 'LOG_AMQP_SSL_MASTER',
-            },
-            heartbeat: {
-                doc: 'Amqp heartbeat',
-                format: Number,
-                default: 5,
-                env: 'LOG_AMQP_HEARTBEAT_MASTER',
-            }
-        },
-        exchage: {
-            name: {
-                doc: 'Amqp exchange name',
-                format: String,
-                default: 'Logs',
-                env: 'LOG_AMQP_EXCHANGE_NAME',
-            },
-            type: {
-                doc: 'Amqp exchange type',
-                format: [...Object.values(ExchangeType)] as const,
-                default: ExchangeType.TOPIC,
-                env: 'LOG_AMQP_EXCHANGE_TYPE',
-            }
-        },
-        queue:{
-            name: {
-                doc: 'Amqp queue name',
-                format: String,
-                default: 'MYSQL_CLUSTER_LOGS',
-                env: 'LOG_AMQP_QUEUE_NAME',
-            }
-        },
-        bindings: {
-            enabled: {
-                doc: 'binding queue to exchange',
-                format: Boolean,
-                default: true,
-                env: 'LOG_AMQP_BINDINGS_ENABLED',
-            },
-            pattern: {
-                doc: 'Amqp topic route',
-                format: String,
-                default: 'mysql_logs',
-                env: 'LOG_AMQP_BINDINGS_PATTERN',
-            }
-        },
-        prefetch: {
-            doc: 'Amqp prefetch number',
-            format: Number,
-            default: 0,
-            env: 'LOG_AMQP_prefetch',
-        }
     }
 }

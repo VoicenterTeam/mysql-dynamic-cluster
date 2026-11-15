@@ -3,8 +3,7 @@
  */
 
 import { Redis , Cluster } from 'ioredis';
-import {LOGLEVEL, ILoggerSettings  } from './LoggerInterfaces'
-import { IDefaultAmqpConfig, IUserAmqpConfig } from "./AmqpInterfaces";
+import { ILogger, ILoggerSettings } from './LoggerInterfaces'
 import { IClusterHashingSettings, IDefaultClusterHashingSettings } from "./ClusterHashingInterfaces";
 import { IDefaultRedisSettings, IRedisSettings } from "./RedisInterfaces";
 import { IDefaultPoolSettings, IDefaultUserPoolSettings, IUserPoolSettings } from "./PoolSettingsInterfaces";
@@ -18,8 +17,9 @@ interface ISettings {
     clusterHashing?: IClusterHashingSettings,
     redisSettings?: IRedisSettings,
     showMetricKeys?: boolean,
-    logs: ILoggerSettings,
-    amqp_logs: IUserAmqpConfig
+    logs?: ILoggerSettings,
+    // logger of the app, the console when not passed
+    logger?: ILogger
 }
 
 export interface IUserSettings extends ISettings {
@@ -37,6 +37,5 @@ export interface IDefaultSettings extends ISettings {
     clusterHashing: IDefaultClusterHashingSettings,
     showMetricKeys: boolean,
     redisSettings: IDefaultRedisSettings,
-    logs: ILoggerSettings,
-    amqp_logs: IUserAmqpConfig
+    logs: ILoggerSettings
 }
