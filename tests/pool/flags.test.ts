@@ -18,6 +18,7 @@ jest.mock('mysql2', () => ({
 
 import mysql from 'mysql2';
 import { Pool } from '../../src/pool/Pool';
+import Logger from '../../src/utils/Logger';
 import { Settings } from '../../src/utils/Settings';
 import { parseSettings } from '../../src/configs/schema';
 import { IUserSettings } from '../../src/types/SettingsInterfaces';
@@ -116,6 +117,20 @@ describe('the flags pool setting', () => {
 
         expect(clientFlags({}) & CLIENT_QUERY_ATTRIBUTES).not.toBe(0);
         expect(clientFlags({ flags }) & CLIENT_QUERY_ATTRIBUTES).toBe(0);
+    });
+
+    it('is on the debug line of connect() when set, and only then', async () => {
+        const debug = Logger.debug as jest.Mock;
+        const settings = base();
+        settings.hosts = [{ host: 'a', flags: [QUERY_ATTRIBUTES_OFF] }, { host: 'b' }];
+        debug.mockClear();
+        await createPoolOptions(settings);
+
+        const lines = debug.mock.calls.filter(call => String(call[0]).startsWith('Creating pool'));
+        expect(lines).toEqual([
+            ['Creating pool in host: a', { flags: [QUERY_ATTRIBUTES_OFF] }],
+            ['Creating pool in host: b', undefined]
+        ]);
     });
 
     it('has no default, so the parsed defaults get no flags key', () => {
