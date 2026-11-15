@@ -16,21 +16,32 @@ This document describes the test layout of `@voicenter-team/mysql-dynamic-cluste
 ```
 tests/
   cluster/
-    hashing.test.ts   # ClusterHashing wiring against a live cluster + helper schema
-    query.test.ts     # GaleraCluster.query() shapes: no values, scalar, array, named, timeout
+    hashing.test.ts              # ClusterHashing wiring against a live cluster + helper schema (stale)
+    hashing-upgrade.test.ts      # Hashing schema: backward compatible upgrade in place
+    no-valid-pool-cache.test.ts  # GaleraCluster.query when no pool is valid: stale cache fallback
+    query.test.ts                # GaleraCluster.query() shapes: no values, scalar, array, named, timeout (stale)
   configs/
-    settings.test.ts  # Settings schema: defaults, strict validation, mixSettings, no env reading
+    settings.test.ts             # Settings schema: defaults, strict validation, mixSettings, no env reading
   metrics/
-    no-side-effects.test.ts  # Requiring the package has no side effects
-    otel-metrics.test.ts     # OpenTelemetry metrics recorded by the cluster
+    no-side-effects.test.ts      # Requiring the package has no side effects
+    otel-metrics.test.ts         # OpenTelemetry metrics recorded by the cluster
   pool/
-    query.test.ts     # Single-pool round-trip: connect → query → disconnect, plus query timeout
+    idle-defaults.test.ts        # Idle connection defaults in the settings schema
+    multi-statement.test.ts      # Pool.multiStatementQuery: order, commit, rollback
+    query-hygiene.test.ts        # Pool.query error paths and availableConnectionCount
+    query.test.ts                # Single-pool round-trip: connect, query, disconnect, query timeout (stale)
+    reaper.test.ts               # IdleConnectionReaper
+    status-invalid.test.ts       # PoolStatus.checkStatus validity
+    status-missing-key.test.ts   # A status key missing from SHOW GLOBAL STATUS
+  toolchain/
+    compiler.test.ts             # The repo's TypeScript compiler parses the syntax zod 4 needs
   utils/
-    logger.test.ts    # Logger: levels, console default, app-supplied logger
-    settings.test.ts  # Merge of user settings + defaults via Settings (stale, dev API)
-    utils.test.ts     # Pure-unit tests for Timer and Utils.clamp
+    logger.test.ts               # Logger: levels, console default, app-supplied logger
+    logger-injection.test.ts     # A logger passed to createPoolCluster
+    settings.test.ts             # Merge of user settings + defaults via Settings (stale, dev API)
+    utils.test.ts                # Pure-unit tests for Timer and Utils.clamp
   loads/
-    load.test.ts      # Manual load harness; ignored by jest config
+    load.test.ts                 # Manual load harness; ignored by jest config
 ```
 
 ## Prerequisites for integration suites

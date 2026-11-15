@@ -80,12 +80,12 @@ hash(sql) = createHash(algorithm).update(sql).digest(encoding)
 ```
 
 - `algorithm` — `md5` (default) or `sha256`
-  ([src/configs/schema.ts:180-185](../../src/configs/schema.ts#L180)).
+  ([src/configs/schema.ts](../../src/configs/schema.ts)).
 - `encoding` — `base64` (default) or `hex`
-  ([src/configs/schema.ts:186-191](../../src/configs/schema.ts#L186)).
+  ([src/configs/schema.ts](../../src/configs/schema.ts)).
 - `keyPrefix` — `${clusterName}_${prefix}` with `prefix` defaulting to
   `mdc:`
-  ([src/configs/schema.ts:162-167](../../src/configs/schema.ts#L162)).
+  ([src/configs/schema.ts](../../src/configs/schema.ts)).
 
 The `sql` passed to `hash()` is the **post-format** string built by
 `GaleraCluster._formatSQL(sql, values)` at
@@ -123,12 +123,12 @@ There are **two independent expiries** on every cache entry:
    ([src/Redis/Redis.ts:61-73](../../src/Redis/Redis.ts#L61)). The
    per-query `queryOptions.redisExpire` takes precedence; otherwise the
    schema default of **1 000 000 s** applies
-   ([src/configs/schema.ts:168-173](../../src/configs/schema.ts#L168)).
+   ([src/configs/schema.ts](../../src/configs/schema.ts)).
    When the TTL fires, Redis evicts the key entirely.
 2. **In-payload `expired` timestamp.** Stored as
    `now + queryTime * 1000 * redisFactor`, where `queryTime` is the
    measured query duration in seconds and `redisFactor` defaults to `1`
-   ([src/configs/schema.ts:84-89](../../src/configs/schema.ts#L84)).
+   ([src/configs/schema.ts](../../src/configs/schema.ts)).
    The cluster-side read path uses this timestamp to decide whether the
    entry is fresh enough to return without re-querying MySQL.
 
@@ -209,7 +209,7 @@ recreating the settings would double-prefix it. Tests that call
 [src/Redis/Redis.ts:24-34, 36-43](../../src/Redis/Redis.ts#L24).
 
 When `redis.clearOnStart` is `true`
-([src/configs/schema.ts:192-197](../../src/configs/schema.ts#L192) —
+([src/configs/schema.ts](../../src/configs/schema.ts) —
 default `false`), the `'ready'` handler invokes `clearAll()`:
 
 1. `this.redis.keys(keyPrefix + "*")` — scans for every key under the

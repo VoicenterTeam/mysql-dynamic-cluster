@@ -52,7 +52,7 @@ Private members worth knowing about:
 - `timerCheckMultiplier: number` —
   [:47](../../src/pool/PoolStatus.ts#L47). Default `1.3` from the
   schema
-  ([src/configs/schema.ts:67-71](../../src/configs/schema.ts#L67)).
+  ([src/configs/schema.ts](../../src/configs/schema.ts)).
 - `_validator: Validator`, `_loadFactor: LoadFactor`, `_timer: Timer` —
   constructed once and reused for the lifetime of the pool
   ([:64-69](../../src/pool/PoolStatus.ts#L64)).
@@ -209,7 +209,7 @@ inspects the *value from the database* first:
 ### Defaults
 
 The schema defaults exercise both modes
-([src/configs/schema.ts:42-50](../../src/configs/schema.ts#L42)):
+([src/configs/schema.ts](../../src/configs/schema.ts)):
 
 - `{ key: 'wsrep_ready', operator: '=', value: 'ON' }` — string `=`.
 - `{ key: 'wsrep_local_state_comment', operator: '=', value: 'Synced' }` — string `=`.
@@ -241,7 +241,7 @@ Source:
 
 There is no normalisation, no clamp, and no upper bound — the score is
 just a weighted sum of MySQL counters. Defaults
-([src/configs/schema.ts:51-58](../../src/configs/schema.ts#L51)):
+([src/configs/schema.ts](../../src/configs/schema.ts)):
 
 - `{ key: 'Connections', multiplier: 2 }` — cumulative connection
   count since the server started (monotonically increasing across

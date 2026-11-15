@@ -148,8 +148,9 @@ write with a service was recorded twice. Those are attributes now.
 Other changes:
 
 - There are no aliases for the old names.
-- `showMetricKeys` is still accepted so existing configs validate, but it is
-  ignored and deprecated.
+- `showMetricKeys` is removed. `createPoolCluster` rejects a settings object
+  that still has it, see
+  [Migrating from 3.x](../configuration.md#migrating-from-3x).
 - `serviceMetrics` is unchanged. It names the table that maps a service name
   to an id, which cluster hashing needs for routing.
 - Transactions get a duration, which the pm2 metrics did not record.

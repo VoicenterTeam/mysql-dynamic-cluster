@@ -2,8 +2,9 @@
 
 This document catalogues bugs, footguns, and rough edges discovered during the V3.0
 audit of `mysql-dynamic-cluster`. Each entry records where the problem lives, what
-it does, and a suggested fix. **Suggested fixes are informational only — none of
-them have been applied.** This is a deferred work log, not a changelog.
+it does, and a suggested fix. An entry that was fixed says so in its **Status**
+line, with the version. An entry without one is still open, and its suggested fix
+is informational only.
 
 Sibling docs: [architecture.md](architecture.md), [configuration.md](configuration.md),
 [events.md](events.md), [sql-assets.md](sql-assets.md), [testing.md](testing.md),

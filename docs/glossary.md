@@ -14,7 +14,7 @@ Server-status variables exposed by a Galera-enabled MySQL/MariaDB instance under
 
 ### MariaDB / Percona context
 
-MariaDB Galera Cluster and Percona XtraDB Cluster are the two production-grade distributions that ship Galera replication; both expose the same `wsrep_*` status surface this library relies on. Defaults in [src/configs/schema.ts:42](../src/configs/schema.ts#L42) target that surface, so either distribution works without extra configuration. Vanilla Oracle MySQL is not supported because it does not expose `wsrep_*` variables.
+MariaDB Galera Cluster and Percona XtraDB Cluster are the two production-grade distributions that ship Galera replication; both expose the same `wsrep_*` status surface this library relies on. Defaults in [src/configs/schema.ts](../src/configs/schema.ts) target that surface, so either distribution works without extra configuration. Vanilla Oracle MySQL is not supported because it does not expose `wsrep_*` variables.
 
 ## This library's concepts
 
@@ -24,11 +24,11 @@ A single backing node, wrapped as one `mysql2.Pool` instance plus its health sta
 
 ### Validator
 
-A boolean health check applied to a pool's most recent `SHOW GLOBAL STATUS` snapshot (or to a few synthetic keys like `available_connection_count`, `query_time`, `active`). A pool is considered usable only when every configured validator passes; the comparison is done by `key`/`operator`/`value` in [src/pool/Validator.ts:29](../src/pool/Validator.ts#L29). Defaults at [src/configs/schema.ts:45](../src/configs/schema.ts#L45) require `wsrep_ready = ON`, `wsrep_local_state_comment = Synced`, and `Threads_running < 50`.
+A boolean health check applied to a pool's most recent `SHOW GLOBAL STATUS` snapshot (or to a few synthetic keys like `available_connection_count`, `query_time`, `active`). A pool is considered usable only when every configured validator passes; the comparison is done by `key`/`operator`/`value` in [src/pool/Validator.ts:29](../src/pool/Validator.ts#L29). Defaults at [src/configs/schema.ts](../src/configs/schema.ts) require `wsrep_ready = ON`, `wsrep_local_state_comment = Synced`, and `Threads_running < 50`.
 
 ### Load factor
 
-A `{ key, multiplier }` pair telling the cluster how to weight one status variable when ranking healthy pools. Each load factor reads its `key` from the latest `SHOW GLOBAL STATUS` result and contributes `value * multiplier` to the pool's load score; see [src/pool/LoadFactor.ts:25](../src/pool/LoadFactor.ts#L25). Defaults at [src/configs/schema.ts:54](../src/configs/schema.ts#L54) weight `Connections` by 2 and `wsrep_local_recv_queue_avg` by 10.
+A `{ key, multiplier }` pair telling the cluster how to weight one status variable when ranking healthy pools. Each load factor reads its `key` from the latest `SHOW GLOBAL STATUS` result and contributes `value * multiplier` to the pool's load score; see [src/pool/LoadFactor.ts:25](../src/pool/LoadFactor.ts#L25). Defaults at [src/configs/schema.ts](../src/configs/schema.ts) weight `Connections` by 2 and `wsrep_local_recv_queue_avg` by 10.
 
 ### Pool score / load score
 
@@ -44,7 +44,7 @@ This library's sticky-routing feature that pins a given service ID to a single n
 
 ### Slow query
 
-A query whose execution time exceeds the `slowQueryTime` threshold from [src/configs/schema.ts:78](../src/configs/schema.ts#L78) (default `1` second). Slow queries are logged and counted via metrics but are not aborted; `queryTimeout` (default 2 minutes) is the separate hard limit that does abort.
+A query whose execution time exceeds the `slowQueryTime` threshold from [src/configs/schema.ts](../src/configs/schema.ts) (default `1` second). Slow queries are logged and counted via metrics but are not aborted; `queryTimeout` (default 2 minutes) is the separate hard limit that does abort.
 
 ## Caching (Redis)
 
@@ -54,7 +54,7 @@ The Redis flag passed alongside `SET` to attach a TTL in seconds; the library on
 
 ### Key prefix
 
-A string prepended to every Redis key the library writes, configured by `redis.keyPrefix` (default `"mdc:"`, see [src/configs/schema.ts:162](../src/configs/schema.ts#L162)). It namespaces this library's cache entries so they coexist with other consumers of the same Redis instance and can be wiped wholesale on start via `clearOnStart`.
+A string prepended to every Redis key the library writes, configured by `redis.keyPrefix` (default `"mdc:"`, see [src/configs/schema.ts](../src/configs/schema.ts)). It namespaces this library's cache entries so they coexist with other consumers of the same Redis instance and can be wiped wholesale on start via `clearOnStart`.
 
 ## Metrics (OpenTelemetry)
 

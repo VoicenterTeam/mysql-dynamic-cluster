@@ -26,7 +26,7 @@ Sibling docs: [configuration.md](configuration.md), [architecture.md](architectu
 
 | Concept | `dev` (per README) | V3.0 |
 |---|---|---|
-| Global pool settings key | `globalPoolSettings` ([README.md:258](../README.md)) | `defaultPoolSettings` ([schema.ts:11](../src/configs/schema.ts#L11)) |
+| Global pool settings key | `globalPoolSettings` ([README.md:258](../README.md)) | `defaultPoolSettings` ([schema.ts](../src/configs/schema.ts)) |
 | Log level | `logLevel: LOGLEVEL` enum (`QUIET`/`REGULAR`/`FULL`) ([README.md:392-402](../README.md)) | `logs.level`: one of `'info' \| 'error' \| 'debug' \| 'warn' \| 'silent'` ([schema.ts](../src/configs/schema.ts), [LoggerInterfaces.ts:3-9](../src/types/LoggerInterfaces.ts#L3-L9)) |
 | Log destination | `useConsoleLogger`, `useAmqpLogger` booleans ([README.md:348-376](../README.md)) | No setting. Logs go to the console, or to the `logger` object the app passes in the settings ([Logger.ts](../src/utils/Logger.ts), [subsystems/logger.md](subsystems/logger.md)) |
 | AMQP config | `amqpLoggerSettings.log_amqp[]` — array of `{connection, channel}` ([README.md:723-762](../README.md)) | None. The library has no AMQP settings; the schema rejects `amqp_logs` |
@@ -41,9 +41,9 @@ Sibling docs: [configuration.md](configuration.md), [architecture.md](architectu
 ## What stayed the same
 
 The Galera-side semantics did not move between branches: validators are still
-`{key, operator, value}` triples ([schema.ts:42-50](../src/configs/schema.ts#L42-L50),
+`{key, operator, value}` triples ([schema.ts](../src/configs/schema.ts),
 [README.md:457-463](../README.md)), load factors are still
-`{key, multiplier}` pairs ([schema.ts:51-58](../src/configs/schema.ts#L51-L58),
+`{key, multiplier}` pairs ([schema.ts](../src/configs/schema.ts),
 [README.md:477-482](../README.md)), and pool selection remains
 filter-then-sort by pool status then pool score
 ([architecture.md](architecture.md), [README.md:9-13](../README.md)). The

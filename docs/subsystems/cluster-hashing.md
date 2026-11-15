@@ -35,7 +35,7 @@ The constructor takes `(cluster, clusterName, options:
 IClusterHashingSettings)` and pulls two values off `options`:
 
 - `_nextCheckTime` ← `options.nextCheckTime` (default `5000` ms; see
-  [src/configs/schema.ts:111-117](../../src/configs/schema.ts#L111)).
+  [src/configs/schema.ts](../../src/configs/schema.ts)).
 - `_database` ← `` `${clusterName}_${options.dbName}` ``
   ([src/cluster/ClusterHashing.ts:34](../../src/cluster/ClusterHashing.ts#L34)).
 
