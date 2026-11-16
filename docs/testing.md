@@ -5,6 +5,8 @@ This document describes the test layout of `@voicenter-team/mysql-dynamic-cluste
 ## Framework and commands
 
 - Runner: **Jest 30** (`jest ^30.4.2`) with `ts-jest ^29.4.9` (see `devDependencies` in [package.json:50](../package.json#L50)).
+- Node: running the suite needs Node 20 or later, because of the two `overrides` below. The library itself has no such floor.
+- `overrides` in [package.json](../package.json): `glob ^14.0.2` and `minimatch ^11.0.1` are dev-only and lift jest and test-exclude past the ranges they declare, for GHSA-3g3m-2fjr-6pw4 (glob) and GHSA-g3hv-75wg-m249 (minimatch). Remove them when jest and test-exclude declare patched ranges: delete the block, run `npm install` and check that `npm audit` shows neither advisory.
 - Config: [jest.config.js:1](../jest.config.js#L1). Uses the `ts-jest` preset, `node` test environment, and a 5-minute per-test timeout (`testTimeout: 300000`).
 - Scripts ([package.json:33](../package.json#L33)):
   - `npm test` runs `jest`.

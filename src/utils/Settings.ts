@@ -29,10 +29,9 @@ export class Settings {
      * @private
      */
     private static _mix(defaults: IDefaultPoolSettings, own: IUserPoolSettings): IUserPoolSettings {
-        // flags of a host replace the default ones:
-        // added to them, a host could not undo a "-FLAG"
-        const flags = own.flags !== undefined ? own.flags : defaults.flags;
         const mixed: IUserPoolSettings = {
+            // flags of a host replace the default ones:
+            // added to them, a host could not undo a "-FLAG"
             ...defaults,
             ...own,
             // validators and loadFactors of a host are added to the default ones
@@ -40,7 +39,7 @@ export class Settings {
             loadFactors: [...defaults.loadFactors, ...(own.loadFactors || [])].map(item => ({ ...item })),
             timerCheckRange: { ...defaults.timerCheckRange, ...own.timerCheckRange }
         };
-        if (flags !== undefined) mixed.flags = Array.isArray(flags) ? [...flags] : flags;
+        if (Array.isArray(mixed.flags)) mixed.flags = [...mixed.flags];
         return mixed;
     }
 

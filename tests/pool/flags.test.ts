@@ -71,13 +71,15 @@ describe('the flags pool setting', () => {
         settings.hosts = [
             { host: 'a', flags: ['-FOUND_ROWS'] },
             { host: 'b', flags: [] },
-            { host: 'c', flags: 'IGNORE_SPACE' }
+            { host: 'c', flags: 'IGNORE_SPACE' },
+            { host: 'd', flags: '' }
         ];
 
         const options = await createPoolOptions(settings);
         expect(options[0].flags).toEqual(['-FOUND_ROWS']);
         expect(options[1].flags).toEqual([]);
         expect(options[2].flags).toBe('IGNORE_SPACE');
+        expect(options[3].flags).toBe('');
     });
 
     it('is passed as it is, as a string too', async () => {

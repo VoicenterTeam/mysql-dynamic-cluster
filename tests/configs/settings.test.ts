@@ -285,6 +285,40 @@ describe('Settings.mixSettings', () => {
         });
     });
 
+    it('keeps a host value that is 0 or an empty string', () => {
+        const mixed = Settings.mixSettings({
+            ...base(),
+            hosts: [{ host: 'a', port: 0, user: '', minConnections: 0 }]
+        });
+        expect(mixed.hosts[0]).toMatchObject({ port: 0, user: '', minConnections: 0 });
+    });
+
+    it('leaves the default pool settings as they were parsed', () => {
+        const settings = Settings.mixSettings({
+            ...base(),
+            hosts: [
+                { host: 'a', id: 7, name: 'first', redisExpire: 60, port: 3307 },
+                { host: 'b', validators: [], timerCheckRange: { start: 1 }, flags: ['-FOO'] }
+            ]
+        });
+        expect(settings.defaultPoolSettings).toStrictEqual({
+            ...defaultsOf322.defaultPoolSettings, user: 'u', password: 'p', database: 'd'
+        });
+    });
+
+    // The merge copies keys with a spread, which would take a prototype from a __proto__ key.
+    // The strict schema must stop such a key before the merge sees it
+    it.each([
+        ['a host', '{"hosts":[{"host":"a","__proto__":{"x":1}}]}'],
+        ['the timerCheckRange of a host', '{"hosts":[{"host":"a","timerCheckRange":{"__proto__":{"x":1}}}]}'],
+        ['a validator of a host', '{"hosts":[{"host":"a","validators":[{"key":"k","operator":"=","value":1,"__proto__":{"x":1}}]}]}'],
+        ['defaultPoolSettings', '{"defaultPoolSettings":{"__proto__":{"x":1}}}']
+    ])('rejects a __proto__ key in %s', (_place, json) => {
+        const settings = { ...base(), ...JSON.parse(json) };
+        expect(() => Settings.mixSettings(settings)).toThrow('Unrecognized key: "__proto__"');
+        expect(({} as any).x).toBeUndefined();
+    });
+
     it('gives every host its own copies, sharing nothing with the defaults or another host', () => {
         const settings = Settings.mixSettings({
             ...base(),

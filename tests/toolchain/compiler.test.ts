@@ -37,7 +37,8 @@ describe('the source of this package', () => {
             types: ['node']
         });
         const unresolved = ts.getPreEmitDiagnostics(program)
-            .filter(diagnostic => diagnostic.code === 2307)
+            // 2307: module not found. 1479: an ESM-only package required from CommonJS
+            .filter(diagnostic => [2307, 1479].includes(diagnostic.code))
             .map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, ' '));
 
         expect(unresolved).toEqual([]);
