@@ -46,6 +46,8 @@ export class PoolStatus {
     private readonly _checkTimeout: number;
 
     private _timer: Timer;
+    // goes up at every stopTimerCheck()
+    private _checkRun: number = 0;
     // Time to next check status. Time in ms
     private _nextCheckTime: number = 10000;
     // Check status time range [min, max]
@@ -79,9 +81,18 @@ export class PoolStatus {
     }
 
     /**
-     * Stop pool check status timer
+     * Let the check timer run again after stopTimerCheck(). The pool calls it when it connects
+     */
+    public startTimerCheck() {
+        this._timer.activate();
+    }
+
+    /**
+     * Stop pool check status timer.
+     * A check that is still running after this changes nothing and reports nothing
      */
     public stopTimerCheck() {
+        this._checkRun++;
         this._timer.dispose();
         Logger.info("Check status in pool stopped");
     }
@@ -91,6 +102,8 @@ export class PoolStatus {
      */
     public async checkStatus() {
         const queryTimer = new QueryTimer();
+        // a check that outlives stopTimerCheck() belongs to a connection that is gone
+        const run = this._checkRun;
         try {
             if (!this.active) return;
 
@@ -110,6 +123,7 @@ export class PoolStatus {
             } finally {
                 clearTimeout(checkTimer);
             }
+            if (run !== this._checkRun) return;
 
             queryTimer.end();
             this._queryTime = queryTimer.get();
@@ -122,7 +136,9 @@ export class PoolStatus {
 
             this.nextCheckStatus()
         } catch (err) {
-            Logger.error("Something wrong while checking status in host: " + this._pool.host + ".\n Message: " + err.message);
+            if (run !== this._checkRun) return;
+            Logger.error("Something wrong while checking status in host: " + this._pool.host +
+                ".\n Message: " + PoolStatus._errorText(err));
             if (++this._failedChecks >= 2) this._isValid = false;
 
             queryTimer.end();
@@ -148,8 +164,18 @@ export class PoolStatus {
             Events.emit('pool_check_failed', err, this._pool.id);
         } catch (listenerError) {
             Logger.error("A pool_check_failed listener threw in host: " + this._pool.host +
-                ".\n Message: " + (listenerError && listenerError.message));
+                ".\n Message: " + ((listenerError && listenerError.stack) || PoolStatus._errorText(listenerError)));
         }
+    }
+
+    /**
+     * Text of whatever a check or a listener threw. Not every error has a message:
+     * a rejection may be undefined, and a refused connection to a host with several
+     * addresses is an AggregateError with a code and an empty message
+     * @private
+     */
+    private static _errorText(err: any): string {
+        return (err && (err.message || err.code)) || String(err);
     }
 
     /**

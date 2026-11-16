@@ -113,6 +113,8 @@ export class Pool {
 
         this._reaper.start(this._pool as any);
         this.status.active = true;
+        // a disconnect() before this stopped the check timer for good otherwise
+        this.status.startTimerCheck();
         this._connectEvents();
         await this.status.checkStatus();
 

@@ -28,11 +28,20 @@ export class Timer {
      */
     public start(time: number) {
         if (!this._active) return;
+        // one pending run at a time: a second start replaces the first
+        clearTimeout(this._timer);
         this._timer = setTimeout(this._callback, time);
     }
 
     /**
-     * Clear timer and stop it
+     * Let start() work again after dispose(). It starts nothing by itself
+     */
+    public activate() {
+        this._active = true;
+    }
+
+    /**
+     * Clear timer and stop it. start() does nothing until activate() is called
      */
     public dispose() {
         clearTimeout(this._timer)

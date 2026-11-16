@@ -43,6 +43,8 @@ export class ClusterHashing {
      * Activate hashing and create helper db if needed
      */
     public async connect() {
+        // a stop() before this turned the check timer off for good otherwise
+        this._timer.activate();
         try {
             if (!await this._isDatabaseVersionEquals()) {
                 await this._cluster.query(
@@ -284,6 +286,8 @@ export class ClusterHashing {
                 database: this._database,
                 redis: false
             });
+            // stopped while the query ran: the answer must not mark hashing as connected
+            if (!this._timer.active) return;
             const res: IServiceNodeMap[] = result[0].Result as IServiceNodeMap[];
             res?.forEach(obj => {
                 this._serviceNodeMap.set(obj.ServiceID, obj.NodeID);
@@ -292,6 +296,7 @@ export class ClusterHashing {
             this.connected = true;
             this._nextCheckHashing()
         } catch (err) {
+            if (!this._timer.active) return;
             Logger.error("Something wrong while checking hashing status in cluster.\n Message: " + err.message);
             this.connected = false;
             this._nextCheckHashing()
