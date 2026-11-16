@@ -79,6 +79,7 @@ Full human-facing index lives in [docs/README.md](docs/README.md). Quick map:
 - [docs/known-issues.md](docs/known-issues.md) — bugs/footguns with file:line refs and a fixed-in status where one landed.
 - [docs/branch-divergence.md](docs/branch-divergence.md) — `dev` vs V3 API shapes side-by-side.
 - [docs/glossary.md](docs/glossary.md) — Galera, validator, load factor, hashing, OpenTelemetry metric terms.
+- [docs/releasing.md](docs/releasing.md): how a release is cut: version bump, npm config check, dry run, registry and tag.
 
 **Subsystems**
 

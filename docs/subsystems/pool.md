@@ -15,7 +15,7 @@ Source: [src/pool/Pool.ts](../../src/pool/Pool.ts).
 
 ## Construction
 
-[src/pool/Pool.ts:46-66](../../src/pool/Pool.ts#L46).
+[src/pool/Pool.ts:65-92](../../src/pool/Pool.ts#L65).
 
 The constructor takes `(settings: IUserPoolSettings, clusterName:
 string)`. The `clusterName` argument is currently unused inside `Pool`
@@ -23,21 +23,21 @@ itself; `GaleraCluster` still passes it through for symmetry with other
 subsystems. Fields populated from `settings`:
 
 - `id` ← `settings.id`
-  ([src/pool/Pool.ts:47](../../src/pool/Pool.ts#L47)).
+  ([src/pool/Pool.ts:66](../../src/pool/Pool.ts#L66)).
 - `host` ← `settings.host`
-  ([src/pool/Pool.ts:48](../../src/pool/Pool.ts#L48)).
+  ([src/pool/Pool.ts:67](../../src/pool/Pool.ts#L67)).
 - `port` ← `settings.port`
-  ([src/pool/Pool.ts:49](../../src/pool/Pool.ts#L49)).
+  ([src/pool/Pool.ts:68](../../src/pool/Pool.ts#L68)).
 - `name` ← `settings.name`, falling back to `` `${host}:${port}` `` when
   not provided
-  ([src/pool/Pool.ts:50](../../src/pool/Pool.ts#L50)).
+  ([src/pool/Pool.ts:69](../../src/pool/Pool.ts#L69)).
 - `_user`, `_password`, `_database` ← the matching settings fields
-  ([src/pool/Pool.ts:53-55](../../src/pool/Pool.ts#L53)).
+  ([src/pool/Pool.ts:72-74](../../src/pool/Pool.ts#L72)).
 - `_queryTimeout`, `_slowQueryTime`, `_redisFactor`, `_redisExpire` ←
   the matching settings fields
-  ([src/pool/Pool.ts:56-59](../../src/pool/Pool.ts#L56)).
+  ([src/pool/Pool.ts:75-78](../../src/pool/Pool.ts#L75)).
 - `connectionLimit` ← `settings.connectionLimit`
-  ([src/pool/Pool.ts:61](../../src/pool/Pool.ts#L61)).
+  ([src/pool/Pool.ts:81](../../src/pool/Pool.ts#L81)).
 
 After the fields are wired the constructor builds the companion
 `PoolStatus` with `active = false`. Since 3.2.2
@@ -49,7 +49,7 @@ itself is **not** created here; that happens lazily in `connect()`.
 
 ## `connect()`
 
-[src/pool/Pool.ts:71-92](../../src/pool/Pool.ts#L71).
+[src/pool/Pool.ts:97-125](../../src/pool/Pool.ts#L97).
 
 `connect()` is `async` and is the first method `GaleraCluster.connect`
 calls on each pool. The steps:
@@ -66,27 +66,27 @@ calls on each pool. The steps:
    settings or from that decision
    ([src/pool/Pool.ts](../../src/pool/Pool.ts)).
 2. Mark the status as active (`this.status.active = true`)
-   ([src/pool/Pool.ts:82](../../src/pool/Pool.ts#L82)). Setting
+   ([src/pool/Pool.ts:115](../../src/pool/Pool.ts#L115)). Setting
    `active` to `true` is the trigger for `PoolStatus` to start its
    recurring `SHOW GLOBAL STATUS` poller — see
    [health-and-scoring.md](health-and-scoring.md) for the timer semantics.
 3. Wire mysql2's per-connection events through `_connectEvents`
-   ([src/pool/Pool.ts:83](../../src/pool/Pool.ts#L83)).
+   ([src/pool/Pool.ts:116](../../src/pool/Pool.ts#L116)).
 4. Run one synchronous (well, `await`ed) `status.checkStatus()` to
    validate the node before declaring success
-   ([src/pool/Pool.ts:84](../../src/pool/Pool.ts#L84)).
+   ([src/pool/Pool.ts:117](../../src/pool/Pool.ts#L117)).
 5. If `status.isValid`, emit `'pool_connected'` with the pool id
-   ([src/pool/Pool.ts:86-88](../../src/pool/Pool.ts#L86)); otherwise
+   ([src/pool/Pool.ts:119-121](../../src/pool/Pool.ts#L119)); otherwise
    throw `Error("pool in host " + host + " is not valid")` so the
    cluster can log the failure and continue with the remaining pools
-   ([src/pool/Pool.ts:89-91](../../src/pool/Pool.ts#L89)).
+   ([src/pool/Pool.ts:122-124](../../src/pool/Pool.ts#L122)).
 
 The `'pool_connected'` event is documented in
 [../events.md](../events.md).
 
 ## `_connectEvents()`
 
-[src/pool/Pool.ts:98-115](../../src/pool/Pool.ts#L98).
+[src/pool/Pool.ts:201-218](../../src/pool/Pool.ts#L201).
 
 Private helper. Subscribes to the underlying `mysql2.Pool`'s three
 connection-lifecycle events and re-emits each one onto the shared
@@ -96,13 +96,13 @@ reuse and dropped on every destroy.)
 
 - `connection` — log, emit
   `Events.emit('connection', connection, this.id)`
-  ([src/pool/Pool.ts:99-103](../../src/pool/Pool.ts#L99)).
+  ([src/pool/Pool.ts:202-205](../../src/pool/Pool.ts#L202)).
 - `release` — log, emit
   `Events.emit('release', connection, this.id)`
-  ([src/pool/Pool.ts:105-109](../../src/pool/Pool.ts#L105)).
+  ([src/pool/Pool.ts:207-211](../../src/pool/Pool.ts#L207)).
 - `acquire` — log and emit `Events.emit('acquire', connection,
   this.id)`
-  ([src/pool/Pool.ts:111-114](../../src/pool/Pool.ts#L111)).
+  ([src/pool/Pool.ts:213-217](../../src/pool/Pool.ts#L213)).
 
 See [../events.md](../events.md) for the payload shapes consumers
 actually receive (note the `Events.emit` args-wrap quirk documented
@@ -110,7 +110,7 @@ there).
 
 ## `disconnect()`
 
-[src/pool/Pool.ts:120-132](../../src/pool/Pool.ts#L120).
+[src/pool/Pool.ts:223-240](../../src/pool/Pool.ts#L223).
 
 Synchronous. Steps:
 
@@ -119,12 +119,12 @@ Synchronous. Steps:
    and leaves nothing that keeps the process running. Then call
    `this._pool.end(callback)` when a mysql2 pool exists; the callback only
    logs an error if one is reported
-   ([src/pool/Pool.ts:122-126](../../src/pool/Pool.ts#L122)).
+   ([src/pool/Pool.ts:225-233](../../src/pool/Pool.ts#L225)).
 2. Set `status.active = false` and call `status.stopTimerCheck()` to
    shut down the `PoolStatus` polling timer
-   ([src/pool/Pool.ts:127-128](../../src/pool/Pool.ts#L127)).
+   ([src/pool/Pool.ts:234-235](../../src/pool/Pool.ts#L234)).
 3. Emit `'pool_disconnected'` with the pool id
-   ([src/pool/Pool.ts:129](../../src/pool/Pool.ts#L129)).
+   ([src/pool/Pool.ts:237](../../src/pool/Pool.ts#L237)).
 
 `pool.end` is callback-style and not awaited; the method returns before
 the mysql2 pool has actually flushed in-flight connections. Callers
@@ -135,7 +135,7 @@ helper.
 
 ## `query()`
 
-[src/pool/Pool.ts:139-228](../../src/pool/Pool.ts#L139).
+[src/pool/Pool.ts:247-317](../../src/pool/Pool.ts#L247).
 
 `async query<T extends QueryResult>(sql: string, queryOptions?:
 IQueryOptions): Promise<T | T[]>`. The body wraps a callback-style
@@ -148,7 +148,7 @@ The provided `queryOptions` (or `{}`) is merged on top of the pool's
 own defaults:
 `{ timeout: _queryTimeout, database: _database, redisFactor:
 _redisFactor, redisExpire: _redisExpire, ...queryOptions }`
-([src/pool/Pool.ts:141-147](../../src/pool/Pool.ts#L141)). Caller
+([src/pool/Pool.ts:249-255](../../src/pool/Pool.ts#L249)). Caller
 overrides win.
 
 ### Metric tagging
@@ -165,7 +165,7 @@ can be broken down by pool, service and error type. See
 ### Execution sequence
 
 The `Promise` callback chain is, in order
-([src/pool/Pool.ts:167-226](../../src/pool/Pool.ts#L167)):
+([src/pool/Pool.ts:280-315](../../src/pool/Pool.ts#L280)):
 
 1. `_pool.getConnection((err, conn) => { ... })` — checks out a raw
    `mysql2.PoolConnection`. On error, records the
@@ -187,14 +187,14 @@ The `Promise` callback chain is, in order
 4. On success: stops the `QueryTimer`, records the attempt as
    `mysql_dynamic_cluster.operation.duration`, logs a slow-query
    warning if `queryTimer.get() >= _slowQueryTime`
-   ([src/pool/Pool.ts:209-211](../../src/pool/Pool.ts#L209)),
+   ([src/pool/Pool.ts:299-301](../../src/pool/Pool.ts#L299)),
    optionally writes the
    result to Redis (see below), and resolves with the mysql2 result.
 
 ### Redis cache write
 
 If `queryOptions.redis` is truthy
-([src/pool/Pool.ts:215-222](../../src/pool/Pool.ts#L215)), the
+([src/pool/Pool.ts:303-310](../../src/pool/Pool.ts#L303)), the
 successful result is serialised into an `IRedisData`:
 
 - `data`: the raw query result.
@@ -217,7 +217,7 @@ and [#1a](../known-issues.md#1a-connections-released-back-to-the-pool-after-a-ti
 
 ## `multiStatementQuery()`
 
-[src/pool/Pool.ts:235-310](../../src/pool/Pool.ts#L235).
+[src/pool/Pool.ts:324-403](../../src/pool/Pool.ts#L324).
 
 `async multiStatementQuery<T extends QueryResult>(sqls: string[],
 queryOptions: IQueryOptions): Promise<T[]>`. Wraps a series of SQL
@@ -230,11 +230,11 @@ ship the SQL-asset bootstrap statements as one atomic unit (see
 Same merge pattern as `query()`, but the Redis-related defaults are
 omitted — this method does not cache:
 `{ timeout: _queryTimeout, database: _database, ...queryOptions }`
-([src/pool/Pool.ts:237-241](../../src/pool/Pool.ts#L237)).
+([src/pool/Pool.ts:326-330](../../src/pool/Pool.ts#L326)).
 
 ### Execution sequence
 
-[src/pool/Pool.ts:253-308](../../src/pool/Pool.ts#L253):
+[src/pool/Pool.ts:361-401](../../src/pool/Pool.ts#L361):
 
 1. `_pool.getConnection(...)` — same guards as `query()`. Reject on
    error or missing `conn`.
@@ -264,16 +264,16 @@ and committed before any of them ran — see
 
 | Member | Kind | Source |
 | --- | --- | --- |
-| `id` | `readonly number` | [:25](../../src/pool/Pool.ts#L25) |
-| `name` | `readonly string` | [:26](../../src/pool/Pool.ts#L26) |
-| `host` | `readonly string` | [:27](../../src/pool/Pool.ts#L27) |
-| `port` | `readonly number` | [:28](../../src/pool/Pool.ts#L28) |
-| `connectionLimit` | `readonly number` | [:30](../../src/pool/Pool.ts#L30) |
-| `status` | getter returning `PoolStatus` | [:21-23](../../src/pool/Pool.ts#L21) |
-| `connect()` | `async () => Promise<void>` | [:71](../../src/pool/Pool.ts#L71) |
-| `disconnect()` | `() => void` | [:120](../../src/pool/Pool.ts#L120) |
-| `query<T>(sql, options?)` | `async => Promise<T \| T[]>` | [:139](../../src/pool/Pool.ts#L139) |
-| `multiStatementQuery<T>(sqls, options)` | `async => Promise<T[]>` | [:235](../../src/pool/Pool.ts#L235) |
+| `id` | `readonly number` | [:26](../../src/pool/Pool.ts#L26) |
+| `name` | `readonly string` | [:27](../../src/pool/Pool.ts#L27) |
+| `host` | `readonly string` | [:28](../../src/pool/Pool.ts#L28) |
+| `port` | `readonly number` | [:29](../../src/pool/Pool.ts#L29) |
+| `connectionLimit` | `readonly number` | [:31](../../src/pool/Pool.ts#L31) |
+| `status` | getter returning `PoolStatus` | [:22-24](../../src/pool/Pool.ts#L22) |
+| `connect()` | `async () => Promise<void>` | [:97](../../src/pool/Pool.ts#L97) |
+| `disconnect()` | `() => void` | [:223](../../src/pool/Pool.ts#L223) |
+| `query<T>(sql, options?)` | `async => Promise<T \| T[]>` | [:247](../../src/pool/Pool.ts#L247) |
+| `multiStatementQuery<T>(sqls, options)` | `async => Promise<T[]>` | [:324](../../src/pool/Pool.ts#L324) |
 
 Consumers normally talk to `GaleraCluster`, not to `Pool` directly;
 the cluster picks a healthy pool via its routing logic and then

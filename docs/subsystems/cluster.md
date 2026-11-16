@@ -9,87 +9,79 @@ settings have been validated and loaded into the `config` singleton; see
 this subsystem.
 
 Source: [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
+The references below name the function to look in. Line numbers are given
+only for the declarations above the constructor.
 
 ## Construction
 
 The constructor takes no arguments. Every configuration value is read
 off the `config` singleton via `config.current`; `createPoolCluster` has
 already validated the user settings and loaded them into it before
-`new GaleraCluster()` is called
-([src/cluster/GaleraCluster.ts:46-72](../../src/cluster/GaleraCluster.ts#L46)).
+`new GaleraCluster()` is called.
 
-Fields populated from `config.current`:
+Fields populated from `config.current`, at the top of the constructor:
 
-- `_useClusterHashing` ← `useClusterHashing`
-  ([src/cluster/GaleraCluster.ts:49](../../src/cluster/GaleraCluster.ts#L49)).
-- `_clusterName` ← `clusterName`
-  ([src/cluster/GaleraCluster.ts:50](../../src/cluster/GaleraCluster.ts#L50)).
-- `_errorRetryCount` ← `errorRetryCount`
-  ([src/cluster/GaleraCluster.ts:51](../../src/cluster/GaleraCluster.ts#L51)).
-- `_useRedis` ← `redis.enabled`
-  ([src/cluster/GaleraCluster.ts:52](../../src/cluster/GaleraCluster.ts#L52)).
+- `_useClusterHashing` ← `useClusterHashing`.
+- `_clusterName` ← `clusterName`.
+- `_errorRetryCount` ← `errorRetryCount`.
+- `_useRedis` ← `redis.enabled`.
 - `_escapeNamedValues` ← `escapeNamedValues`.
 - `_nullServiceName` is a constant `"mdc"` initialized on the field
-  ([src/cluster/GaleraCluster.ts:41](../../src/cluster/GaleraCluster.ts#L41));
+  ([src/cluster/GaleraCluster.ts:44](../../src/cluster/GaleraCluster.ts#L44));
   the fallback service name becomes `${clusterName}_mdc`.
 
-Pool construction
-([src/cluster/GaleraCluster.ts:53-66](../../src/cluster/GaleraCluster.ts#L53)):
+Pool construction, in the constructor:
 
 1. `_sortPoolIds(config.current.hosts)` collects every manually-set
    numeric `id` from the host list and returns them sorted ascending
-   ([src/cluster/GaleraCluster.ts:79-86](../../src/cluster/GaleraCluster.ts#L79)).
+   (`_sortPoolIds`).
 2. The constructor iterates `config.current.hosts`; for any host with no
    `id`, the next id is `0` when the sorted list is empty, otherwise
    `last + 1`, and the new id is pushed back into the list so subsequent
    gaps still increment from the highest assigned id.
 3. Only hosts with a truthy `host` value get a `Pool`; otherwise an
    error is logged. Pools are constructed with `(poolSettings,
-   clusterName)`
-   ([src/cluster/GaleraCluster.ts:61-65](../../src/cluster/GaleraCluster.ts#L61)).
+   clusterName)`.
 
 After the pool array is built, the constructor instantiates
 `ServiceNames(this, config.current.serviceMetrics)` and
-`ClusterHashing(this, clusterName, config.current.clusterHashing)`
-([src/cluster/GaleraCluster.ts:68-69](../../src/cluster/GaleraCluster.ts#L68)).
+`ClusterHashing(this, clusterName, config.current.clusterHashing)`,
+the last step of the constructor.
 Note: `ClusterHashing` is constructed unconditionally — the
 `_useClusterHashing` flag only gates `connect()` calling `_enableHashing`.
 
 ## `connect()`
 
-[src/cluster/GaleraCluster.ts:91-111](../../src/cluster/GaleraCluster.ts#L91).
+`connect` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
 
 `connect` returns a `Promise<void>` that wraps a `forEach` loop firing
 `pool.connect()` on every pool in parallel. The **first** pool to resolve
 wins the race:
 
-- Sets `this.connected = true`
-  ([src/cluster/GaleraCluster.ts:98](../../src/cluster/GaleraCluster.ts#L98)).
-- If `_useClusterHashing` is true, awaits `_enableHashing()`
-  ([src/cluster/GaleraCluster.ts:99](../../src/cluster/GaleraCluster.ts#L99)).
+- Sets `this.connected = true`.
+- If `_useClusterHashing` is true, awaits `_enableHashing()`.
 - Emits `'connected'` via the shared `Events` bus and resolves the outer
-  promise
-  ([src/cluster/GaleraCluster.ts:101-104](../../src/cluster/GaleraCluster.ts#L101)).
+  promise.
 
 Subsequent resolutions short-circuit on the `if (this.connected) return`
 guard
-([src/cluster/GaleraCluster.ts:96](../../src/cluster/GaleraCluster.ts#L96)).
+at the top of the `then` callback.
 
 Failure semantics: any `pool.connect()` rejection calls `reject(err.message)`
-([src/cluster/GaleraCluster.ts:105-108](../../src/cluster/GaleraCluster.ts#L105)).
+in the `catch` callback.
 Because `forEach` does not await between iterations, **other pools may
 still be in flight or failing** after the outer promise has resolved or
 rejected. The first rejection that lands before the first success will
 reject the outer promise even though slower pools could still come up.
 This is tracked behaviour — see [../known-issues.md](../known-issues.md).
 
-`_enableHashing` ([src/cluster/GaleraCluster.ts:116-124](../../src/cluster/GaleraCluster.ts#L116))
+`_enableHashing`
 awaits `_clusterHashing.connect()`, emits `'hashing_created'`, and logs;
 errors are caught and logged but do not propagate to `connect`.
 
 ## `disconnect()`
 
-[src/cluster/GaleraCluster.ts:129-138](../../src/cluster/GaleraCluster.ts#L129).
+`disconnect` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
 
 Tears the cluster down in this order:
 
@@ -104,13 +96,14 @@ The method is `async` but does not await pool disconnects.
 
 ## `on(event, callback)`
 
-[src/cluster/GaleraCluster.ts:145-147](../../src/cluster/GaleraCluster.ts#L145).
+`on` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
 Thin pass-through to `Events.on`. The full event list is in
 [../events.md](../events.md).
 
 ## `query()`
 
-[src/cluster/GaleraCluster.ts:155-249](../../src/cluster/GaleraCluster.ts#L155).
+`query` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
+Steps 1 to 9 are all in that one method, in this order.
 
 Signature:
 `query<T>(sql: string, values?: QueryValues, queryOptions?: IQueryOptions): Promise<T>`.
@@ -118,7 +111,7 @@ Signature:
 ### 1. Option defaults
 
 `queryOptions` is rebuilt via spread so caller-supplied keys win
-([src/cluster/GaleraCluster.ts:156-161](../../src/cluster/GaleraCluster.ts#L156)):
+(the first statement of `query`):
 
 - `redis` defaults to `_useRedis` (i.e. `config.current.redis.enabled`).
 - `maxRetry` defaults to `_errorRetryCount`.
@@ -134,7 +127,7 @@ See [metrics.md](./metrics.md).
 
 ### 3. Service-id resolution
 
-[src/cluster/GaleraCluster.ts:171-178](../../src/cluster/GaleraCluster.ts#L171).
+The first lines of the `try` block.
 
 - If the caller passed `serviceName` but no `serviceId`, look it up via
   `ServiceNames.getID(serviceName)` and write it back onto
@@ -145,11 +138,8 @@ See [metrics.md](./metrics.md).
 
 ### 4. Active-pool selection
 
-`activePools = await this._getActivePools(serviceId)`
-([src/cluster/GaleraCluster.ts:180](../../src/cluster/GaleraCluster.ts#L180)).
-`_getActivePools`
-([src/cluster/GaleraCluster.ts:321-344](../../src/cluster/GaleraCluster.ts#L321))
-does:
+`activePools = await this._getActivePools(serviceId)`.
+`_getActivePools` does:
 
 1. If `serviceId` is set and `_clusterHashing.connected`, ask
    `_clusterHashing.getNodeByService(serviceId)` for the pinned pool id
@@ -167,10 +157,8 @@ does:
 
 ### 5. Retry clamp
 
-`retryCount = this._maxRetryCount(queryOptions.maxRetry, activePools.length)`
-([src/cluster/GaleraCluster.ts:181](../../src/cluster/GaleraCluster.ts#L181)).
+`retryCount = this._maxRetryCount(queryOptions.maxRetry, activePools.length)`.
 `_maxRetryCount`
-([src/cluster/GaleraCluster.ts:285-292](../../src/cluster/GaleraCluster.ts#L285))
 clamps the retry count to the active-pool count so the retry loop never
 overruns the array; if `maxRetry` is missing or non-positive it falls
 back to `_errorRetryCount`.
@@ -178,14 +166,12 @@ back to `_errorRetryCount`.
 Service-id resolution and active-pool selection share a single
 `try`/`catch`: a thrown error is recorded as a failed query and
 re-wrapped before being rethrown
-([src/cluster/GaleraCluster.ts:182-185](../../src/cluster/GaleraCluster.ts#L182)).
+(the `catch` of that block).
 
 ### 6. SQL formatting
 
-`sql = this._formatSQL(sql, values)`
-([src/cluster/GaleraCluster.ts:187](../../src/cluster/GaleraCluster.ts#L187)).
-`_formatSQL`
-([src/cluster/GaleraCluster.ts:300-314](../../src/cluster/GaleraCluster.ts#L300)):
+`sql = this._formatSQL(sql, values)`, right after the `try`/`catch`.
+`_formatSQL`:
 
 - Array `values` → `mysql2`'s `format(sql, values)` (positional `?`).
 - String `values` → same `format()` call.
@@ -199,7 +185,7 @@ re-wrapped before being rethrown
 
 ### 7. Redis read
 
-[src/cluster/GaleraCluster.ts:189-210](../../src/cluster/GaleraCluster.ts#L189).
+The `if` block after the SQL is formatted.
 
 Runs before any pool query when `queryOptions.redis && !queryOptions.redisRefreshCache`:
 
@@ -216,7 +202,7 @@ Runs before any pool query when `queryOptions.redis && !queryOptions.redisRefres
 
 ### 8. Retry loop
 
-[src/cluster/GaleraCluster.ts:217-233](../../src/cluster/GaleraCluster.ts#L217).
+The `for` loop.
 
 For `i` from `0` to `retryCount - 1`, calls
 `this._queryRequest(sql, activePools[i], queryOptions)`. First success
@@ -225,7 +211,7 @@ records the query with source `pool` and returns. Each failure pushes
 
 ### 9. Aggregated failure / stale-while-down
 
-[src/cluster/GaleraCluster.ts:235-248](../../src/cluster/GaleraCluster.ts#L235).
+The end of `query`, after the loop.
 
 When every pool has failed:
 
@@ -239,7 +225,7 @@ When every pool has failed:
 
 ### 10. `_queryRequest`
 
-[src/cluster/GaleraCluster.ts:258-277](../../src/cluster/GaleraCluster.ts#L258).
+`_queryRequest` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
 Wraps a single `pool.query(sql, queryOptions)` call. The pool records
 the attempt as `mysql_dynamic_cluster.operation.duration`. On success:
 
@@ -256,8 +242,8 @@ loop in `query`.
 | Member | Source | Notes |
 | --- | --- | --- |
 | `connected: boolean` | [:23](../../src/cluster/GaleraCluster.ts#L23) | Flipped to `true` by the first successful pool connect; reset to `false` by `disconnect()`. |
-| `pools: Pool[]` (getter) | [:30](../../src/cluster/GaleraCluster.ts#L30) | Tagged `@internal` at [:29](../../src/cluster/GaleraCluster.ts#L29). Used by `ClusterHashing`, `ServiceNames`, and the test harness; not meant for consumers. |
-| `connect(): Promise<void>` | [:91](../../src/cluster/GaleraCluster.ts#L91) | Resolves on the first pool that comes up; rejects on the first failure before any success. |
-| `disconnect(): Promise<void>` | [:129](../../src/cluster/GaleraCluster.ts#L129) | Synchronous in practice — does not await pool disconnects. |
-| `on(event, callback)` | [:145](../../src/cluster/GaleraCluster.ts#L145) | Pass-through to the shared `Events` emitter. |
-| `query<T>(sql, values?, queryOptions?)` | [:155](../../src/cluster/GaleraCluster.ts#L155) | The full routing pipeline described above. |
+| `pools: Pool[]` (getter) | [:30](../../src/cluster/GaleraCluster.ts#L30) | Tagged `@internal` at [:28](../../src/cluster/GaleraCluster.ts#L28). Used by `ClusterHashing`, `ServiceNames`, and the test harness; not meant for consumers. |
+| `connect(): Promise<void>` | [`connect`](../../src/cluster/GaleraCluster.ts) | Resolves on the first pool that comes up; rejects on the first failure before any success. |
+| `disconnect(): Promise<void>` | [`disconnect`](../../src/cluster/GaleraCluster.ts) | Synchronous in practice — does not await pool disconnects. |
+| `on(event, callback)` | [`on`](../../src/cluster/GaleraCluster.ts) | Pass-through to the shared `Events` emitter. |
+| `query<T>(sql, values?, queryOptions?)` | [`query`](../../src/cluster/GaleraCluster.ts) | The full routing pipeline described above. |

@@ -10,8 +10,8 @@ This document describes the test layout of `@voicenter-team/mysql-dynamic-cluste
 - Config: [jest.config.js:1](../jest.config.js#L1). Uses the `ts-jest` preset, `node` test environment, and a 5-minute per-test timeout (`testTimeout: 300000`).
 - Scripts ([package.json:33](../package.json#L33)):
   - `npm test` runs `jest`.
-  - `npm run coverage` runs `jest --coverage` against the thresholds declared in [jest.config.js:21](../jest.config.js#L21) (10% across branches/functions/lines/statements).
-- The `tests/loads` directory is excluded from both `npm test` and coverage via `testPathIgnorePatterns` and `collectCoverageFrom` ([jest.config.js:9](../jest.config.js#L9), [jest.config.js:14](../jest.config.js#L14)). Load tests must be invoked explicitly (e.g. `npx jest tests/loads`).
+  - `npm run coverage` runs `jest --coverage`. Coverage is collected from `src/**/*.ts` and `index.ts` (`collectCoverageFrom` in [jest.config.js](../jest.config.js)) and checked against the `coverageThreshold` in the same file: statements 79, branches 73, functions 78, lines 80. Measured on 4.3.0 with the suites that run: statements 84.89 %, branches 78.83 %, functions 83.41 %, lines 85.63 %. Each floor is the measured number less 5, rounded down. The command still exits 1, as `npm test` does, because of the four stale suites below. The thresholds themselves are met.
+- The `tests/loads` directory is excluded from `npm test` via `testPathIgnorePatterns` ([jest.config.js:9](../jest.config.js#L9)). Load tests must be invoked explicitly (e.g. `npx jest tests/loads`).
 
 ## Layout
 
@@ -35,6 +35,7 @@ tests/
     flags.test.ts                # The flags pool setting reaches mysql2's createPool
     auto-flags.test.ts           # Flags picked from the server greeting: the rule, the pool, the log lines
     server-greeting.test.ts      # The probe login against mysql2's own server class on loopback
+    probe-timer.test.ts          # The 2 s close timer of the probe: length, unref, cleared on a clean end
     auto-flags-loopback.test.ts  # The real Pool on loopback: which capability each login announces
     idle-defaults.test.ts        # Idle connection defaults in the settings schema
     multi-statement.test.ts      # Pool.multiStatementQuery: order, commit, rollback
