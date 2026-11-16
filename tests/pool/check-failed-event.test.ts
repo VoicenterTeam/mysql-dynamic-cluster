@@ -93,6 +93,51 @@ describe('pool_check_failed event', () => {
         expect(listener).not.toHaveBeenCalled();
     });
 
+    it('does not fire when the query works and a validator says no', async () => {
+        const strict = { ...settings, validators: [{ key: 'wsrep_ready', operator: '=', value: 'ON' }] };
+        const checked = new PoolStatus(pool as any, strict, true);
+        pool.query.mockResolvedValue([{ Variable_name: 'wsrep_ready', Value: 'OFF' }]);
+        await checked.checkStatus();
+        checked.stopTimerCheck();
+
+        expect(checked.isValid).toBe(false);
+        expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('does not fire for a check that ends after the pool was disconnected', async () => {
+        let rejectQuery: (error: Error) => void;
+        pool.query.mockReturnValue(new Promise((_, reject) => { rejectQuery = reject; }));
+        const check = status.checkStatus();
+        // what Pool.disconnect() does to its status
+        status.active = false;
+        status.stopTimerCheck();
+        rejectQuery(refused());
+        await check;
+
+        expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('sets the next check before the listeners run', async () => {
+        let timersSeen = -1;
+        listener.mockImplementation(() => { timersSeen = jest.getTimerCount(); });
+        pool.query.mockRejectedValueOnce(refused());
+        await status.checkStatus();
+
+        expect(timersSeen).toBe(1);
+    });
+
+    it('logs the error a listener throws, with the host', async () => {
+        listener.mockImplementation(() => { throw new Error('listener bug'); });
+        pool.query.mockRejectedValueOnce(refused());
+        await status.checkStatus();
+
+        const lines = (Logger.error as jest.Mock).mock.calls.map(call => String(call[0]));
+        const guardLines = lines.filter(line => line.includes('pool_check_failed listener threw'));
+        expect(guardLines).toHaveLength(1);
+        expect(guardLines[0]).toContain('10.0.0.5');
+        expect(guardLines[0]).toContain('listener bug');
+    });
+
     it('does not fire while the pool is not active, as no check runs', async () => {
         const idle = new PoolStatus(pool as any, settings, false);
         pool.query.mockRejectedValue(refused());
