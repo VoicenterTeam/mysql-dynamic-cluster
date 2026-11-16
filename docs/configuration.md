@@ -79,7 +79,7 @@ The case it exists for: mysql2 3.21.0 and later turn on `CLIENT_QUERY_ATTRIBUTES
 
 #### Picked per node when `flags` is left out
 
-Added after 4.1.1. A pool without `flags` asks its server first. Before it creates the mysql2 pool it logs in once, reads the version and the capabilities from the server's greeting, and logs out. Then:
+Added in 4.2.0. A pool without `flags` asks its server first. Before it creates the mysql2 pool it logs in once, reads the version and the capabilities from the server's greeting, and logs out. Then:
 
 | the server | flags of the pool |
 |---|---|
@@ -111,7 +111,7 @@ defaultPoolSettings: {
 
 ## `escapeNamedValues`
 
-Added after 4.2.0. It decides what `cluster.query(sql, values)` does with an object of values.
+Added in 4.3.0. It decides what `cluster.query(sql, values)` does with an object of values.
 
 ```js
 await cluster.query('SELECT * FROM users WHERE email = :email', { email });
