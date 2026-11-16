@@ -54,9 +54,16 @@ itself is **not** created here; that happens lazily in `connect()`.
 `connect()` is `async` and is the first method `GaleraCluster.connect`
 calls on each pool. The steps:
 
-1. Build the underlying mysql2 pool via `mysql.createPool({ host, port,
-   user, password, database, connectionLimit })`, plus `flags` when the
-   pool settings have it ([src/pool/Pool.ts](../../src/pool/Pool.ts)).
+1. Without `flags` in the pool settings, log in once to read the server's
+   greeting and pick the flags the node needs
+   ([src/pool/ServerFlags.ts](../../src/pool/ServerFlags.ts), rule and log
+   lines in [configuration.md](../configuration.md#flags)). A failed login
+   does not stop `connect()`. A `disconnect()` during this step makes
+   `connect()` reject without opening a pool.
+   Then build the underlying mysql2 pool via `mysql.createPool({ host, port,
+   user, password, database, connectionLimit })`, plus `flags` from the
+   settings or from that decision
+   ([src/pool/Pool.ts](../../src/pool/Pool.ts)).
 2. Mark the status as active (`this.status.active = true`)
    ([src/pool/Pool.ts:82](../../src/pool/Pool.ts#L82)). Setting
    `active` to `true` is the trigger for `PoolStatus` to start its

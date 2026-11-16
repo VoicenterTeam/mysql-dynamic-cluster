@@ -43,7 +43,7 @@ Base configuration applied to every host in `hosts`.
 | `queryTimeout` | `number` (ms) | `120000` |
 | `slowQueryTime` | `number` (s) | `1` |
 | `redisFactor` | `number` | `1` |
-| `flags` | `string` or `string[]` | not set, see [below](#flags) |
+| `flags` | `string` or `string[]` | not set: picked per node, see [below](#flags) |
 
 Default `validators`:
 
@@ -70,11 +70,34 @@ A load factor is `{ key: string, multiplier: number }`.
 
 ### `flags`
 
-Added in 4.1.0. The `flags` connection option of mysql2, passed to `mysql.createPool` as they are. A name adds a flag, a name with a leading `-` turns a default one off. mysql2 takes an array or one comma-separated string. Left out, the library does not pass the key and mysql2 keeps its defaults.
+Added in 4.1.0. The `flags` connection option of mysql2, passed to `mysql.createPool` as they are. A name adds a flag, a name with a leading `-` turns a default one off. mysql2 takes an array or one comma-separated string. Left out, the library picks them per node, see below.
 
 Nobody checks the names. mysql2 ignores a name it does not know, without an error, and matches array entries exactly: upper case, no spaces. An array entry such as `'-client_query_attributes'` changes nothing, and neither does a misspelt name. mysql2 upper-cases only the string form. Leave `MULTI_STATEMENTS` off: it lets one query carry several statements, which makes SQL injection worse.
 
-The case it exists for: mysql2 3.21.0 and later turn on `CLIENT_QUERY_ATTRIBUTES` without looking at the server version. A server that announces the capability but is older than 8.0.26, such as Percona XtraDB Cluster 8.0.25, does not parse the prepared-statement packet that comes with it, so every `connection.execute()` hangs. The library's own queries are plain `query()` calls and are not affected, but code that runs `execute()` on the library's pools is. Turn the flag off for such servers:
+The case it exists for: mysql2 3.21.0 and later turn on `CLIENT_QUERY_ATTRIBUTES` without looking at the server version. A server that announces the capability but is older than 8.0.26, such as Percona XtraDB Cluster 8.0.25, does not parse the prepared-statement packet that comes with it, so every `connection.execute()` hangs. The library's own queries are plain `query()` calls and are not affected, but code that runs `execute()` on the library's pools is.
+
+#### Picked per node when `flags` is left out
+
+Added after 4.1.1. A pool without `flags` asks its server first. Before it creates the mysql2 pool it logs in once, reads the version and the capabilities from the server's greeting, and logs out. Then:
+
+| the server | flags of the pool |
+|---|---|
+| announces query attributes and reports a version below 8.0.26 | `['-CLIENT_QUERY_ATTRIBUTES']` |
+| announces them and reports 8.0.26 or later | mysql2's defaults |
+| does not announce them, or is MariaDB | mysql2's defaults |
+| announces them with a version that does not start with three numbers | `['-CLIENT_QUERY_ATTRIBUTES']` |
+| could not be reached, or refused the login | `['-CLIENT_QUERY_ATTRIBUTES']`, and the pool is created anyway |
+
+Every node decides for itself, so a cluster with mixed versions works. The decision is made once per `connect()`: a node upgraded while the app runs keeps the flag off until the app restarts, which costs nothing but query attributes.
+
+What to know:
+
+- It costs one extra login per node at start. A node that does not answer is waited for twice: once by this login, once by the pool's own first check. mysql2 gives up after its `connectTimeout`, 10 seconds by default.
+- The rule trusts the version the server reports. A proxy that reports another version than the server behind it can get the wrong answer. Set `flags` yourself for such a node.
+- `flags` in the settings always wins, also `flags: []` and `flags: ''`: no extra login, and the value goes to mysql2 as it is. To get mysql2's defaults on every node whatever the server says, set `flags: []` in `defaultPoolSettings`.
+- The decision is logged once per pool, with `pool`, `serverVersion`, `reason` and `flags` as meta: at `info` when the flag is turned off, at `debug` when nothing changes, at `warn` when the login failed. The warning carries the error code, not the message, and no line carries the password.
+
+Setting it by hand still works and skips the extra login:
 
 ```js
 defaultPoolSettings: {

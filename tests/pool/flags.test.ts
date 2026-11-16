@@ -10,10 +10,21 @@ jest.mock('../../src/Redis/Redis', () => ({
     __esModule: true,
     default: { set: jest.fn(), get: jest.fn() }
 }));
-// createPool records its options and stops connect() there: no socket, no timer
+// createPool records its options and stops connect() there: no socket, no timer.
+// A host without flags asks the server first: this one is new enough to keep mysql2's defaults
 jest.mock('mysql2', () => ({
     __esModule: true,
-    default: { createPool: jest.fn(() => { throw new Error('createPool reached'); }) }
+    default: {
+        createPool: jest.fn(() => { throw new Error('createPool reached'); }),
+        createConnection: jest.fn(() => {
+            const { EventEmitter } = jest.requireActual('events');
+            const connection = new EventEmitter();
+            connection.end = jest.fn();
+            connection.destroy = jest.fn();
+            setImmediate(() => connection.emit('connect', { serverVersion: '8.0.36', capabilityFlags: 1 << 27 }));
+            return connection;
+        })
+    }
 }));
 
 import mysql from 'mysql2';
@@ -37,6 +48,7 @@ const base = (): IUserSettings => ({
 const createPoolOptions = async (settings: IUserSettings): Promise<any[]> => {
     const createPool = mysql.createPool as unknown as jest.Mock;
     createPool.mockClear();
+    (mysql.createConnection as unknown as jest.Mock).mockClear();
     for (const host of Settings.mixSettings(settings).hosts) {
         const pool = new Pool({ id: 1, ...host }, 'test');
         await expect(pool.connect()).rejects.toThrow('createPool reached');
@@ -80,6 +92,8 @@ describe('the flags pool setting', () => {
         expect(options[1].flags).toEqual([]);
         expect(options[2].flags).toBe('IGNORE_SPACE');
         expect(options[3].flags).toBe('');
+        // flags of the settings are never second-guessed, an empty value neither
+        expect(mysql.createConnection).not.toHaveBeenCalled();
     });
 
     it('is passed as it is, as a string too', async () => {

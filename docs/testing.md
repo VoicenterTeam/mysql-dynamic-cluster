@@ -29,6 +29,8 @@ tests/
     otel-metrics.test.ts         # OpenTelemetry metrics recorded by the cluster
   pool/
     flags.test.ts                # The flags pool setting reaches mysql2's createPool
+    auto-flags.test.ts           # Flags picked from the server greeting: the rule, the pool, the log lines
+    server-greeting.test.ts      # The probe login against mysql2's own server class on loopback
     idle-defaults.test.ts        # Idle connection defaults in the settings schema
     multi-statement.test.ts      # Pool.multiStatementQuery: order, commit, rollback
     query-hygiene.test.ts        # Pool.query error paths and availableConnectionCount

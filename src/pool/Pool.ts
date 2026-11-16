@@ -14,6 +14,7 @@ import { IOperationMetricOptions } from "../types/MetricsInterfaces";
 import Redis from "../Redis/Redis";
 import { IRedisData } from "../types/RedisInterfaces";
 import { IdleConnectionReaper } from './IdleConnectionReaper';
+import { flagsForServer, IServerGreeting, probeServer } from './ServerFlags';
 
 // AKA galera node
 export class Pool {
@@ -39,6 +40,8 @@ export class Pool {
     private readonly _flags?: string | string[];
 
     private _pool: mysql.Pool;
+    // set by disconnect(), so a connect() that is still probing does not open a pool afterwards
+    private _closed = false;
     private readonly _reaper: IdleConnectionReaper;
 
     /**
@@ -89,7 +92,12 @@ export class Pool {
      * Create pool connection
      */
     public async connect() {
-        const flagsMeta = this._flags === undefined ? undefined : { flags: this._flags };
+        this._closed = false;
+        // flags of the settings are used as they are. Without them the server decides
+        const flags = this._flags === undefined ? await this._flagsFromServer() : this._flags;
+        if (this._closed) throw new Error("pool in host " + this.host + " was closed while connecting");
+
+        const flagsMeta = flags === undefined ? undefined : { flags };
         Logger.debug("Creating pool in host: " + this.host, flagsMeta);
         this._pool = mysql.createPool({
             host: this.host,
@@ -99,7 +107,7 @@ export class Pool {
             database: this._database,
             connectionLimit: this.connectionLimit,
             // left out when unset, so mysql2 keeps its default flags. mysql2 takes a string too
-            ...(this._flags === undefined ? {} : { flags: this._flags as string[] })
+            ...(flags === undefined ? {} : { flags: flags as string[] })
         })
 
         this._reaper.start(this._pool as any);
@@ -113,6 +121,46 @@ export class Pool {
         } else {
             throw new Error("pool in host " + this.host + " is not valid");
         }
+    }
+
+    /**
+     * Log in once to read the server's greeting and pick the flags this node needs.
+     * A failed login is not an error here: the pool is created anyway and reports the node itself
+     * @private
+     */
+    private async _flagsFromServer(): Promise<string[] | undefined> {
+        let greeting: IServerGreeting | undefined;
+        let error: string | undefined;
+        try {
+            greeting = await probeServer({
+                host: this.host,
+                port: this.port,
+                user: this._user,
+                password: this._password,
+                database: this._database
+            });
+        } catch (e) {
+            // the code names the cause. The message of a refused login holds the user name
+            error = e?.code || e?.message || String(e);
+        }
+
+        const decision = flagsForServer(greeting);
+        const meta = {
+            pool: this.name,
+            serverVersion: greeting?.serverVersion,
+            reason: decision.reason,
+            ...(decision.flags ? { flags: decision.flags } : {}),
+            ...(error ? { error } : {})
+        };
+
+        if (!greeting) {
+            Logger.warn(`Pool ${this.name}: could not read the server version, connecting with ${decision.flags}`, meta);
+        } else if (decision.flags) {
+            Logger.info(`Pool ${this.name}: server ${greeting.serverVersion} needs ${decision.flags}, set flags in the settings to override`, meta);
+        } else {
+            Logger.debug(`Pool ${this.name}: server ${greeting.serverVersion} keeps the default flags of mysql2`, meta);
+        }
+        return decision.flags;
     }
 
     /**
@@ -143,7 +191,8 @@ export class Pool {
      */
     public disconnect() {
         Logger.debug("closing pool in host: " + this.host);
-        this._pool.end((error) => {
+        this._closed = true;
+        this._pool?.end((error) => {
             if (error) {
                 Logger.error(error.message);
             }
