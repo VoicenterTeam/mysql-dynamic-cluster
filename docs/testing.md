@@ -46,6 +46,7 @@ tests/
   utils/
     logger.test.ts               # Logger: levels, console default, app-supplied logger
     logger-injection.test.ts     # A logger passed to createPoolCluster
+    service-names.test.ts        # ServiceNames.getID: the name is passed as a value
     settings.test.ts             # Merge of user settings + defaults via Settings (stale, dev API)
     utils.test.ts                # Pure-unit tests for Timer and Utils.clamp
   loads/
