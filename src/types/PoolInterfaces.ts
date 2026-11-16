@@ -2,7 +2,7 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2/typings/mysql";
+import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2";
 
 // Validator operator
 type Operator = '>' | '<' | '=' | 'Like';
