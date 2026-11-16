@@ -96,6 +96,11 @@ describe('named query values', () => {
             expect(namedValuesWarnings()).toHaveLength(0);
         });
 
+        it.each([undefined, null])('stays on when the query option is %s', async option => {
+            const { sent } = makeCluster(true);
+            expect(await sent(SQL, { n: QUOTE }, { escapeNamedValues: option })).toBe("SELECT * FROM t WHERE name = 'x\\' OR \\'1\\'=\\'1'");
+        });
+
         it('can be turned off for one query', async () => {
             const { sent } = makeCluster(true);
             expect(await sent(SQL, { n: 'NOW()' }, { escapeNamedValues: false })).toBe('SELECT * FROM t WHERE name = NOW()');
@@ -129,6 +134,15 @@ describe('named query values', () => {
             await makeCluster(false).sent(SQL, { n: 1 });
             await makeCluster(false).sent(SQL, { n: 1 });
             expect(namedValuesWarnings()).toHaveLength(2);
+        });
+
+        it('keeps the warning for the first value that goes in as text', async () => {
+            const { sent } = makeCluster(false);
+            await sent('SELECT 1', {});
+            await sent('SELECT :a', { b: 1 });
+            expect(namedValuesWarnings()).toHaveLength(0);
+            await sent('SELECT :a', { a: 1 });
+            expect(namedValuesWarnings()).toHaveLength(1);
         });
 
         it('does not warn for array, string or missing values', async () => {

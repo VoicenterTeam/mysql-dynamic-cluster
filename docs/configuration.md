@@ -122,9 +122,13 @@ await cluster.query('SELECT * FROM users WHERE email = :email', { email });
 | `true` | `... WHERE email = 'o\'neil@example.com'` |
 | `false` (default) | `... WHERE email = o'neil@example.com` |
 
-**On.** Each named value goes through mysql2's `escape`, the function that array values (`?`) always went through. A string arrives quoted and escaped, a number as a number, `null` and `undefined` as `NULL`, an array as a comma-separated list, a `Date` as a quoted date. A plain object arrives as the string `'[object Object]'`, never as SQL. To send SQL through a value on purpose, wrap it: `require('mysql2').raw('NOW()')`.
+**On.** Each named value goes through mysql2's `escape`. A string arrives quoted and escaped, a number as a number, `null` and `undefined` as `NULL`, an array as a comma-separated list, a `Date` as a quoted date. A plain object arrives as the string `'[object Object]'`, never as SQL. To send SQL through a value on purpose, wrap it: `require('mysql2').raw('NOW()')`. Any object with a `toSqlString` function is sent as SQL the same way. JSON cannot carry a function, so a parsed request body cannot hold one.
 
-**Off.** Each `:name` is replaced by the value as text, as in every version before. Nothing is quoted or escaped. A value that comes from a user can then change the statement, which is SQL injection, unless the caller escapes or validates it first. The first such query of a cluster logs one `warn` line that names this setting. The line holds neither the SQL nor the values.
+**Escaping protects a placeholder that stands where a value stands, and nowhere else.** A placeholder inside quotes, backticks or a `/* */` comment stays open to injection with the setting on: for `name = ':n'` the value ` OR 1=1 -- ` gives `name = '' OR 1=1 -- ''`. See [Turning it on in an existing service](#turning-it-on-in-an-existing-service).
+
+**Check the type of a value that comes from a request.** An array becomes a list, so `LIMIT :n` with `[0, 100000]` gives `LIMIT 0, 100000`, a nested array gives `(1, 2), (3, 4)`, and an empty array gives `IN ()`. Where the SQL expects one number or one string, make sure the value is one.
+
+**Off.** Each `:name` is replaced by the value as text, as in every version before. Nothing is quoted or escaped. A value that comes from a user can then change the statement, which is SQL injection, unless the caller escapes or validates it first. The first value of a cluster that goes in this way logs one `warn` line that names this setting. The line holds neither the SQL nor the values.
 
 The default is off because turning it on changes the SQL of existing callers. It becomes on in the next major version. Turn it on now in new code.
 
@@ -132,7 +136,7 @@ Array and string values are escaped in both modes. Only the object form depends 
 
 ### Per query
 
-`escapeNamedValues` is also a query option, and the option wins over the setting. A service can move one query at a time:
+`escapeNamedValues` is also a query option, and the option wins over the setting. An option of `undefined` or `null` counts as not passed. A service can move one query at a time:
 
 ```js
 await cluster.query(sql, { email }, { escapeNamedValues: true });
@@ -140,10 +144,10 @@ await cluster.query(sql, { email }, { escapeNamedValues: true });
 
 ### Turning it on in an existing service
 
-- **Remove the quotes around placeholders.** `name = ':name'` becomes `name = :name`. With the quotes left in, the value arrives quoted twice and the statement fails or matches nothing.
+- **Remove the quotes around placeholders.** `name = ':name'` becomes `name = :name`. This step is not optional. With the quotes left in, the value's own quotes close the literal early, and a value written for it changes the statement without a single quote character in it. The same holds for a placeholder inside backticks or a block comment.
 - **Move SQL fragments out of the values.** A value such as `NOW()`, a column name or `ASC` is sent as a quoted string once the setting is on. Write those into the SQL text, from a fixed list the code owns, or wrap them in mysql2's `raw()`.
-- **`LIKE` patterns.** Put the wildcards in the value: `name LIKE :pattern` with `{ pattern: '%' + text + '%' }`, not `'%:text%'`.
-- **A `:name` inside a string literal is still replaced** when the object has that key, now with quotes. Rename the key or the text.
+- **`LIKE` patterns.** Put the wildcards in the value: `name LIKE :pattern` with `{ pattern: '%' + text + '%' }`, not `'%:text%'`, which is a placeholder inside quotes.
+- **A `:name` inside a string literal is still replaced** when the object has that key, now with quotes, which breaks out of the literal as above. Rename the key or the text.
 - **Redis cache keys change.** The formatted SQL is the cache key, so each query misses the cache once after the switch.
 
 The escaping is mysql2's. It assumes the server does not run with `NO_BACKSLASH_ESCAPES` in its `sql_mode`, the same as for array values.

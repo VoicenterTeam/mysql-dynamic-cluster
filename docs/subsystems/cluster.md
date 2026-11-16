@@ -28,6 +28,7 @@ Fields populated from `config.current`:
   ([src/cluster/GaleraCluster.ts:51](../../src/cluster/GaleraCluster.ts#L51)).
 - `_useRedis` ← `redis.enabled`
   ([src/cluster/GaleraCluster.ts:52](../../src/cluster/GaleraCluster.ts#L52)).
+- `_escapeNamedValues` ← `escapeNamedValues`.
 - `_nullServiceName` is a constant `"mdc"` initialized on the field
   ([src/cluster/GaleraCluster.ts:41](../../src/cluster/GaleraCluster.ts#L41));
   the fallback service name becomes `${clusterName}_mdc`.
@@ -192,7 +193,7 @@ re-wrapped before being rethrown
   swaps in the value when the object has the key as its own property,
   otherwise leaves the placeholder verbatim. With `escapeNamedValues` on
   the value goes through `mysql2.escape`. With it off, the default, the
-  value goes in as text, not escaped, and the first such query of the
+  value goes in as text, not escaped, and the first such value of the
   cluster logs one warning. See
   [../configuration.md](../configuration.md#escapenamedvalues).
 

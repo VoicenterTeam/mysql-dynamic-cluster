@@ -160,9 +160,10 @@ export class GaleraCluster {
             redis: this._useRedis,
             maxRetry: this._errorRetryCount,
             redisRefreshCache: false,
-            escapeNamedValues: this._escapeNamedValues,
             ...queryOptions
         }
+        // after the spread: an option passed as undefined or null must not turn the setting off
+        queryOptions.escapeNamedValues ??= this._escapeNamedValues;
 
         let activePools: Pool[]; // available pools for query what passed the validator
         let retryCount; // max retry query count after error
@@ -340,12 +341,13 @@ export class GaleraCluster {
             } else if (typeof values === 'string') {
                 return MySQLFormat(sql, values);
             } else {
-                if (!escapeNamed) this._warnNamedValues();
                 // one pass over the sql: a value that holds :name itself is not replaced again
                 return sql.replace(/:(\w+)/g, (txt, key) => {
                     if (!Object.prototype.hasOwnProperty.call(values, key)) return txt;
                     // true: a plain object becomes a quoted string, not `key` = value pairs
-                    return escapeNamed ? MySQLEscape(values[key], true) : values[key];
+                    if (escapeNamed) return MySQLEscape(values[key], true);
+                    this._warnNamedValues();
+                    return values[key];
                 })
             }
         }
@@ -362,7 +364,7 @@ export class GaleraCluster {
         if (this._warnedNamedValues) return;
         this._warnedNamedValues = true;
         Logger.warn("Named query values are put into the sql without escaping. " +
-            "Set escapeNamedValues to escape them, see docs/configuration.md");
+            "Set escapeNamedValues to true to escape them");
     }
 
     /**

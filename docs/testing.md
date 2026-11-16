@@ -22,6 +22,7 @@ tests/
     hashing-upgrade.test.ts      # Hashing schema: backward compatible upgrade in place
     no-valid-pool-cache.test.ts  # GaleraCluster.query when no pool is valid: stale cache fallback
     named-values.test.ts         # object values: escapeNamedValues on, off, per query, the one-time warning
+    named-values-setting.test.ts # the escapeNamedValues setting through createPoolCluster
     query.test.ts                # GaleraCluster.query() shapes: no values, scalar, array, named, timeout (stale)
   configs/
     settings.test.ts             # Settings schema: defaults, strict validation, mixSettings, no env reading
