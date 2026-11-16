@@ -12,6 +12,7 @@ Before 4.0.0 the schema was convict, with an environment overlay. See [Migrating
 | `hosts` | array of [hosts](#hosts) | `[]` |
 | `defaultPoolSettings` | object | see [below](#defaultpoolsettings) |
 | `errorRetryCount` | `number` | `2` |
+| `escapeNamedValues` | `boolean` | `false`, see [below](#escapenamedvalues) |
 | `useClusterHashing` | `boolean` | `true` |
 | `clusterHashing` | object | see [below](#clusterhashing) |
 | `serviceMetrics` | object | see [below](#servicemetrics) |
@@ -107,6 +108,45 @@ defaultPoolSettings: {
 ```
 
 `flags` on a host replaces the default ones for that node, it is not added to them: `flags: []` on a host on a newer server gives that node mysql2's defaults again. This differs from `validators` and `loadFactors`, which are added.
+
+## `escapeNamedValues`
+
+Added after 4.2.0. It decides what `cluster.query(sql, values)` does with an object of values.
+
+```js
+await cluster.query('SELECT * FROM users WHERE email = :email', { email });
+```
+
+| `escapeNamedValues` | SQL sent for `email = "o'neil@example.com"` |
+|---|---|
+| `true` | `... WHERE email = 'o\'neil@example.com'` |
+| `false` (default) | `... WHERE email = o'neil@example.com` |
+
+**On.** Each named value goes through mysql2's `escape`, the function that array values (`?`) always went through. A string arrives quoted and escaped, a number as a number, `null` and `undefined` as `NULL`, an array as a comma-separated list, a `Date` as a quoted date. A plain object arrives as the string `'[object Object]'`, never as SQL. To send SQL through a value on purpose, wrap it: `require('mysql2').raw('NOW()')`.
+
+**Off.** Each `:name` is replaced by the value as text, as in every version before. Nothing is quoted or escaped. A value that comes from a user can then change the statement, which is SQL injection, unless the caller escapes or validates it first. The first such query of a cluster logs one `warn` line that names this setting. The line holds neither the SQL nor the values.
+
+The default is off because turning it on changes the SQL of existing callers. It becomes on in the next major version. Turn it on now in new code.
+
+Array and string values are escaped in both modes. Only the object form depends on the setting.
+
+### Per query
+
+`escapeNamedValues` is also a query option, and the option wins over the setting. A service can move one query at a time:
+
+```js
+await cluster.query(sql, { email }, { escapeNamedValues: true });
+```
+
+### Turning it on in an existing service
+
+- **Remove the quotes around placeholders.** `name = ':name'` becomes `name = :name`. With the quotes left in, the value arrives quoted twice and the statement fails or matches nothing.
+- **Move SQL fragments out of the values.** A value such as `NOW()`, a column name or `ASC` is sent as a quoted string once the setting is on. Write those into the SQL text, from a fixed list the code owns, or wrap them in mysql2's `raw()`.
+- **`LIKE` patterns.** Put the wildcards in the value: `name LIKE :pattern` with `{ pattern: '%' + text + '%' }`, not `'%:text%'`.
+- **A `:name` inside a string literal is still replaced** when the object has that key, now with quotes. Rename the key or the text.
+- **Redis cache keys change.** The formatted SQL is the cache key, so each query misses the cache once after the switch.
+
+The escaping is mysql2's. It assumes the server does not run with `NO_BACKSLASH_ESCAPES` in its `sql_mode`, the same as for array values.
 
 ## `hosts`
 

@@ -89,7 +89,7 @@ Each call walks the following steps:
    If nothing survives the filter, an error is thrown
    ([src/cluster/GaleraCluster.ts:339-341](../src/cluster/GaleraCluster.ts#L339)).
 3. **Format SQL** — `_formatSQL(sql, values)` applies `mysql2`'s array
-   or string escaping, or a `:name` substitution for object values —
+   or string escaping, or a `:name` substitution for object values (escaped only with `escapeNamedValues` on) —
    [src/cluster/GaleraCluster.ts:187](../src/cluster/GaleraCluster.ts#L187)
    and
    [src/cluster/GaleraCluster.ts:300-314](../src/cluster/GaleraCluster.ts#L300).

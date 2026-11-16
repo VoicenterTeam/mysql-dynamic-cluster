@@ -6,7 +6,7 @@ import { IUserSettings } from "../types/SettingsInterfaces";
 import { IQueryOptions, QueryValues, ClusterEvent, QueryResult } from '../types/PoolInterfaces'
 import Logger from "../utils/Logger";
 
-import { format as MySQLFormat } from 'mysql2';
+import { format as MySQLFormat, escape as MySQLEscape } from 'mysql2';
 import { Pool } from "../pool/Pool";
 import { ClusterHashing } from "./ClusterHashing";
 import Metrics from "../metrics/Metrics";
@@ -36,6 +36,9 @@ export class GaleraCluster {
     private readonly _serviceNames: ServiceNames;
     private readonly _errorRetryCount: number; // retry count after query error
     private readonly _useRedis: boolean;
+    private readonly _escapeNamedValues: boolean;
+    // the warning about named values that are not escaped is logged once
+    private _warnedNamedValues: boolean = false;
 
     private readonly _clusterName: string;
     private readonly _nullServiceName: string = "mdc"
@@ -50,6 +53,7 @@ export class GaleraCluster {
         this._clusterName = config.current.clusterName
         this._errorRetryCount = config.current.errorRetryCount
         this._useRedis = config.current.redis.enabled
+        this._escapeNamedValues = config.current.escapeNamedValues
         const poolIds: number[] = this._sortPoolIds(config.current.hosts);
 
         config.current.hosts.forEach(poolSettings => {
@@ -156,6 +160,7 @@ export class GaleraCluster {
             redis: this._useRedis,
             maxRetry: this._errorRetryCount,
             redisRefreshCache: false,
+            escapeNamedValues: this._escapeNamedValues,
             ...queryOptions
         }
 
@@ -195,7 +200,7 @@ export class GaleraCluster {
         } catch (e) {
             // no pool passed the validator: serve cached data, even expired, as when every pool fails
             if (queryOptions.redis && !queryOptions.redisRefreshCache) {
-                const redisResult = await Redis.get(this._formatSQL(sql, values));
+                const redisResult = await Redis.get(this._formatSQL(sql, values, queryOptions.escapeNamedValues));
                 if (redisResult) {
                     Logger.warn("No valid pool. Use old data from Redis");
                     // parsed before the record: a cached value that doesn't parse is a failed query
@@ -214,7 +219,7 @@ export class GaleraCluster {
             throw new Error(e);
         }
 
-        sql = this._formatSQL(sql, values);
+        sql = this._formatSQL(sql, values, queryOptions.escapeNamedValues);
         Logger.debug("formatSQL", {sql, values})
         let redisData: IRedisData = null;
         if (queryOptions.redis && !queryOptions.redisRefreshCache) {
@@ -325,22 +330,39 @@ export class GaleraCluster {
      * Mix together values and sql string
      * @param sql MySQL query
      * @param values values to mix with sql
+     * @param escapeNamed escape the values of an object. Array and string values are always escaped
      * @private
      */
-    private _formatSQL(sql: string, values: QueryValues): string {
+    private _formatSQL(sql: string, values: QueryValues, escapeNamed?: boolean): string {
         if (values) {
             if (Array.isArray(values)) {
                 return MySQLFormat(sql, values);
             } else if (typeof values === 'string') {
                 return MySQLFormat(sql, values);
             } else {
+                if (!escapeNamed) this._warnNamedValues();
+                // one pass over the sql: a value that holds :name itself is not replaced again
                 return sql.replace(/:(\w+)/g, (txt, key) => {
-                    return values.hasOwnProperty(key) ? values[key] : txt
+                    if (!Object.prototype.hasOwnProperty.call(values, key)) return txt;
+                    // true: a plain object becomes a quoted string, not `key` = value pairs
+                    return escapeNamed ? MySQLEscape(values[key], true) : values[key];
                 })
             }
         }
 
         return sql;
+    }
+
+    /**
+     * Named values go into the sql as text unless escapeNamedValues is on.
+     * Logged once per cluster, without the sql and the values
+     * @private
+     */
+    private _warnNamedValues(): void {
+        if (this._warnedNamedValues) return;
+        this._warnedNamedValues = true;
+        Logger.warn("Named query values are put into the sql without escaping. " +
+            "Set escapeNamedValues to escape them, see docs/configuration.md");
     }
 
     /**

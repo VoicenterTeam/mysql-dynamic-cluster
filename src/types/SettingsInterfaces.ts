@@ -12,6 +12,8 @@ import { IDefaultServiceMetricsSettings, IServiceMetricsSettings } from "./Metri
 interface ISettings {
     redisInstant?: Redis | Cluster,
     errorRetryCount?: number,
+    // escape the values of query(sql, {name: value})
+    escapeNamedValues?: boolean,
     serviceMetrics?: IServiceMetricsSettings,
     useClusterHashing?: boolean,
     clusterHashing?: IClusterHashingSettings,
@@ -30,6 +32,7 @@ export interface IUserSettings extends ISettings {
 export interface IDefaultSettings extends ISettings {
     defaultPoolSettings: IDefaultPoolSettings,
     errorRetryCount: number,
+    escapeNamedValues: boolean,
     serviceMetrics: IDefaultServiceMetricsSettings,
     useClusterHashing: boolean,
     clusterHashing: IDefaultClusterHashingSettings,

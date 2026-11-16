@@ -43,7 +43,9 @@ export interface IQueryOptions {
     redis?: boolean,
     redisFactor?: number,
     redisExpire?: number,
-    redisRefreshCache?: boolean
+    redisRefreshCache?: boolean,
+    // escape the values of an object of values, for this query. Default: the escapeNamedValues setting
+    escapeNamedValues?: boolean
 }
 
 export interface IServiceNodeMap {

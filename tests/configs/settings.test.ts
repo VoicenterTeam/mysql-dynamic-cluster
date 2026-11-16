@@ -32,6 +32,8 @@ const defaultsOf322 = {
     useClusterHashing: true,
     clusterName: 'demo',
     errorRetryCount: 2,
+    // not in 3.2.2: added off, which is what 3.2.2 did
+    escapeNamedValues: false,
     redis: {
         enabled: false, keyPrefix: 'mdc:', expire: 1000000, expiryMode: 'EX',
         algorithm: 'md5', encoding: 'base64', clearOnStart: false
@@ -192,6 +194,7 @@ describe('settings validation', () => {
 
     it.each([
         ['errorRetryCount', { errorRetryCount: 'abc' }],
+        ['escapeNamedValues', { escapeNamedValues: 'yes' }],
         ['defaultPoolSettings.port', { defaultPoolSettings: { port: '3306' } }],
         ['redis.enabled', { redis: { enabled: 'yes' } }],
         ['redis.algorithm', { redis: { algorithm: 'sha1' } }],

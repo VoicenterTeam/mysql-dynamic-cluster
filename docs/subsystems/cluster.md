@@ -122,6 +122,7 @@ Signature:
 - `redis` defaults to `_useRedis` (i.e. `config.current.redis.enabled`).
 - `maxRetry` defaults to `_errorRetryCount`.
 - `redisRefreshCache` defaults to `false`.
+- `escapeNamedValues` defaults to the `escapeNamedValues` setting, `false` unless set.
 
 ### 2. Metrics
 
@@ -188,10 +189,12 @@ re-wrapped before being rethrown
 - Array `values` → `mysql2`'s `format(sql, values)` (positional `?`).
 - String `values` → same `format()` call.
 - Object `values` → regex `:paramName` substitution: `sql.replace(/:(\w+)/g, ...)`
-  swaps in `values[key]` when the object has the key, otherwise leaves
-  the placeholder verbatim. Note this path does **not** go through
-  `mysql2.format`, so values are not escaped — see
-  [../known-issues.md](../known-issues.md).
+  swaps in the value when the object has the key as its own property,
+  otherwise leaves the placeholder verbatim. With `escapeNamedValues` on
+  the value goes through `mysql2.escape`. With it off, the default, the
+  value goes in as text, not escaped, and the first such query of the
+  cluster logs one warning. See
+  [../configuration.md](../configuration.md#escapenamedvalues).
 
 ### 7. Redis read
 
