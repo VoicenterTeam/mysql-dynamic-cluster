@@ -74,7 +74,7 @@ export function flagsForServer(greeting?: IServerGreeting): IFlagsDecision {
 export interface IServerProbe {
     // rejects when the login fails or the probe is cancelled
     greeting: Promise<IServerGreeting>;
-    // drop the connection now. Safe to call at any time, more than once
+    // drop the connection and its socket now. Safe to call at any time, more than once
     cancel(): void;
 }
 
@@ -82,8 +82,19 @@ export interface IServerProbe {
 const CLOSE_GRACE_MS = 2000;
 
 /**
+ * Close a probe connection for good. mysql2's destroy() only ends the writing side of the socket
+ * and clears its own connect timer: a server that never answers would keep the socket,
+ * and with it the process, open
+ */
+function drop(connection: any): void {
+    connection.destroy();
+    connection.stream?.destroy();
+}
+
+/**
  * Log in once, read the greeting and log out.
- * mysql2 gives up after its connectTimeout, 10 seconds by default
+ * Without cancel(), mysql2 gives up on a server that does not answer after its connectTimeout,
+ * 10 seconds by default
  */
 export function probeServer(options: IProbeOptions): IServerProbe {
     // the probe sends no prepared statement, and with the flag off it works on every server
@@ -100,7 +111,7 @@ export function probeServer(options: IProbeOptions): IServerProbe {
 
             connection.end();
             // the logout is one packet, then the server closes. One that does not would keep the socket
-            const timer = setTimeout(() => connection.destroy(), CLOSE_GRACE_MS);
+            const timer = setTimeout(() => drop(connection), CLOSE_GRACE_MS);
             timer.unref();
             connection.once('end', () => clearTimeout(timer));
         });
@@ -109,11 +120,11 @@ export function probeServer(options: IProbeOptions): IServerProbe {
         connection.on('error', (error: Error) => {
             if (settled) return;
             settled = true;
-            connection.destroy();
+            drop(connection);
             reject(error);
         });
         cancel = () => {
-            connection.destroy();
+            drop(connection);
             if (settled) return;
             settled = true;
             reject(new Error('probe cancelled'));

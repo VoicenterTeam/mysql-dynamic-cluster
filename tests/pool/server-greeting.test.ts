@@ -11,7 +11,9 @@ jest.setTimeout(10000);
 
 const servers: any[] = [];
 
-const listen = (serverVersion: string, capabilityFlags: number, refuse = false): Promise<number> => {
+const listen = (
+    serverVersion: string, capabilityFlags: number, refuse = false, closeOnQuit = true
+): Promise<number> => {
     const server: any = (mysql as any).createServer();
     servers.push(server);
     server.on('connection', (connection: any) => {
@@ -26,7 +28,7 @@ const listen = (serverVersion: string, capabilityFlags: number, refuse = false):
             authCallback: (_params: object, done: (err: null, mysqlError?: object) => void) =>
                 refuse ? done(null, { message: 'Access denied', code: 1045 }) : done(null)
         });
-        connection.on('quit', () => connection.close());
+        connection.on('quit', () => { if (closeOnQuit) connection.close(); });
     });
     return new Promise(resolve => {
         server.listen(0, '127.0.0.1', () => resolve((server._server.address() as AddressInfo).port));
@@ -71,22 +73,45 @@ describe('probeServer against a real greeting packet', () => {
         await expect(probe(port)).rejects.toMatchObject({ code: 'ER_ACCESS_DENIED_ERROR' });
     });
 
-    it('rejects and closes its socket when it is cancelled before the server greets', async () => {
-        // accepts the connection and never says a word, as a host that drops packets
+    it('rejects and closes its socket when it is cancelled, though the server never answers', async () => {
+        // accepts the connection, never says a word and never closes its side:
+        // only a socket the client destroys itself goes away
         const sockets: Socket[] = [];
-        const silent = createServer(socket => { sockets.push(socket); socket.on('error', () => undefined); });
+        const silent = createServer({ allowHalfOpen: true }, socket => {
+            sockets.push(socket);
+            socket.on('error', () => undefined);
+        });
         await new Promise<void>(resolve => silent.listen(0, '127.0.0.1', resolve));
         const port = (silent.address() as AddressInfo).port;
+        const created = jest.spyOn(mysql, 'createConnection');
         const pending = probeServer({ host: '127.0.0.1', port, user: 'u', password: 'p', database: 'd' });
+        const client: any = created.mock.results[0].value;
+        created.mockRestore();
         const settled = expect(pending.greeting).rejects.toThrow('probe cancelled');
         while (sockets.length === 0) await new Promise(resolve => setImmediate(resolve));
-        const closed = new Promise(resolve => sockets[0].once('close', resolve));
 
         pending.cancel();
         pending.cancel();
         await settled;
-        await closed;
+
+        expect(client.stream.destroyed).toBe(true);
+        sockets.forEach(socket => socket.destroy());
         await new Promise(resolve => silent.close(resolve));
+    });
+
+    it('closes its socket itself when the server keeps it after the logout', async () => {
+        // reads the logout and does nothing about it
+        const port = await listen('8.0.36', BASE_CAPABILITIES | CLIENT_QUERY_ATTRIBUTES, false, false);
+        const created = jest.spyOn(mysql, 'createConnection');
+        const pending = probeServer({ host: '127.0.0.1', port, user: 'u', password: 'p', database: 'd' });
+        const client: any = created.mock.results[0].value;
+        created.mockRestore();
+
+        await pending.greeting;
+        // the server gets its time first
+        expect(client.stream.destroyed).toBe(false);
+        await new Promise(resolve => setTimeout(resolve, 2300));
+        expect(client.stream.destroyed).toBe(true);
     });
 
     it('rejects when nothing listens', async () => {

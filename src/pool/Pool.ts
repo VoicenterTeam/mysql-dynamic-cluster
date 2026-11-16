@@ -99,7 +99,7 @@ export class Pool {
         // flags of the settings are used as they are. Without them the server decides
         const flags = this._flags === undefined ? await this._flagsFromServer() : this._flags;
         if (attempt !== this._connectAttempt) {
-            throw new Error("pool in host " + this.host + " was closed while connecting");
+            throw new Error("pool in host " + this.host + " was closed or connected again while connecting");
         }
 
         const flagsMeta = flags === undefined ? undefined : { flags };

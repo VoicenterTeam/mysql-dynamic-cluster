@@ -194,7 +194,7 @@ describe('a pool without flags in its settings', () => {
 describe('a pool that is still asking its server', () => {
     it('opens no pool when it is disconnected, and drops the login', async () => {
         const pool = poolFor();
-        const settled = expect(pool.connect()).rejects.toThrow('was closed while connecting');
+        const settled = expect(pool.connect()).rejects.toThrow('was closed or connected again while connecting');
         const connection = probe();
         // no mysql2 pool exists yet
         expect(() => pool.disconnect()).not.toThrow();
@@ -208,7 +208,7 @@ describe('a pool that is still asking its server', () => {
 
     it('opens no pool for a greeting that comes after the disconnect', async () => {
         const pool = poolFor();
-        const settled = expect(pool.connect()).rejects.toThrow('was closed while connecting');
+        const settled = expect(pool.connect()).rejects.toThrow('was closed or connected again while connecting');
         const connection = probe();
         pool.disconnect();
         connection.emit('connect', { serverVersion: '8.0.36', capabilityFlags: -1 });
@@ -219,7 +219,7 @@ describe('a pool that is still asking its server', () => {
 
     it('opens one pool for connect, disconnect, connect', async () => {
         const pool = poolFor();
-        const first = expect(pool.connect()).rejects.toThrow('was closed while connecting');
+        const first = expect(pool.connect()).rejects.toThrow('was closed or connected again while connecting');
         const firstProbe = probe();
         pool.disconnect();
         const second = expect(pool.connect()).rejects.toThrow('createPool reached');
@@ -238,7 +238,7 @@ describe('a pool that is still asking its server', () => {
 
     it('rejects a query, it does not throw outside the promise', async () => {
         const pool = poolFor();
-        const settled = expect(pool.connect()).rejects.toThrow('was closed while connecting');
+        const settled = expect(pool.connect()).rejects.toThrow('was closed or connected again while connecting');
 
         await expect(pool.query('SELECT 1')).rejects.toMatchObject({
             code: 'POOL_NOT_CONNECTED', message: 'pool in host node-a is not connected yet'
@@ -253,7 +253,7 @@ describe('a pool that is still asking its server', () => {
 
     it('rejects a cluster query for a service pinned to that node', async () => {
         const pool = poolFor();
-        const settled = expect(pool.connect()).rejects.toThrow('was closed while connecting');
+        const settled = expect(pool.connect()).rejects.toThrow('was closed or connected again while connecting');
         // the cluster puts the node of a pinned service first without looking at its status
         const cluster: GaleraCluster = Object.assign(Object.create(GaleraCluster.prototype), {
             _pools: [pool],

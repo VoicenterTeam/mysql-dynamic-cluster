@@ -115,7 +115,8 @@ there).
 Synchronous. Steps:
 
 1. Drop the login of a `connect()` that still asks the server for its
-   version, so that `connect()` rejects and opens no pool. Then call
+   version, socket included, so that `connect()` rejects, opens no pool
+   and leaves nothing that keeps the process running. Then call
    `this._pool.end(callback)` when a mysql2 pool exists; the callback only
    logs an error if one is reported
    ([src/pool/Pool.ts:122-126](../../src/pool/Pool.ts#L122)).
