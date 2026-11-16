@@ -12,18 +12,17 @@ module.exports = {
   ],
   testTimeout: 300000,
   collectCoverageFrom: [
-    "**/*.{ts}",
-    "**/tests/**",
-    "!**/node_modules/**",
-    "!**/dist/**",
-    "!**/tests/loads/**"
+    "src/**/*.ts",
+    "index.ts"
   ],
+  // Measured on 4.3.0 plus the follow-up tests: statements 84.89, branches 78.83,
+  // functions 83.41, lines 85.63. Each floor is that number less 5, rounded down
   coverageThreshold: {
     global: {
-      branches: 10,
-      functions: 10,
-      lines: 10,
-      statements: 10
+      branches: 73,
+      functions: 78,
+      lines: 80,
+      statements: 79
     }
   }
 };
