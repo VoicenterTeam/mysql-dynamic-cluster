@@ -20,6 +20,7 @@ tests/
   cluster/
     hashing.test.ts              # ClusterHashing wiring against a live cluster + helper schema (stale)
     hashing-upgrade.test.ts      # Hashing schema: backward compatible upgrade in place
+    hashing-restart.test.ts      # Cluster hashing after stop(): a second connect, a check that ends late
     no-valid-pool-cache.test.ts  # GaleraCluster.query when no pool is valid: stale cache fallback
     named-values.test.ts         # object values: escapeNamedValues on, off, per query, the one-time warning
     named-values-setting.test.ts # the escapeNamedValues setting through createPoolCluster
@@ -46,6 +47,8 @@ tests/
     status-missing-key.test.ts   # A status key missing from SHOW GLOBAL STATUS
     check-failed-event.test.ts   # pool_check_failed: the payload, every failed check, a listener that throws
     check-failed-event-public.test.ts # pool_check_failed through createPoolCluster and cluster.on
+    check-loop.test.ts           # Health check loop: stop and start, a check that ends late, odd errors
+    reconnect-checks.test.ts     # A pool connected, disconnected and connected again is checked again
   toolchain/
     compiler.test.ts             # The compiler parses the syntax zod 4 needs; every import resolves through exports maps
   utils/
@@ -55,6 +58,7 @@ tests/
     service-names.test.ts        # ServiceNames.getID: the name is passed as a value
     settings.test.ts             # Merge of user settings + defaults via Settings (stale, dev API)
     utils.test.ts                # Pure-unit tests for Timer and Utils.clamp
+    timer.test.ts                # Timer: one pending run, dispose, activate
   loads/
     load.test.ts                 # Manual load harness; ignored by jest config (stale)
 ```

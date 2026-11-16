@@ -81,9 +81,11 @@ export class PoolStatus {
     }
 
     /**
-     * Let the check timer run again after stopTimerCheck(). The pool calls it when it connects
+     * Mark the status active and let the check timer run again after stopTimerCheck().
+     * The pool calls it when it connects, before its first check. It starts no check itself
      */
     public startTimerCheck() {
+        this.active = true;
         this._timer.activate();
     }
 

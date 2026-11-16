@@ -29,7 +29,7 @@ Companion docs:
 
 ## Construction
 
-[src/cluster/ClusterHashing.ts:30-38](../../src/cluster/ClusterHashing.ts#L30).
+[src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts).
 
 The constructor takes `(cluster, clusterName, options:
 IClusterHashingSettings)` and pulls two values off `options`:
@@ -37,17 +37,17 @@ IClusterHashingSettings)` and pulls two values off `options`:
 - `_nextCheckTime` ← `options.nextCheckTime` (default `5000` ms; see
   [src/configs/schema.ts](../../src/configs/schema.ts)).
 - `_database` ← `` `${clusterName}_${options.dbName}` ``
-  ([src/cluster/ClusterHashing.ts:34](../../src/cluster/ClusterHashing.ts#L34)).
+  ([src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts)).
 
 The internal map `_serviceNodeMap` is a `Map<number, number>` keyed by
 service id and valued by pool id
-([src/cluster/ClusterHashing.ts:16](../../src/cluster/ClusterHashing.ts#L16)).
+([src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts)).
 A `Timer` wrapper is created bound to `_checkHashing` but not started;
 `connect()` is what actually kicks the timer off
-([src/cluster/ClusterHashing.ts:36](../../src/cluster/ClusterHashing.ts#L36)).
+([src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts)).
 
 `_databaseVersion` is the hard-coded constant `1`
-([src/cluster/ClusterHashing.ts:23](../../src/cluster/ClusterHashing.ts#L23)).
+([src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts)).
 Bumping it drops and rebuilds the schema (emptying `node_services`), and an
 older version sharing the schema would see a different number and drop it
 back on its next start. So schema changes must stay backward compatible and
@@ -73,12 +73,12 @@ recreate the helper schema on next boot.
 
 ## `connect()` — flow
 
-[src/cluster/ClusterHashing.ts:43-64](../../src/cluster/ClusterHashing.ts#L43).
+[src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts).
 
 `connect` does four things in order:
 
 1. **Version check.** Calls `_isDatabaseVersionEquals()`
-   ([src/cluster/ClusterHashing.ts:154-182](../../src/cluster/ClusterHashing.ts#L154)):
+   ([src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts)):
    - Runs `` SHOW DATABASES WHERE `Database` = '...' `` to confirm
      the helper schema exists. An empty result returns `false`
      immediately.
@@ -92,7 +92,7 @@ recreate the helper schema on next boot.
    both steps are skipped and the existing schema is reused as-is.
 3. **Insert nodes.** `_insertNodes()` registers every pool currently
    in `GaleraCluster.pools` into the helper database's `node` table
-   ([src/cluster/ClusterHashing.ts:205-218](../../src/cluster/ClusterHashing.ts#L205)).
+   ([src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts)).
 4. **Prime cache and arm timer.** Awaits `_checkHashing()` once; that
    method fetches the current service-to-node mapping, schedules itself
    to run again, and sets `connected` to whether the check succeeded
@@ -109,10 +109,10 @@ catches and logs it so a hashing failure does not abort
 
 ### `_createDB`
 
-[src/cluster/ClusterHashing.ts:106-148](../../src/cluster/ClusterHashing.ts#L106).
+[src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts).
 
 Three SQL bundles are loaded off disk via `_readFilesInDir`
-([src/cluster/ClusterHashing.ts:189-199](../../src/cluster/ClusterHashing.ts#L189)):
+([src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts)):
 
 - `tables/` — `node`, `node_services`.
 - `routines/` — `SP_NodeInsert`, `SP_NodeServiceUpdate`,
@@ -120,7 +120,7 @@ Three SQL bundles are loaded off disk via `_readFilesInDir`
 - `metadata/` — the `metadata` table that holds the schema version.
 
 The order of operations
-([src/cluster/ClusterHashing.ts:117-144](../../src/cluster/ClusterHashing.ts#L117)):
+([src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts)):
 
 1. `CREATE SCHEMA IF NOT EXISTS ${database} COLLATE utf8_general_ci;`.
 2. `multiStatementQuery` with one `DROP PROCEDURE IF EXISTS` per
@@ -142,7 +142,7 @@ nodes / 127 services). The asset paths are resolved against
 
 ### `_insertNodes`
 
-[src/cluster/ClusterHashing.ts:205-218](../../src/cluster/ClusterHashing.ts#L205).
+[src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts).
 
 Iterates `cluster.pools` and calls
 `SP_NodeInsert(pool.id, pool.name, pool.host, pool.port)` for each.
@@ -157,11 +157,11 @@ unhandled. See
 
 ## Periodic refresh — `_checkHashing`
 
-[src/cluster/ClusterHashing.ts:223-244](../../src/cluster/ClusterHashing.ts#L223).
+[src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts).
 
 Called once synchronously at the end of `connect()` and then
 re-armed on a `_nextCheckTime` timer
-([src/cluster/ClusterHashing.ts:250-252](../../src/cluster/ClusterHashing.ts#L250)).
+([src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts)).
 Each tick:
 
 1. Bails if `_timer.active` is false (i.e. `stop()` has been called).
@@ -182,7 +182,7 @@ entry until process restart.
 
 ## Write path — `updateNodeForService`
 
-[src/cluster/ClusterHashing.ts:80-92](../../src/cluster/ClusterHashing.ts#L80).
+[src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts).
 
 `updateNodeForService(serviceId, nodeId)` is called from
 `GaleraCluster._queryRequest`
@@ -209,7 +209,7 @@ that explicitly opt in by passing a non-zero `serviceId` (or a
 
 ## Read path — `getNodeByService`
 
-[src/cluster/ClusterHashing.ts:98-100](../../src/cluster/ClusterHashing.ts#L98).
+[src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts).
 
 `getNodeByService(serviceId)` is a one-line wrapper around
 `_serviceNodeMap.get(serviceId)`. It returns the cached pool id or
@@ -273,13 +273,16 @@ sorted tail.
 
 ## `stop()`
 
-[src/cluster/ClusterHashing.ts:69-73](../../src/cluster/ClusterHashing.ts#L69).
+[src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts).
 
 Disposes the refresh timer and sets `connected = false`. After `stop`,
 `updateNodeForService` and `getNodeByService` are gated off at the
 `GaleraCluster` call sites by the `_clusterHashing.connected` guard,
 so they become no-ops. The `_serviceNodeMap` is **not** cleared —
-calling `connect` again will simply resume populating it.
+calling `connect` again turns the timer back on and resumes populating
+it. Up to 4.4.0 a second `connect` left hashing off. A status check that
+is still running at `stop` does not mark hashing as connected when it
+ends, and logs nothing.
 
 `GaleraCluster.disconnect` invokes `this._clusterHashing?.stop()`
 as part of teardown
@@ -290,8 +293,8 @@ see [cluster.md](cluster.md) for the full shutdown order.
 
 | Member | Source | Notes |
 | --- | --- | --- |
-| `connected: boolean` | [:14](../../src/cluster/ClusterHashing.ts#L14) | `true` only between a successful `connect()` and `stop()`. Read by `GaleraCluster._queryRequest` and `_getActivePools`. |
-| `connect(): Promise<void>` | [:43](../../src/cluster/ClusterHashing.ts#L43) | Version-checks, recreates schema if needed, inserts nodes, primes the cache. |
-| `stop(): void` | [:69](../../src/cluster/ClusterHashing.ts#L69) | Disposes the refresh timer. Leaves `_serviceNodeMap` intact. |
-| `updateNodeForService(serviceId, nodeId)` | [:80](../../src/cluster/ClusterHashing.ts#L80) | Writes the pin to both the helper db (`SP_NodeServiceUpdate`) and the in-memory cache. |
-| `getNodeByService(serviceId): number` | [:98](../../src/cluster/ClusterHashing.ts#L98) | Pure memory read; returns `undefined` when no mapping is known. |
+| `connected: boolean` | [ClusterHashing.ts](../../src/cluster/ClusterHashing.ts) | `true` only between a successful `connect()` and `stop()`. Read by `GaleraCluster._queryRequest` and `_getActivePools`. |
+| `connect(): Promise<void>` | [ClusterHashing.ts](../../src/cluster/ClusterHashing.ts) | Version-checks, recreates schema if needed, inserts nodes, primes the cache. |
+| `stop(): void` | [ClusterHashing.ts](../../src/cluster/ClusterHashing.ts) | Disposes the refresh timer. Leaves `_serviceNodeMap` intact. |
+| `updateNodeForService(serviceId, nodeId)` | [ClusterHashing.ts](../../src/cluster/ClusterHashing.ts) | Writes the pin to both the helper db (`SP_NodeServiceUpdate`) and the in-memory cache. |
+| `getNodeByService(serviceId): number` | [ClusterHashing.ts](../../src/cluster/ClusterHashing.ts) | Pure memory read; returns `undefined` when no mapping is known. |

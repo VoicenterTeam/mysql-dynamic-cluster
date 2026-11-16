@@ -23,22 +23,22 @@ for how `PoolStatus` is wired into a `Pool` and
 
 ## `PoolStatus` state
 
-[src/pool/PoolStatus.ts:16-48](../../src/pool/PoolStatus.ts#L16).
+[src/pool/PoolStatus.ts](../../src/pool/PoolStatus.ts).
 
 The public surface that `GaleraCluster` and `Pool` read from:
 
 | Field | Kind | Source | Notes |
 | --- | --- | --- | --- |
-| `active` | `boolean` (mutable) | [:17](../../src/pool/PoolStatus.ts#L17) | Flipped to `true` by `Pool.connect()` (see [pool.md](pool.md)). The first thing `checkStatus()` does is `if (!this.active) return`, so the poll is a no-op until `Pool.connect()` runs. |
-| `availableConnectionCount` | `number` (getter) | [:18](../../src/pool/PoolStatus.ts#L18) | Returns `Pool.availableConnectionCount`: `connectionLimit` minus connections in use, read from mysql2's own lists (see [pool.md](pool.md)). |
-| `isValid` | `boolean` (getter over `_isValid`) | [:23-26](../../src/pool/PoolStatus.ts#L23) | Set by `Validator.check`. Initially `false` (line 23 and re-asserted on line 61) — a pool that has never been polled is not yet routable. |
-| `queryTime` | `number` (getter over `_queryTime`) | [:28-31](../../src/pool/PoolStatus.ts#L28) | Wall-clock duration in seconds of the most recent `SHOW GLOBAL STATUS`, measured via `QueryTimer`. Set after both the success and the error branches of `checkStatus`. |
-| `loadScore` | `number` (getter over `_loadScore`) | [:34-37](../../src/pool/PoolStatus.ts#L34) | Sum from `LoadFactor.check`. **Initial value is `100000`** (set in the constructor at [:62](../../src/pool/PoolStatus.ts#L62), overriding the field's `= 0`). A pool that has never been polled sorts last in `_getActivePools` — see [cluster.md](cluster.md). |
+| `active` | `boolean` (mutable) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Set to `true` by `startTimerCheck()`, which `Pool.connect()` calls (see [pool.md](pool.md)), and to `false` by `Pool.disconnect()`. The first thing `checkStatus()` does is `if (!this.active) return`, so the poll is a no-op until `Pool.connect()` runs. |
+| `availableConnectionCount` | `number` (getter) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Returns `Pool.availableConnectionCount`: `connectionLimit` minus connections in use, read from mysql2's own lists (see [pool.md](pool.md)). |
+| `isValid` | `boolean` (getter over `_isValid`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Set by `Validator.check`. Initially `false` (line 23 and re-asserted on line 61) — a pool that has never been polled is not yet routable. |
+| `queryTime` | `number` (getter over `_queryTime`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Wall-clock duration in seconds of the most recent `SHOW GLOBAL STATUS`, measured via `QueryTimer`. Set after both the success and the error branches of `checkStatus`. |
+| `loadScore` | `number` (getter over `_loadScore`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Sum from `LoadFactor.check`. **Initial value is `100000`** (set in the constructor at [PoolStatus.ts](../../src/pool/PoolStatus.ts), overriding the field's `= 0`). A pool that has never been polled sorts last in `_getActivePools` — see [cluster.md](cluster.md). |
 
 Private members worth knowing about:
 
 - `_nextCheckTime: number = 10000` —
-  [src/pool/PoolStatus.ts:43](../../src/pool/PoolStatus.ts#L43). Initial
+  [src/pool/PoolStatus.ts](../../src/pool/PoolStatus.ts). Initial
   delay before the first re-check; hard-coded, not configurable. Note
   that `10000` is outside the default `timerCheckRange` of
   `{start: 5000, end: 15000}`, but the first poll fires via
@@ -46,42 +46,42 @@ Private members worth knowing about:
   [pool.md](pool.md)) — only the *next* check uses this number, by
   which time the clamp on line 124 has already brought it into range.
 - `timerCheckRange: ITimerCheckRange` —
-  [:45](../../src/pool/PoolStatus.ts#L45). Defaults
+  [PoolStatus.ts](../../src/pool/PoolStatus.ts). Defaults
   `{start: 5000, end: 15000}` ms from the settings schema
   ([src/configs/schema.ts](../../src/configs/schema.ts)).
 - `timerCheckMultiplier: number` —
-  [:47](../../src/pool/PoolStatus.ts#L47). Default `1.3` from the
+  [PoolStatus.ts](../../src/pool/PoolStatus.ts). Default `1.3` from the
   schema
   ([src/configs/schema.ts](../../src/configs/schema.ts)).
 - `_validator: Validator`, `_loadFactor: LoadFactor`, `_timer: Timer` —
   constructed once and reused for the lifetime of the pool
-  ([:64-69](../../src/pool/PoolStatus.ts#L64)).
+  ([PoolStatus.ts](../../src/pool/PoolStatus.ts)).
 
 ## `checkStatus()`
 
-[src/pool/PoolStatus.ts:84-111](../../src/pool/PoolStatus.ts#L84).
+[src/pool/PoolStatus.ts](../../src/pool/PoolStatus.ts).
 
 Async, idempotent against the `active` flag. Sequence on every tick:
 
 1. Start a `QueryTimer`.
 2. Bail if `!this.active`
-   ([:87](../../src/pool/PoolStatus.ts#L87)) — covers the window
+   ([PoolStatus.ts](../../src/pool/PoolStatus.ts)) — covers the window
    between `disconnect()` setting `active = false` and the timer
    actually firing.
 3. Run `await this._pool.query('SHOW GLOBAL STATUS;', { redis: false })`
-   ([:92](../../src/pool/PoolStatus.ts#L92)). `redis: false` is
+   ([PoolStatus.ts](../../src/pool/PoolStatus.ts)). `redis: false` is
    important: the status poll must never go through the Redis cache
    layer, or every pool would see the same cached snapshot.
 4. End the timer and store it as `_queryTime` so the
    `query_time` custom validator key (below) can read it.
 5. `this._isValid = this._validator.check(result)`
-   ([:97](../../src/pool/PoolStatus.ts#L97)).
+   ([PoolStatus.ts](../../src/pool/PoolStatus.ts)).
 6. `this._loadScore = this._loadFactor.check(result)`
-   ([:99](../../src/pool/PoolStatus.ts#L99)).
+   ([PoolStatus.ts](../../src/pool/PoolStatus.ts)).
 7. `this.nextCheckStatus()` — schedule the next tick on success.
 
 If any step throws, the `catch` branch
-([:103-110](../../src/pool/PoolStatus.ts#L103)) logs, still records
+([PoolStatus.ts](../../src/pool/PoolStatus.ts)) logs, still records
 `_queryTime` (so a hanging node's slow poll is visible), and calls
 `nextCheckStatus(true)` to schedule a *faster* re-check.
 Last, it emits `pool_check_failed` with the error and the pool id, so the app can read the
@@ -113,7 +113,7 @@ name and that validator fails, so the pool is marked invalid (see
 
 ## Adaptive timer
 
-[src/pool/PoolStatus.ts:118-127](../../src/pool/PoolStatus.ts#L118).
+[src/pool/PoolStatus.ts](../../src/pool/PoolStatus.ts).
 
 ```text
 nextCheckStatus(downgrade = false):
@@ -139,11 +139,28 @@ exponential cap beyond the clamp, and no jitter.
 
 `Timer` itself is a one-shot wrapper: `start(time)` calls `setTimeout`,
 the callback fires once, and `checkStatus` is responsible for calling
-`nextCheckStatus` again to re-arm. `dispose()` clears the pending
-timeout and flips `_active = false` so `start()` becomes a no-op
-([src/utils/Timer.ts:29-41](../../src/utils/Timer.ts#L29)). The
-`active` flag on `Timer` is **independent** of `PoolStatus.active` —
+`nextCheckStatus` again to re-arm. A second `start` replaces the pending
+run, so there is never more than one. `dispose()` clears the pending
+timeout and flips `_active = false` so `start()` becomes a no-op, until
+`activate()` is called ([src/utils/Timer.ts](../../src/utils/Timer.ts)).
+The `active` flag on `Timer` is **independent** of `PoolStatus.active` —
 the former gates the timer, the latter gates `checkStatus` itself.
+
+### Stop and start again
+
+`Pool.disconnect()` calls `stopTimerCheck()`, and `Pool.connect()` calls
+`startTimerCheck()` before its first check. That call sets `active` and
+turns the timer on, so a pool that is connected again is checked again. Up to 4.4.0 the timer stayed off after the first
+disconnect.
+
+A check that is still running at `stopTimerCheck()` belongs to a
+connection that is gone. When it ends it changes neither `isValid` nor the
+failure count, sets no timer, logs nothing and emits nothing, also when
+the pool was connected again in the meantime.
+
+A check may be rejected with anything. The log line of a failed check
+prints the message of the error, its `code` when the message is empty, and
+the value itself when it is not an error.
 
 ## `Validator`
 

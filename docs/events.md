@@ -88,7 +88,9 @@ other payload.
 - `error` is the error the check failed with, the same object, not a copy. For an error from
   mysql2 it keeps `code`, and `errno` when there is one. A wrong password has
   `code: 'ER_ACCESS_DENIED_ERROR'` and `errno: 1045`. A node that refuses the connection has
-  `code: 'ECONNREFUSED'`. A host that does not answer has `code: 'ETIMEDOUT'`. Go by `code`:
+  `code: 'ECONNREFUSED'`. A host that does not answer has `code: 'ETIMEDOUT'` with the default
+  timeouts. With `queryTimeout` or `timerCheckRange.end` at or below the 10 second connect
+  timeout of mysql2, the check gives up first, with `Status check timeout` and no `code`. Go by `code`:
   network errors do not always carry an `errno` or a message. A host name that resolves to
   several addresses, such as `localhost`, gives an `AggregateError` with the `code` and an empty
   message.

@@ -65,11 +65,14 @@ calls on each pool. The steps:
    user, password, database, connectionLimit })`, plus `flags` from the
    settings or from that decision
    ([src/pool/Pool.ts](../../src/pool/Pool.ts)).
-2. Mark the status as active (`this.status.active = true`)
+2. Mark the status as active (`this.status.startTimerCheck()`, which sets
+   `status.active = true`)
    ([src/pool/Pool.ts:115](../../src/pool/Pool.ts#L115)). Setting
    `active` to `true` is the trigger for `PoolStatus` to start its
    recurring `SHOW GLOBAL STATUS` poller — see
    [health-and-scoring.md](health-and-scoring.md) for the timer semantics.
+   The same call turns the check timer on again, which matters for a
+   pool that was disconnected before.
 3. Wire mysql2's per-connection events through `_connectEvents`
    ([src/pool/Pool.ts:116](../../src/pool/Pool.ts#L116)).
 4. Run one synchronous (well, `await`ed) `status.checkStatus()` to
@@ -121,7 +124,8 @@ Synchronous. Steps:
    logs an error if one is reported
    ([src/pool/Pool.ts:225-233](../../src/pool/Pool.ts#L225)).
 2. Set `status.active = false` and call `status.stopTimerCheck()` to
-   shut down the `PoolStatus` polling timer
+   shut down the `PoolStatus` polling timer. A check that is still
+   running after this changes nothing and reports nothing
    ([src/pool/Pool.ts:234-235](../../src/pool/Pool.ts#L234)).
 3. Emit `'pool_disconnected'` with the pool id
    ([src/pool/Pool.ts:237](../../src/pool/Pool.ts#L237)).
