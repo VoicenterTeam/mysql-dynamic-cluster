@@ -35,7 +35,7 @@ tests/
     status-invalid.test.ts       # PoolStatus.checkStatus validity
     status-missing-key.test.ts   # A status key missing from SHOW GLOBAL STATUS
   toolchain/
-    compiler.test.ts             # The repo's TypeScript compiler parses the syntax zod 4 needs
+    compiler.test.ts             # The compiler parses the syntax zod 4 needs; every import resolves through exports maps
   utils/
     logger.test.ts               # Logger: levels, console default, app-supplied logger
     logger-injection.test.ts     # A logger passed to createPoolCluster
