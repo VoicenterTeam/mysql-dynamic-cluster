@@ -32,11 +32,17 @@ npm publish --dry-run --registry <url of the internal registry> --tag <tag>
 
 Read the `Publishing to` line of the output. It names the registry and the
 tag. Stop if either is not what you expect. The file list above it should
-hold `dist/` and `assets/` and nothing else from the repo.
+hold `dist/`, `assets/`, `package.json`, `README.md` and `LICENSE`, and
+nothing else from the repo.
 
 `npm run build` runs by itself on `prepublishOnly`, for the dry run and for
-the real publish, so the tarball is always built from the checked-out
-source.
+the real publish. Two things it does not do:
+
+- It does not empty `dist/` first. A file left there by another branch
+  stays and is packed. Delete `dist/` before the dry run when the checkout
+  was on another branch.
+- It does not run with `--ignore-scripts` or `ignore-scripts=true` in an npm
+  config. Then the tarball holds whatever `dist/` held before.
 
 ## 4. Publish
 
@@ -49,8 +55,15 @@ default.
 
 ## Which tag
 
-- A release version, such as `4.3.0`: `--tag latest`.
-- A pre-release version, such as `5.0.0-rc.1`: `--tag next`, so that
-  `latest` does not move and a plain `npm install` keeps the last release.
+- `--tag next` for a version that should not become what a plain
+  `npm install` gives: a pre-release such as `5.0.0-rc.1`, or a release of
+  a line the owner has not made the default yet.
+- `--tag latest` only for the newest version of the line the owner made the
+  default. A fix release on an older line must not get it: with an explicit
+  `--tag latest`, npm 11 no longer refuses a version lower than the highest
+  published one, and `latest` would move back.
 
-Without `--tag`, npm puts every publish under `latest`, a pre-release too.
+Moving `latest` is the owner's decision each time.
+
+Without `--tag`, npm uses `latest`. npm 11 refuses a pre-release version
+without `--tag`.

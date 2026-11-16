@@ -25,7 +25,7 @@ describe('the close timer of probeServer', () => {
         jest.restoreAllMocks();
     });
 
-    it('logs out at the greeting and leaves the socket alone for 2 s less 1 ms', async () => {
+    it('leaves the socket alone for 2 s less 1 ms after the logout', async () => {
         const { connection, probe } = startProbe();
 
         connection.emit('connect', packet);

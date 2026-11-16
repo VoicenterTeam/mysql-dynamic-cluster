@@ -111,7 +111,7 @@ Signature:
 ### 1. Option defaults
 
 `queryOptions` is rebuilt via spread so caller-supplied keys win
-(the first statement of `query`):
+(the first two statements of `query`; the second sets `escapeNamedValues`):
 
 - `redis` defaults to `_useRedis` (i.e. `config.current.redis.enabled`).
 - `maxRetry` defaults to `_errorRetryCount`.
