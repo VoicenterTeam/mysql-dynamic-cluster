@@ -4,6 +4,7 @@
 
 import { GlobalStatusResult } from "../types/PoolInterfaces";
 import Logger from "../utils/Logger";
+import Events from "../utils/Events";
 import { Utils } from "../utils/Utils";
 import { Timer } from "../utils/Timer";
 import { Pool } from "./Pool";
@@ -128,6 +129,23 @@ export class PoolStatus {
             this._queryTime = queryTimer.get();
 
             this.nextCheckStatus(true)
+            this._emitCheckFailed(err);
+        }
+    }
+
+    /**
+     * Hand the error of a failed check to the app, with the id of the pool.
+     * It runs after the next check is set, and a listener that throws is logged,
+     * so a listener cannot stop the checks
+     * @param err error of the failed check
+     * @private
+     */
+    private _emitCheckFailed(err: any) {
+        try {
+            Events.emit('pool_check_failed', err, this._pool.id);
+        } catch (listenerError) {
+            Logger.error("A pool_check_failed listener threw in host: " + this._pool.host +
+                ".\n Message: " + (listenerError && listenerError.message));
         }
     }
 

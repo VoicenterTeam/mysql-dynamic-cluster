@@ -14,6 +14,7 @@
 | `connection` | [src/pool/Pool.ts:102](../src/pool/Pool.ts#L102) | `connection, poolId` | Re-emit of the underlying `mysql2.Pool` `"connection"` event: a new physical MySQL connection has just been opened by the pool. |
 | `acquire` | [src/pool/Pool.ts:113](../src/pool/Pool.ts#L113) | `connection, poolId` | Re-emit of `mysql2.Pool` `"acquire"`: an existing connection has been handed out for a query. |
 | `release` | [src/pool/Pool.ts:108](../src/pool/Pool.ts#L108) | `connection, poolId` | Re-emit of `mysql2.Pool` `"release"`: a connection has been returned to the pool. |
+| `pool_check_failed` | `PoolStatus.checkStatus()` in [src/pool/PoolStatus.ts](../src/pool/PoolStatus.ts) | `error, poolId` | Per pool, each time a health check fails with an error. See [A failed health check](#a-failed-health-check). |
 
 The `poolId` is the numeric `id` assigned to a pool at construction time (auto-incrementing, surfaced in metrics and logs).
 
@@ -76,6 +77,46 @@ cluster.on('connected', (args) => {
     console.log('cluster connected');
 });
 ```
+
+## A failed health check
+
+`pool_check_failed` hands the app the error of a failed health check, so it can tell a wrong
+password from a node that is down. The listener gets `[error, poolId]`, wrapped like every
+other payload.
+
+- `error` is the error the check failed with, the same object, not a copy. For an error from
+  mysql2 it keeps `code` and `errno`. A wrong password has `code: 'ER_ACCESS_DENIED_ERROR'` and
+  `errno: 1045`. A node that is down has `code: 'ECONNREFUSED'`.
+- `poolId` is the `id` of the pool the check ran on.
+
+```ts
+cluster.on('pool_check_failed', ([error, poolId]) => {
+    if (error.code === 'ER_ACCESS_DENIED_ERROR') {
+        console.error('pool', poolId, 'has a wrong user or password', error.errno);
+    } else if (error.code === 'ECONNREFUSED') {
+        console.error('pool', poolId, 'is down');
+    } else {
+        console.error('pool', poolId, 'failed its check:', error.message);
+    }
+});
+```
+
+What to know:
+
+- It fires for every failed check, not only the first. A failing pool is checked again every
+  `timerCheckRange.start` ms at the fastest, so expect one event per check until it recovers.
+- It fires for the first check inside `connect()` too, so subscribe before calling `connect()`.
+- It fires when the check ends with an error: the status query was rejected, or the check
+  timed out. A timed out check gives an `Error` with the message `Status check timeout` and no
+  `code`.
+- It does not fire when the query worked and a validator said no, for example a node that is
+  not `Synced`. There is no error then.
+- One failed check does not take the pool out of rotation, the second in a row does (see
+  [health-and-scoring.md](./subsystems/health-and-scoring.md)). The event fires for both.
+- A listener that throws does not stop the health checks. The next check is set before the
+  listeners run, and the thrown error is logged. Other listeners of the same event that were
+  added after the one that threw do not run for that check. The other events have no such
+  guard.
 
 ## Notes for subscribers
 

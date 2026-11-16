@@ -14,7 +14,8 @@ export type ClusterEvent = 'connected' |
                             'connection' |
                             'release' |
                             'pool_connected' |
-                            'pool_disconnected';
+                            'pool_disconnected' |
+                            'pool_check_failed';
 
 // Database global status result
 export type GlobalStatusResult = { Variable_name: string, Value: string }

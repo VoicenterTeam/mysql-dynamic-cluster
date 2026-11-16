@@ -84,6 +84,8 @@ If any step throws, the `catch` branch
 ([:103-110](../../src/pool/PoolStatus.ts#L103)) logs, still records
 `_queryTime` (so a hanging node's slow poll is visible), and calls
 `nextCheckStatus(true)` to schedule a *faster* re-check.
+Last, it emits `pool_check_failed` with the error and the pool id, so the app can read the
+error's `code` and `errno`; see [events.md](../events.md#a-failed-health-check).
 
 Since 3.2.2 the `catch` also counts failures in a row (`_failedChecks`).
 The **second** failed check in a row sets `_isValid = false`; a single

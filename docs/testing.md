@@ -43,6 +43,8 @@ tests/
     reaper.test.ts               # IdleConnectionReaper
     status-invalid.test.ts       # PoolStatus.checkStatus validity
     status-missing-key.test.ts   # A status key missing from SHOW GLOBAL STATUS
+    check-failed-event.test.ts   # pool_check_failed: the payload, every failed check, a listener that throws
+    check-failed-event-public.test.ts # pool_check_failed through createPoolCluster and cluster.on
   toolchain/
     compiler.test.ts             # The compiler parses the syntax zod 4 needs; every import resolves through exports maps
   utils/
