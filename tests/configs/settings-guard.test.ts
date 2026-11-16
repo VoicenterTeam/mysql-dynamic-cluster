@@ -25,6 +25,10 @@ describe('createPoolCluster with settings that are not an object', () => {
 
     it('throws an Error', () => {
         expect(() => createPoolCluster(null as any)).toThrow(Error);
+        // a plain Error, not a subclass such as TypeError
+        let thrown: any;
+        try { createPoolCluster(null as any); } catch (e) { thrown = e; }
+        expect(thrown.constructor).toBe(Error);
     });
 
     it('throws with no argument', () => {

@@ -13,19 +13,14 @@ const idsOf = (hosts: object[]): number[] => {
 };
 
 describe('host ids', () => {
+    // id 0 counts as not set, as it always did. Changing that renumbers nodes that an
+    // existing hashing database already knows under their old id, see issue #29
     it.each([
-        ['after a higher id', [{ id: 5 }, { id: 0 }], [5, 0]],
+        ['after a higher id', [{ id: 5 }, { id: 0 }], [5, 6]],
         ['as the only host', [{ id: 0 }], [0]],
-        ['between two other ids', [{ id: 2 }, { id: 0 }, { id: 7 }], [2, 0, 7]]
-    ])('id 0 is kept %s', (_name, hosts, ids) => {
-        expect(idsOf(hosts)).toEqual(ids);
-    });
-
-    it.each([
-        ['before the host with id 0', [{}, { id: 0 }], [1, 0]],
-        ['after the host with id 0', [{ id: 0 }, {}], [0, 1]],
-        ['when 0 is not the highest id', [{ id: 0 }, { id: 5 }, {}], [0, 5, 6]]
-    ])('a host without an id gets an id that is not 0, %s', (_name, hosts, ids) => {
+        ['in a list numbered from 0', [{ id: 0 }, { id: 1 }, { id: 2 }], [3, 1, 2]],
+        ['before a host without an id', [{ id: 0 }, { id: 5 }, {}], [6, 5, 7]]
+    ])('id 0 is treated as no id %s', (_name, hosts, ids) => {
         expect(idsOf(hosts)).toEqual(ids);
     });
 
