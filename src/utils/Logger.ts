@@ -25,7 +25,6 @@ const metaText = (meta?: object): string => {
 
 const consoleLine = (level: LogMethod) => (message: any, meta?: object): void => {
   const text = message instanceof Error ? message.stack || message.message : message;
-  // tslint:disable-next-line:no-console
   console.log(`[${timestamp()}] [${level}] ${text} ${metaText(meta)}`);
 }
 

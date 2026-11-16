@@ -10,7 +10,6 @@
     "declaration": true,
     "skipLibCheck": true
   },
-  "lib": ["es2015"],
   "exclude": ["node_modules", "**/*.spec.ts", "tests"],
   "include": ["src/**/*", "index.ts"]
 }

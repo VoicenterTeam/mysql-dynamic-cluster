@@ -366,12 +366,13 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 - **Severity:** **low**
 - **Location:** [package.json](../package.json) (the `scripts` block) and the
   absence of any `.github/workflows/` directory.
-- **Description:** `package.json` declares `tslint` as a dev dependency but
-  there is no `lint`, `lint:fix`, or `typecheck` script. `tslint` itself has
-  been deprecated upstream since 2019. There is no GitHub Actions config in
+- **Description:** there is no linter and no `lint`, `lint:fix`, or
+  `typecheck` script. `tslint` was a dev dependency until 4.1.0, deprecated
+  upstream since 2019 and never wired to a script; it is removed now.
+  There is no GitHub Actions config in
   the repository, so `npm test`, `npm run build`, and any linter never run on
   push or PR. Schema breaks, type regressions, and the cluster of bugs above
   ride into `main` unchecked.
-- **Suggested fix:** migrate to ESLint (`@typescript-eslint`), add `lint` and
+- **Suggested fix:** add ESLint (`typescript-eslint`), add `lint` and
   `typecheck` scripts, and add a GitHub Actions workflow running
   `npm ci && npm run build && npm test && npm run lint && npm run typecheck`.

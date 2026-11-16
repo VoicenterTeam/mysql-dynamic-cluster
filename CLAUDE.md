@@ -9,7 +9,7 @@
 - `assets/sql/` — hashing-database DDL + stored routines bundled at publish time.
 - `demo/` — runnable example used by `npm start`.
 - `docs/` — V3.0 documentation set (this file's routing targets).
-- Root configs: `index.ts`, `tsconfig.json`, `jest.config.js`, `tslint.json`, `package.json`, `ecosystem.config.js`.
+- Root configs: `index.ts`, `tsconfig.json`, `jest.config.js`, `package.json`, `ecosystem.config.js`.
 
 ## Working on the V3.0 branch
 
@@ -25,7 +25,7 @@ From `package.json` (no inventing scripts):
 - `npm run coverage` — `jest --coverage`.
 - `npm start` — `npm run build && node demo/index.js`.
 
-There is **no** `lint`, `typecheck`, or `test:load` script. `tslint` is in devDependencies but unwired.
+There is **no** `lint`, `typecheck`, or `test:load` script, and no linter is installed.
 
 ## Where to read before changing X
 
@@ -53,7 +53,7 @@ There is **no** `lint`, `typecheck`, or `test:load` script. `tslint` is in devDe
 
 - **TypeScript:** interfaces named `I*` (e.g. `IClusterSettings`); default exports for singletons (`Logger`, `Redis`, `Metrics`, `config`, `Events`); 2-space indent.
 - **Build:** `tsc -p tsconfig.build.json` only (target `es6`, module `commonjs`). No Babel, esbuild, or bundler.
-- **Linting:** `tslint` is in deps but no `lint` script. Don't add one as part of feature work.
+- **Linting:** none. `tslint` was removed after 4.1.0 (deprecated, never wired). Don't add a linter as part of feature work.
 - **Layout:** new subsystems live under `src/<area>/`; their types go in `src/types/`.
 - **Adding a metric:** see the "Adding a new metric" section of [docs/subsystems/metrics.md](docs/subsystems/metrics.md).
 
