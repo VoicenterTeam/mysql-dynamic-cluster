@@ -2,9 +2,11 @@
   "compilerOptions": {
     "experimentalDecorators": false,
     "module": "commonjs",
+    "moduleResolution": "bundler",
     "esModuleInterop": true,
     "target": "es6",
-    "moduleResolution": "node",
+    "strict": false,
+    "types": ["node", "jest"],
     "sourceMap": true,
     "outDir": "./dist",
     "declaration": true,
