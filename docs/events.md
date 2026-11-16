@@ -80,7 +80,8 @@ cluster.on('connected', (args) => {
 
 ## A failed health check
 
-`pool_check_failed` hands the app the error of a failed health check, so it can tell a wrong
+Added in 4.4.0. `pool_check_failed` hands the app the error of a failed health check, so it
+can tell a wrong
 password from a node that is down. The listener gets `[error, poolId]`, wrapped like every
 other payload.
 
