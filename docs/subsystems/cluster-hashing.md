@@ -282,7 +282,7 @@ so they become no-ops. The `_serviceNodeMap` is **not** cleared —
 calling `connect` again turns the timer back on and resumes populating
 it. Up to 4.4.0 a second `connect` left hashing off. A status check that
 is still running at `stop` does not mark hashing as connected when it
-ends, and logs nothing.
+ends, and logs nothing, also when `connect` ran again before it ended.
 
 `GaleraCluster.disconnect` invokes `this._clusterHashing?.stop()`
 as part of teardown

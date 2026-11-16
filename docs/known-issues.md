@@ -189,7 +189,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   example a port over 32767) was an unhandled rejection, which crashes
   services that exit on those.
 - **Severity:** **low**
-- **Location:** [src/cluster/ClusterHashing.ts:205-218](../src/cluster/ClusterHashing.ts#L205-L218)
+- **Location:** [src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)
 - **Description:** The method wraps `this._cluster.query(...)` in
   `try/catch (e) { Logger.error(...) }`, but `cluster.query` returns a Promise
   and is not awaited. Synchronous exceptions are rare here; the actual failure
@@ -209,7 +209,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 ### 7. `ClusterHashing` SQL-asset paths are dist-depth fragile
 
 - **Severity:** **low**
-- **Location:** [src/cluster/ClusterHashing.ts:108-114](../src/cluster/ClusterHashing.ts#L108-L114)
+- **Location:** [src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)
 - **Description:** `_createDB` constructs SQL-asset paths by prefixing
   `'../'` + `'../../assets/sql/create_hashing_database/...'` and resolving
   against `__dirname`. At runtime `__dirname` is

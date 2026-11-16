@@ -1,19 +1,19 @@
 # Events
 
-`@voicenter-team/mysql-dynamic-cluster` exposes a small set of lifecycle and per-pool events through a single shared Node.js `EventEmitter`. Subscribers attach via `GaleraCluster.on(event, callback)` (see [src/cluster/GaleraCluster.ts:145](../src/cluster/GaleraCluster.ts#L145)), which delegates to the singleton emitter in [src/utils/Events.ts:12](../src/utils/Events.ts#L12). The event-name union is fixed by the `ClusterEvent` type in [src/types/PoolInterfaces.ts:10](../src/types/PoolInterfaces.ts#L10). See also [architecture.md](./architecture.md) for where these emissions sit in the connect / query / disconnect flow, and [glossary.md](./glossary.md) for terms like *pool* and *cluster hashing*.
+`@voicenter-team/mysql-dynamic-cluster` exposes a small set of lifecycle and per-pool events through a single shared Node.js `EventEmitter`. Subscribers attach via `GaleraCluster.on(event, callback)` (see [src/cluster/GaleraCluster.ts](../src/cluster/GaleraCluster.ts)), which delegates to the singleton emitter in [src/utils/Events.ts](../src/utils/Events.ts). The event-name union is fixed by the `ClusterEvent` type in [src/types/PoolInterfaces.ts](../src/types/PoolInterfaces.ts). See also [architecture.md](./architecture.md) for where these emissions sit in the connect / query / disconnect flow, and [glossary.md](./glossary.md) for terms like *pool* and *cluster hashing*.
 
 ## Catalog
 
 | Event | Emitter | Payload | When it fires |
 | --- | --- | --- | --- |
-| `connected` | [src/cluster/GaleraCluster.ts:101](../src/cluster/GaleraCluster.ts#L101) | none | Once, when the first pool in `GaleraCluster.connect()` finishes its initial validation. Subsequent pool successes do not re-emit because of the `this.connected` guard. |
-| `hashing_created` | [src/cluster/GaleraCluster.ts:119](../src/cluster/GaleraCluster.ts#L119) | none | After `ClusterHashing.connect()` resolves, if the cluster was constructed with `useClusterHashing: true`. Fires immediately after `connected`. |
-| `disconnected` | [src/cluster/GaleraCluster.ts:137](../src/cluster/GaleraCluster.ts#L137) | none | At the end of `GaleraCluster.disconnect()`, after all pools have been instructed to close and the hashing helper / Redis client are stopped. |
-| `pool_connected` | [src/pool/Pool.ts:88](../src/pool/Pool.ts#L88) | `poolId: number` | Per pool, when its initial `checkStatus()` reports `isValid`. Emitted once per pool per connect cycle. |
-| `pool_disconnected` | [src/pool/Pool.ts:129](../src/pool/Pool.ts#L129) | `poolId: number` | Per pool, inside `Pool.disconnect()` after `mysql2.Pool.end()` is invoked and the status timer is stopped. |
-| `connection` | [src/pool/Pool.ts:102](../src/pool/Pool.ts#L102) | `connection, poolId` | Re-emit of the underlying `mysql2.Pool` `"connection"` event: a new physical MySQL connection has just been opened by the pool. |
-| `acquire` | [src/pool/Pool.ts:113](../src/pool/Pool.ts#L113) | `connection, poolId` | Re-emit of `mysql2.Pool` `"acquire"`: an existing connection has been handed out for a query. |
-| `release` | [src/pool/Pool.ts:108](../src/pool/Pool.ts#L108) | `connection, poolId` | Re-emit of `mysql2.Pool` `"release"`: a connection has been returned to the pool. |
+| `connected` | [src/cluster/GaleraCluster.ts](../src/cluster/GaleraCluster.ts) | none | Once, when the first pool in `GaleraCluster.connect()` finishes its initial validation. Subsequent pool successes do not re-emit because of the `this.connected` guard. |
+| `hashing_created` | [src/cluster/GaleraCluster.ts](../src/cluster/GaleraCluster.ts) | none | After `ClusterHashing.connect()` resolves, if the cluster was constructed with `useClusterHashing: true`. Fires immediately after `connected`. |
+| `disconnected` | [src/cluster/GaleraCluster.ts](../src/cluster/GaleraCluster.ts) | none | At the end of `GaleraCluster.disconnect()`, after all pools have been instructed to close and the hashing helper / Redis client are stopped. |
+| `pool_connected` | [src/pool/Pool.ts](../src/pool/Pool.ts) | `poolId: number` | Per pool, when its initial `checkStatus()` reports `isValid`. Emitted once per pool per connect cycle. |
+| `pool_disconnected` | [src/pool/Pool.ts](../src/pool/Pool.ts) | `poolId: number` | Per pool, inside `Pool.disconnect()` after `mysql2.Pool.end()` is invoked and the status timer is stopped. |
+| `connection` | [src/pool/Pool.ts](../src/pool/Pool.ts) | `connection, poolId` | Re-emit of the underlying `mysql2.Pool` `"connection"` event: a new physical MySQL connection has just been opened by the pool. |
+| `acquire` | [src/pool/Pool.ts](../src/pool/Pool.ts) | `connection, poolId` | Re-emit of `mysql2.Pool` `"acquire"`: an existing connection has been handed out for a query. |
+| `release` | [src/pool/Pool.ts](../src/pool/Pool.ts) | `connection, poolId` | Re-emit of `mysql2.Pool` `"release"`: a connection has been returned to the pool. |
 | `pool_check_failed` | `PoolStatus.checkStatus()` in [src/pool/PoolStatus.ts](../src/pool/PoolStatus.ts) | `error, poolId` | Per pool, each time a health check fails with an error. See [A failed health check](#a-failed-health-check). |
 
 The `poolId` is the numeric `id` assigned to a pool at construction time (auto-incrementing, surfaced in metrics and logs).
@@ -29,7 +29,7 @@ emit(event: ClusterEvent, ...args: any[]) {
 }
 ```
 
-See [src/utils/Events.ts:22](../src/utils/Events.ts#L22). Because the rest-spread is collapsed into a single `args` array on the way out, every listener receives **one** positional argument: an array of whatever was passed to `Events.emit`.
+See [src/utils/Events.ts](../src/utils/Events.ts). Because the rest-spread is collapsed into a single `args` array on the way out, every listener receives **one** positional argument: an array of whatever was passed to `Events.emit`.
 
 That means the listener signatures documented elsewhere (e.g. `(connection, poolId) => ...` in the README) do not match runtime behaviour. In practice you must destructure the first parameter.
 
@@ -89,7 +89,7 @@ other payload.
   mysql2 it keeps `code`, and `errno` when there is one. A wrong password has
   `code: 'ER_ACCESS_DENIED_ERROR'` and `errno: 1045`. A node that refuses the connection has
   `code: 'ECONNREFUSED'`. A host that does not answer has `code: 'ETIMEDOUT'` with the default
-  timeouts. With `queryTimeout` or `timerCheckRange.end` at or below the 10 second connect
+  timeouts. With `queryTimeout` or `timerCheckRange.end` below the 10 second connect
   timeout of mysql2, the check gives up first, with `Status check timeout` and no `code`. Go by `code`:
   network errors do not always carry an `errno` or a message. A host name that resolves to
   several addresses, such as `localhost`, gives an `AggregateError` with the `code` and an empty
@@ -131,7 +131,7 @@ What to know:
 
 ## Notes for subscribers
 
-- All events flow through a single module-level `EventEmitter` in [src/utils/Events.ts:4](../src/utils/Events.ts#L4). It is process-wide, so multiple `GaleraCluster` instances created in the same process will share listeners and emissions. There is no per-cluster scoping.
+- All events flow through a single module-level `EventEmitter` in [src/utils/Events.ts](../src/utils/Events.ts). It is process-wide, so multiple `GaleraCluster` instances created in the same process will share listeners and emissions. There is no per-cluster scoping.
 - `cluster.on(...)` only registers a listener; it never removes one. If you re-create a cluster, detach listeners yourself via the underlying emitter or avoid re-registering.
 - `connected` is one-shot per process-cluster lifecycle (guarded by `this.connected`). If you `disconnect()` and `connect()` again, it will fire again because the flag is reset in `disconnect()`.
 - `hashing_created` only fires when `useClusterHashing` is enabled; see [configuration.md](./configuration.md) for that flag.

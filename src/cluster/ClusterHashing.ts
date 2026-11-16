@@ -16,6 +16,8 @@ export class ClusterHashing {
     private _serviceNodeMap: Map<number, number> = new Map<number, number>(); // key: serviceID; value: nodeID
     private _cluster: GaleraCluster;
     private _timer: Timer;
+    // goes up at every stop(): a check that started before a stop belongs to a run that is over
+    private _checkRun: number = 0;
 
     // Next time for hashing check
     private readonly _nextCheckTime: number;
@@ -72,6 +74,7 @@ export class ClusterHashing {
      * Stop timer for hashing check
      */
     public stop() {
+        this._checkRun++;
         this._timer.dispose();
         this.connected = false;
         Logger.info("Checking hashing in the cluster stopped");
@@ -276,6 +279,7 @@ export class ClusterHashing {
      * Update hashing data from db
      */
     private async _checkHashing() {
+        const run = this._checkRun;
         try {
             if (!this._timer.active) return;
 
@@ -286,8 +290,9 @@ export class ClusterHashing {
                 database: this._database,
                 redis: false
             });
-            // stopped while the query ran: the answer must not mark hashing as connected
-            if (!this._timer.active) return;
+            // stopped while the query ran: the answer must not mark hashing as connected,
+            // also when connect() ran again in the meantime
+            if (run !== this._checkRun) return;
             const res: IServiceNodeMap[] = result[0].Result as IServiceNodeMap[];
             res?.forEach(obj => {
                 this._serviceNodeMap.set(obj.ServiceID, obj.NodeID);
@@ -296,7 +301,7 @@ export class ClusterHashing {
             this.connected = true;
             this._nextCheckHashing()
         } catch (err) {
-            if (!this._timer.active) return;
+            if (run !== this._checkRun) return;
             Logger.error("Something wrong while checking hashing status in cluster.\n Message: " + err.message);
             this.connected = false;
             this._nextCheckHashing()

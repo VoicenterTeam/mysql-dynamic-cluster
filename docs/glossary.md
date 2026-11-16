@@ -40,7 +40,7 @@ A caller-supplied identifier used to pin a unit of work to a specific node. The 
 
 ### Cluster hashing
 
-This library's sticky-routing feature that pins a given service ID to a single node so queries from the same caller hit the same pool until the mapping changes. The map is kept in a helper schema named `${clusterName}_${dbName}` (default `demo_mysql_dynamic_cluster`) and refreshed on a timer, see [src/cluster/ClusterHashing.ts:30](../src/cluster/ClusterHashing.ts#L30). When enabled (`useClusterHashing = true`), `getNodeByService(serviceId)` overrides the normal load-score selection.
+This library's sticky-routing feature that pins a given service ID to a single node so queries from the same caller hit the same pool until the mapping changes. The map is kept in a helper schema named `${clusterName}_${dbName}` (default `demo_mysql_dynamic_cluster`) and refreshed on a timer, see [src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts). When enabled (`useClusterHashing = true`), `getNodeByService(serviceId)` overrides the normal load-score selection.
 
 ### Slow query
 

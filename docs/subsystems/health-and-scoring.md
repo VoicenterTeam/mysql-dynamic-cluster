@@ -31,7 +31,7 @@ The public surface that `GaleraCluster` and `Pool` read from:
 | --- | --- | --- | --- |
 | `active` | `boolean` (mutable) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Set to `true` by `startTimerCheck()`, which `Pool.connect()` calls (see [pool.md](pool.md)), and to `false` by `Pool.disconnect()`. The first thing `checkStatus()` does is `if (!this.active) return`, so the poll is a no-op until `Pool.connect()` runs. |
 | `availableConnectionCount` | `number` (getter) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Returns `Pool.availableConnectionCount`: `connectionLimit` minus connections in use, read from mysql2's own lists (see [pool.md](pool.md)). |
-| `isValid` | `boolean` (getter over `_isValid`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Set by `Validator.check`. Initially `false` (line 23 and re-asserted on line 61) — a pool that has never been polled is not yet routable. |
+| `isValid` | `boolean` (getter over `_isValid`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Set by `Validator.check`. Initially `false` (the field default, re-asserted in the constructor) — a pool that has never been polled is not yet routable. |
 | `queryTime` | `number` (getter over `_queryTime`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Wall-clock duration in seconds of the most recent `SHOW GLOBAL STATUS`, measured via `QueryTimer`. Set after both the success and the error branches of `checkStatus`. |
 | `loadScore` | `number` (getter over `_loadScore`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Sum from `LoadFactor.check`. **Initial value is `100000`** (set in the constructor at [PoolStatus.ts](../../src/pool/PoolStatus.ts), overriding the field's `= 0`). A pool that has never been polled sorts last in `_getActivePools` — see [cluster.md](cluster.md). |
 
@@ -44,7 +44,7 @@ Private members worth knowing about:
   `{start: 5000, end: 15000}`, but the first poll fires via
   `await status.checkStatus()` inside `Pool.connect()` (see
   [pool.md](pool.md)) — only the *next* check uses this number, by
-  which time the clamp on line 124 has already brought it into range.
+  which time the clamp in `nextCheckStatus` has already brought it into range.
 - `timerCheckRange: ITimerCheckRange` —
   [PoolStatus.ts](../../src/pool/PoolStatus.ts). Defaults
   `{start: 5000, end: 15000}` ms from the settings schema
@@ -159,8 +159,13 @@ failure count, sets no timer, logs nothing and emits nothing, also when
 the pool was connected again in the meantime.
 
 A check may be rejected with anything. The log line of a failed check
-prints the message of the error, its `code` when the message is empty, and
-the value itself when it is not an error.
+prints the message of the error, its `code` when the message is empty, the
+value itself when it is not an error, and `unreadable error` for a value
+that cannot be turned into text. A dropped check and a restart are logged
+at `debug`.
+
+`disconnect()` does not reset `isValid` or the failure count. They keep
+their last values until the first check of the next `connect()` ends.
 
 ## `Validator`
 

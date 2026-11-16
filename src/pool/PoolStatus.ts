@@ -87,6 +87,11 @@ export class PoolStatus {
     public startTimerCheck() {
         this.active = true;
         this._timer.activate();
+        Logger.debug("Check status in pool started");
+    }
+
+    private static _logDropped(host: string): void {
+        Logger.debug("Dropped the result of a status check that outlived its connection in host: " + host);
     }
 
     /**
@@ -125,7 +130,7 @@ export class PoolStatus {
             } finally {
                 clearTimeout(checkTimer);
             }
-            if (run !== this._checkRun) return;
+            if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host);
 
             queryTimer.end();
             this._queryTime = queryTimer.get();
@@ -138,7 +143,7 @@ export class PoolStatus {
 
             this.nextCheckStatus()
         } catch (err) {
-            if (run !== this._checkRun) return;
+            if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host);
             Logger.error("Something wrong while checking status in host: " + this._pool.host +
                 ".\n Message: " + PoolStatus._errorText(err));
             if (++this._failedChecks >= 2) this._isValid = false;
@@ -166,7 +171,7 @@ export class PoolStatus {
             Events.emit('pool_check_failed', err, this._pool.id);
         } catch (listenerError) {
             Logger.error("A pool_check_failed listener threw in host: " + this._pool.host +
-                ".\n Message: " + ((listenerError && listenerError.stack) || PoolStatus._errorText(listenerError)));
+                ".\n Message: " + PoolStatus._errorText(listenerError && listenerError.stack ? listenerError.stack : listenerError));
         }
     }
 
@@ -177,7 +182,12 @@ export class PoolStatus {
      * @private
      */
     private static _errorText(err: any): string {
-        return (err && (err.message || err.code)) || String(err);
+        try {
+            return String((err && (err.message || err.code)) || err);
+        } catch (unreadable) {
+            // an object without a prototype, a symbol, a getter that throws
+            return 'unreadable error';
+        }
     }
 
     /**

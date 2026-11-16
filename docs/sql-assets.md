@@ -18,9 +18,9 @@ assets/sql/create_hashing_database/
     └── node_services.sql
 ```
 
-`ClusterHashing._createDB` loads the three subdirectories in a fixed order: `tables` first, then `routines`, then `metadata` ([src/cluster/ClusterHashing.ts:120](../src/cluster/ClusterHashing.ts#L120)-[L125](../src/cluster/ClusterHashing.ts#L125)). Existing routines are dropped before the routine bundle is replayed; the `metadata` block runs last because it carries the version row that signals success.
+`ClusterHashing._createDB` loads the three subdirectories in a fixed order: `tables` first, then `routines`, then `metadata` ([src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)). Existing routines are dropped before the routine bundle is replayed; the `metadata` block runs last because it carries the version row that signals success.
 
-The helper database itself is named `${clusterName}_${dbName}` ([src/cluster/ClusterHashing.ts:34](../src/cluster/ClusterHashing.ts#L34)) — both halves come from the cluster-hashing settings (see [configuration.md](./configuration.md)).
+The helper database itself is named `${clusterName}_${dbName}` ([src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)) — both halves come from the cluster-hashing settings (see [configuration.md](./configuration.md)).
 
 ## Tables
 
@@ -62,23 +62,23 @@ create table if not exists node_services
 
 > ⚠️ **Capacity caps**
 >
-> Both `node.node_id` and `node_services.service_id` are **signed `TINYINT`**, so the usable range is `-128..127`. In practice this means **at most 127 nodes and 127 services** can be registered before inserts start failing on overflow. The runtime does not validate this up front — once you exceed the cap, `SP_NodeInsert` / `SP_NodeServiceUpdate` will silently error out per call (errors are caught and only logged in [src/cluster/ClusterHashing.ts:89-91](../src/cluster/ClusterHashing.ts#L89)), and affected services will simply never get a sticky mapping. If you plan to operate near these limits, change both columns (and the routine signatures) to a wider integer type before going to production.
+> Both `node.node_id` and `node_services.service_id` are **signed `TINYINT`**, so the usable range is `-128..127`. In practice this means **at most 127 nodes and 127 services** can be registered before inserts start failing on overflow. The runtime does not validate this up front — once you exceed the cap, `SP_NodeInsert` / `SP_NodeServiceUpdate` will silently error out per call (errors are caught and only logged in [src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)), and affected services will simply never get a sticky mapping. If you plan to operate near these limits, change both columns (and the routine signatures) to a wider integer type before going to production.
 
 ## Routines
 
-All four routines live under [assets/sql/create_hashing_database/routines/](../assets/sql/create_hashing_database/routines/) and are reloaded on every helper-database (re)build. `_createDB` issues a `DROP PROCEDURE IF EXISTS` for each routine file *by base name* before re-creating them, and `DROP FUNCTION IF EXISTS` for `FN_*` files ([src/cluster/ClusterHashing.ts:127-132](../src/cluster/ClusterHashing.ts#L127)). `FN_GetServiceNodeMapping` declares `READS SQL DATA`, which MySQL 8 requires with binary logging on and `log_bin_trust_function_creators=0` (error 1418).
+All four routines live under [assets/sql/create_hashing_database/routines/](../assets/sql/create_hashing_database/routines/) and are reloaded on every helper-database (re)build. `_createDB` issues a `DROP PROCEDURE IF EXISTS` for each routine file *by base name* before re-creating them, and `DROP FUNCTION IF EXISTS` for `FN_*` files ([src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)). `FN_GetServiceNodeMapping` declares `READS SQL DATA`, which MySQL 8 requires with binary logging on and `log_bin_trust_function_creators=0` (error 1418).
 
 ### `SP_NodeInsert(_ID, _Name, _IP, _Port)`
 
 Source: [assets/sql/.../SP_NodeInsert.sql](../assets/sql/create_hashing_database/routines/SP_NodeInsert.sql)
 
-Idempotently upserts a row into `node`. The body first probes for an existing row keyed on `(ip, port)` and produces a human-readable `Result` string describing one of three cases — *inserted*, *already exists*, or *renamed* (same id and address, different name) — then performs an `INSERT ... ON DUPLICATE KEY UPDATE` that writes `(node_id, node_name, ip, port)`. The diagnostic `SELECT` is informational; the upsert is what actually persists the row. Called from `ClusterHashing._insertNodes` once per pool on every `connect()` ([src/cluster/ClusterHashing.ts:208](../src/cluster/ClusterHashing.ts#L208)).
+Idempotently upserts a row into `node`. The body first probes for an existing row keyed on `(ip, port)` and produces a human-readable `Result` string describing one of three cases — *inserted*, *already exists*, or *renamed* (same id and address, different name) — then performs an `INSERT ... ON DUPLICATE KEY UPDATE` that writes `(node_id, node_name, ip, port)`. The diagnostic `SELECT` is informational; the upsert is what actually persists the row. Called from `ClusterHashing._insertNodes` once per pool on every `connect()` ([src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)).
 
 ### `SP_NodeServiceUpdate(_ServiceID, _NodeID)`
 
 Source: [assets/sql/.../SP_NodeServiceUpdate.sql](../assets/sql/create_hashing_database/routines/SP_NodeServiceUpdate.sql)
 
-Upserts a single service-to-node mapping into `node_services`. The body is a one-liner: `INSERT ... ON DUPLICATE KEY UPDATE node_id = _NodeID`. Because `service_id` is the primary key, each call either inserts a new mapping or overwrites the existing one. Called from `ClusterHashing.updateNodeForService` whenever the cluster wants to pin a service to a different pool ([src/cluster/ClusterHashing.ts:82](../src/cluster/ClusterHashing.ts#L82)).
+Upserts a single service-to-node mapping into `node_services`. The body is a one-liner: `INSERT ... ON DUPLICATE KEY UPDATE node_id = _NodeID`. Because `service_id` is the primary key, each call either inserts a new mapping or overwrites the existing one. Called from `ClusterHashing.updateNodeForService` whenever the cluster wants to pin a service to a different pool ([src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)).
 
 Note: the signature declares `_NodeID smallint` while the table column is `tinyint`. MySQL will silently down-cast on insert, but values outside `-128..127` will be truncated — another reason to keep an eye on the [capacity caps](#tables) above.
 
@@ -92,7 +92,7 @@ Removes a node and any service mappings that point at it. The body deletes from 
 
 Source: [assets/sql/.../FN_GetServiceNodeMapping.sql](../assets/sql/create_hashing_database/routines/FN_GetServiceNodeMapping.sql)
 
-Returns the full contents of `node_services` as a single JSON array of `{ "ServiceID": <int>, "NodeID": <int> }` objects (via `JSON_ARRAYAGG` + `JSON_OBJECT`). Called from `ClusterHashing._checkHashing` on every poll interval — the JSON payload is decoded into `IServiceNodeMap[]` and used to refresh the in-memory `_serviceNodeMap` ([src/cluster/ClusterHashing.ts:228](../src/cluster/ClusterHashing.ts#L228)-[L237](../src/cluster/ClusterHashing.ts#L237)). When the table is empty `JSON_ARRAYAGG` returns SQL `NULL`, which decodes to a falsy result and short-circuits the `forEach`.
+Returns the full contents of `node_services` as a single JSON array of `{ "ServiceID": <int>, "NodeID": <int> }` objects (via `JSON_ARRAYAGG` + `JSON_OBJECT`). Called from `ClusterHashing._checkHashing` on every poll interval — the JSON payload is decoded into `IServiceNodeMap[]` and used to refresh the in-memory `_serviceNodeMap` ([src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)). When the table is empty `JSON_ARRAYAGG` returns SQL `NULL`, which decodes to a falsy result and short-circuits the `forEach`.
 
 ## Metadata and version
 
@@ -106,13 +106,13 @@ create table if not exists metadata
 );
 ```
 
-A single-row table that records the schema version of the helper database. The TypeScript side hard-codes the current version in `ClusterHashing._databaseVersion = 1` ([src/cluster/ClusterHashing.ts:23](../src/cluster/ClusterHashing.ts#L23)).
+A single-row table that records the schema version of the helper database. The TypeScript side hard-codes the current version in `ClusterHashing._databaseVersion = 1` ([src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)).
 
 The flow on every `connect()`:
 
-1. `_isDatabaseVersionEquals()` (`SHOW DATABASES`, then `SELECT version FROM metadata`) checks whether the helper DB exists and whether its `metadata.version` matches the constant ([src/cluster/ClusterHashing.ts:154](../src/cluster/ClusterHashing.ts#L154)-[L182](../src/cluster/ClusterHashing.ts#L182)).
-2. If either check fails, the **entire helper schema is dropped** (`DROP SCHEMA IF EXISTS ...`) and rebuilt from the SQL files ([src/cluster/ClusterHashing.ts:45](../src/cluster/ClusterHashing.ts#L45)-[L55](../src/cluster/ClusterHashing.ts#L55)).
-3. The final step of `_createDB` writes `INSERT INTO metadata (version) VALUES (1);` to mark the freshly built schema as current ([src/cluster/ClusterHashing.ts:136](../src/cluster/ClusterHashing.ts#L136)-[L144](../src/cluster/ClusterHashing.ts#L144)).
+1. `_isDatabaseVersionEquals()` (`SHOW DATABASES`, then `SELECT version FROM metadata`) checks whether the helper DB exists and whether its `metadata.version` matches the constant ([src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)).
+2. If either check fails, the **entire helper schema is dropped** (`DROP SCHEMA IF EXISTS ...`) and rebuilt from the SQL files ([src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)).
+3. The final step of `_createDB` writes `INSERT INTO metadata (version) VALUES (1);` to mark the freshly built schema as current ([src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)).
 
 Bumping `_databaseVersion` wipes the old database on next start and loses `node_services`, and older versions sharing the schema would wipe it back on their next start. Prefer backward-compatible changes applied in place by `ClusterHashing._upgradeInPlace()` (see [subsystems/cluster-hashing.md](subsystems/cluster-hashing.md)); 3.2.2 uses that for the unsigned port column and the `READS SQL DATA` function.
 
