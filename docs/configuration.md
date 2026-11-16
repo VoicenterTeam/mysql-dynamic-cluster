@@ -88,14 +88,15 @@ Added after 4.1.1. A pool without `flags` asks its server first. Before it creat
 | announces them with a version that does not start with three numbers | `['-CLIENT_QUERY_ATTRIBUTES']` |
 | could not be reached, or refused the login | `['-CLIENT_QUERY_ATTRIBUTES']`, and the pool is created anyway |
 
-Every node decides for itself, so a cluster with mixed versions works. The decision is made once per `connect()`: a node upgraded while the app runs keeps the flag off until the app restarts, which costs nothing but query attributes.
+Every host entry decides for itself, so a cluster with mixed versions works as long as one host entry reaches one server. An entry that points at a balancer in front of servers of different versions gets the answer of whichever server took the login: set `flags` yourself there. The decision is made once per `connect()`. A node upgraded while the app runs, or one that was down at start, keeps the flag off until the app restarts, which costs nothing but query attributes.
 
 What to know:
 
-- It costs one extra login per node at start. A node that does not answer is waited for twice: once by this login, once by the pool's own first check. mysql2 gives up after its `connectTimeout`, 10 seconds by default.
+- It costs one extra login per node at start. A node that does not answer is waited for twice: once by this login, once by the pool's own first check. mysql2 gives up after its `connectTimeout`, 10 seconds by default. A wrong password is refused twice per node for the same reason, which counts double where the server locks an account after failed logins.
+- Until that login has answered, the pool has no connections. A query that reaches it then is rejected with the code `POOL_NOT_CONNECTED`. The cluster tries the next node, as for any failed query.
 - The rule trusts the version the server reports. A proxy that reports another version than the server behind it can get the wrong answer. Set `flags` yourself for such a node.
 - `flags` in the settings always wins, also `flags: []` and `flags: ''`: no extra login, and the value goes to mysql2 as it is. To get mysql2's defaults on every node whatever the server says, set `flags: []` in `defaultPoolSettings`.
-- The decision is logged once per pool, with `pool`, `serverVersion`, `reason` and `flags` as meta: at `info` when the flag is turned off, at `debug` when nothing changes, at `warn` when the login failed. The warning carries the error code, not the message, and no line carries the password.
+- The decision is logged once per pool, with `pool`, `serverVersion`, `reason` and `flags` as meta: at `info` when the flag is turned off for an old server, at `debug` when nothing changes, at `warn` when the version was not readable or the login failed. A failed login adds `error` to the meta: the error code, the error number when mysql2 gives no code, or `unknown`. The error message is not in this line and no line carries the password. The pool's own first check fails on the same node right after and logs its error as before.
 
 Setting it by hand still works and skips the extra login:
 

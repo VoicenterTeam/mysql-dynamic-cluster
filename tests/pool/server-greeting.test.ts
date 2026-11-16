@@ -1,5 +1,5 @@
 import mysql from 'mysql2';
-import { AddressInfo } from 'net';
+import { AddressInfo, createServer, Socket } from 'net';
 import { flagsForServer, probeServer } from '../../src/pool/ServerFlags';
 
 // mysql2's own server class on the loopback interface: real packets, no database
@@ -34,7 +34,7 @@ const listen = (serverVersion: string, capabilityFlags: number, refuse = false):
 };
 
 const probe = (port: number) =>
-    probeServer({ host: '127.0.0.1', port, user: 'u', password: 'p', database: 'd' });
+    probeServer({ host: '127.0.0.1', port, user: 'u', password: 'p', database: 'd' }).greeting;
 
 afterAll(async () => {
     await Promise.all(servers.map(server => new Promise(resolve => server.close(resolve))));
@@ -45,7 +45,8 @@ describe('probeServer against a real greeting packet', () => {
         const port = await listen('8.0.25-15.1', BASE_CAPABILITIES | CLIENT_QUERY_ATTRIBUTES);
         const greeting = await probe(port);
 
-        expect(greeting.serverVersion).toBe('8.0.25-15.1');
+        // the two values and nothing else of the packet, which also holds the scramble data
+        expect(greeting).toStrictEqual({ serverVersion: '8.0.25-15.1', capabilityFlags: expect.any(Number) });
         expect(greeting.capabilityFlags & CLIENT_QUERY_ATTRIBUTES).not.toBe(0);
         expect(flagsForServer(greeting).flags).toEqual(['-CLIENT_QUERY_ATTRIBUTES']);
     });
@@ -68,6 +69,24 @@ describe('probeServer against a real greeting packet', () => {
         const port = await listen('8.0.25', BASE_CAPABILITIES | CLIENT_QUERY_ATTRIBUTES, true);
 
         await expect(probe(port)).rejects.toMatchObject({ code: 'ER_ACCESS_DENIED_ERROR' });
+    });
+
+    it('rejects and closes its socket when it is cancelled before the server greets', async () => {
+        // accepts the connection and never says a word, as a host that drops packets
+        const sockets: Socket[] = [];
+        const silent = createServer(socket => { sockets.push(socket); socket.on('error', () => undefined); });
+        await new Promise<void>(resolve => silent.listen(0, '127.0.0.1', resolve));
+        const port = (silent.address() as AddressInfo).port;
+        const pending = probeServer({ host: '127.0.0.1', port, user: 'u', password: 'p', database: 'd' });
+        const settled = expect(pending.greeting).rejects.toThrow('probe cancelled');
+        while (sockets.length === 0) await new Promise(resolve => setImmediate(resolve));
+        const closed = new Promise(resolve => sockets[0].once('close', resolve));
+
+        pending.cancel();
+        pending.cancel();
+        await settled;
+        await closed;
+        await new Promise(resolve => silent.close(resolve));
     });
 
     it('rejects when nothing listens', async () => {

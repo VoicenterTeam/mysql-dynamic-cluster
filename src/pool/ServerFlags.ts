@@ -71,26 +71,54 @@ export function flagsForServer(greeting?: IServerGreeting): IFlagsDecision {
     return { reason: 'supported' };
 }
 
+export interface IServerProbe {
+    // rejects when the login fails or the probe is cancelled
+    greeting: Promise<IServerGreeting>;
+    // drop the connection now. Safe to call at any time, more than once
+    cancel(): void;
+}
+
+// how long a server gets to close the socket after the logout, before the probe closes it
+const CLOSE_GRACE_MS = 2000;
+
 /**
  * Log in once, read the greeting and log out.
  * mysql2 gives up after its connectTimeout, 10 seconds by default
  */
-export function probeServer(options: IProbeOptions): Promise<IServerGreeting> {
-    return new Promise((resolve, reject) => {
-        // the probe sends no prepared statement, and with the flag off it works on every server
-        const connection: any = mysql.createConnection({ ...options, flags: [QUERY_ATTRIBUTES_OFF] });
-        let greeted = false;
+export function probeServer(options: IProbeOptions): IServerProbe {
+    // the probe sends no prepared statement, and with the flag off it works on every server
+    const connection: any = mysql.createConnection({ ...options, flags: [QUERY_ATTRIBUTES_OFF] });
+    let settled = false;
+    let cancel: () => void;
 
-        connection.once('connect', (greeting: IServerGreeting) => {
-            greeted = true;
-            resolve({ serverVersion: greeting.serverVersion, capabilityFlags: greeting.capabilityFlags });
-            connection.end(() => undefined);
+    const greeting = new Promise<IServerGreeting>((resolve, reject) => {
+        connection.once('connect', (packet: IServerGreeting) => {
+            if (settled) return;
+            settled = true;
+            // the two values only: the packet also holds the data the password was scrambled with
+            resolve({ serverVersion: packet.serverVersion, capabilityFlags: packet.capabilityFlags });
+
+            connection.end();
+            // the logout is one packet, then the server closes. One that does not would keep the socket
+            const timer = setTimeout(() => connection.destroy(), CLOSE_GRACE_MS);
+            timer.unref();
+            connection.once('end', () => clearTimeout(timer));
         });
-        // stays on after the greeting: an error event without a listener would end the process
+        // on, not once, and it stays after the greeting:
+        // an error event without a listener would end the process
         connection.on('error', (error: Error) => {
-            if (greeted) return;
+            if (settled) return;
+            settled = true;
             connection.destroy();
             reject(error);
         });
+        cancel = () => {
+            connection.destroy();
+            if (settled) return;
+            settled = true;
+            reject(new Error('probe cancelled'));
+        };
     });
+
+    return { greeting, cancel };
 }

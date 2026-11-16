@@ -59,7 +59,8 @@ calls on each pool. The steps:
    ([src/pool/ServerFlags.ts](../../src/pool/ServerFlags.ts), rule and log
    lines in [configuration.md](../configuration.md#flags)). A failed login
    does not stop `connect()`. A `disconnect()` during this step makes
-   `connect()` reject without opening a pool.
+   `connect()` reject without opening a pool, and a query that reaches
+   the pool during this step is rejected with `POOL_NOT_CONNECTED`.
    Then build the underlying mysql2 pool via `mysql.createPool({ host, port,
    user, password, database, connectionLimit })`, plus `flags` from the
    settings or from that decision
@@ -113,8 +114,10 @@ there).
 
 Synchronous. Steps:
 
-1. Call `this._pool.end(callback)`; the callback only logs an error if
-   one is reported
+1. Drop the login of a `connect()` that still asks the server for its
+   version, so that `connect()` rejects and opens no pool. Then call
+   `this._pool.end(callback)` when a mysql2 pool exists; the callback only
+   logs an error if one is reported
    ([src/pool/Pool.ts:122-126](../../src/pool/Pool.ts#L122)).
 2. Set `status.active = false` and call `status.stopTimerCheck()` to
    shut down the `PoolStatus` polling timer

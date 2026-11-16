@@ -83,7 +83,7 @@ const defaultPoolSettings = z.strictObject({
     queryTimeout: poolFields.queryTimeout.default(2 * 60 * 1000),
     slowQueryTime: poolFields.slowQueryTime.default(1),
     redisFactor: poolFields.redisFactor.default(1),
-    // no default: left out, mysql2 keeps its own flags
+    // no default: left out, the pool picks them from its server (src/pool/ServerFlags.ts)
     flags: poolFields.flags.optional()
 });
 

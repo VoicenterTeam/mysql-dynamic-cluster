@@ -14,7 +14,7 @@ import { IOperationMetricOptions } from "../types/MetricsInterfaces";
 import Redis from "../Redis/Redis";
 import { IRedisData } from "../types/RedisInterfaces";
 import { IdleConnectionReaper } from './IdleConnectionReaper';
-import { flagsForServer, IServerGreeting, probeServer } from './ServerFlags';
+import { flagsForServer, IServerGreeting, IServerProbe, probeServer } from './ServerFlags';
 
 // AKA galera node
 export class Pool {
@@ -40,8 +40,11 @@ export class Pool {
     private readonly _flags?: string | string[];
 
     private _pool: mysql.Pool;
-    // set by disconnect(), so a connect() that is still probing does not open a pool afterwards
-    private _closed = false;
+    // counts connect() and disconnect() calls: a connect() that comes back from asking the server
+    // opens a pool only when no other call came in between
+    private _connectAttempt = 0;
+    // the login that asks the server for its version, while it runs
+    private _probe?: IServerProbe;
     private readonly _reaper: IdleConnectionReaper;
 
     /**
@@ -92,19 +95,17 @@ export class Pool {
      * Create pool connection
      */
     public async connect() {
-        this._closed = false;
+        const attempt = ++this._connectAttempt;
         // flags of the settings are used as they are. Without them the server decides
         const flags = this._flags === undefined ? await this._flagsFromServer() : this._flags;
-        if (this._closed) throw new Error("pool in host " + this.host + " was closed while connecting");
+        if (attempt !== this._connectAttempt) {
+            throw new Error("pool in host " + this.host + " was closed while connecting");
+        }
 
         const flagsMeta = flags === undefined ? undefined : { flags };
         Logger.debug("Creating pool in host: " + this.host, flagsMeta);
         this._pool = mysql.createPool({
-            host: this.host,
-            port: this.port,
-            user: this._user,
-            password: this._password,
-            database: this._database,
+            ...this._connectionOptions(),
             connectionLimit: this.connectionLimit,
             // left out when unset, so mysql2 keeps its default flags. mysql2 takes a string too
             ...(flags === undefined ? {} : { flags: flags as string[] })
@@ -124,25 +125,40 @@ export class Pool {
     }
 
     /**
+     * What a connection to this node needs. The pool and the login that asks the server
+     * for its version both use it, so an option added here reaches both
+     * @private
+     */
+    private _connectionOptions() {
+        return {
+            host: this.host,
+            port: this.port,
+            user: this._user,
+            password: this._password,
+            database: this._database
+        };
+    }
+
+    /**
      * Log in once to read the server's greeting and pick the flags this node needs.
      * A failed login is not an error here: the pool is created anyway and reports the node itself
      * @private
      */
     private async _flagsFromServer(): Promise<string[] | undefined> {
+        const probe = probeServer(this._connectionOptions());
+        this._probe = probe;
+
         let greeting: IServerGreeting | undefined;
         let error: string | undefined;
         try {
-            greeting = await probeServer({
-                host: this.host,
-                port: this.port,
-                user: this._user,
-                password: this._password,
-                database: this._database
-            });
+            greeting = await probe.greeting;
         } catch (e) {
-            // the code names the cause. The message of a refused login holds the user name
-            error = e?.code || e?.message || String(e);
+            // the code names the cause. The message stays out: for a refused login it holds the user name
+            error = e?.code || (e?.errno ? "errno " + e.errno : "unknown");
         }
+        // disconnect() or a later connect() took over: connect() rejects, nothing to decide or log
+        if (this._probe !== probe) return undefined;
+        this._probe = undefined;
 
         const decision = flagsForServer(greeting);
         const meta = {
@@ -152,15 +168,30 @@ export class Pool {
             ...(decision.flags ? { flags: decision.flags } : {}),
             ...(error ? { error } : {})
         };
+        const pool = "Pool " + this.name + ": ";
 
         if (!greeting) {
-            Logger.warn(`Pool ${this.name}: could not read the server version, connecting with ${decision.flags}`, meta);
+            Logger.warn(pool + "could not read the server version, connecting with " + decision.flags, meta);
+        } else if (decision.reason === 'version_unreadable') {
+            Logger.warn(pool + "server version is not readable, connecting with " + decision.flags, meta);
         } else if (decision.flags) {
-            Logger.info(`Pool ${this.name}: server ${greeting.serverVersion} needs ${decision.flags}, set flags in the settings to override`, meta);
+            Logger.info(pool + "server " + greeting.serverVersion + " needs " + decision.flags +
+                ", set flags in the settings to override", meta);
         } else {
-            Logger.debug(`Pool ${this.name}: server ${greeting.serverVersion} keeps the default flags of mysql2`, meta);
+            Logger.debug(pool + "server " + greeting.serverVersion + " keeps the default flags of mysql2", meta);
         }
         return decision.flags;
+    }
+
+    /**
+     * The error of a query that reaches the pool before connect() created the mysql2 pool.
+     * The cluster sends queries of a pinned service to its node without looking at the status
+     * @private
+     */
+    private _notConnected(): Error {
+        const error: any = new Error("pool in host " + this.host + " is not connected yet");
+        error.code = 'POOL_NOT_CONNECTED';
+        return error;
     }
 
     /**
@@ -191,7 +222,10 @@ export class Pool {
      */
     public disconnect() {
         Logger.debug("closing pool in host: " + this.host);
-        this._closed = true;
+        // a connect() that still asks the server must not open a pool after this
+        this._connectAttempt++;
+        this._probe?.cancel();
+        this._probe = undefined;
         this._pool?.end((error) => {
             if (error) {
                 Logger.error(error.message);
@@ -243,6 +277,7 @@ export class Pool {
                 reject(error);
             }
 
+            if (!this._pool) return fail(this._notConnected());
             this._pool.getConnection((err, conn) => {
                 if (err) return fail(err);
                 if (!conn) return fail(new Error("Can't find connection. Maybe it was unexpectedly closed."));
@@ -323,6 +358,7 @@ export class Pool {
                 reject(error);
             }
 
+            if (!this._pool) return fail(this._notConnected());
             this._pool.getConnection((err, conn) => {
                 if (err) return fail(err);
                 if (!conn) return fail(new Error("Can't find connection. Maybe it was unexpectedly closed."));
