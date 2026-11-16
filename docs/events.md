@@ -85,15 +85,19 @@ password from a node that is down. The listener gets `[error, poolId]`, wrapped 
 other payload.
 
 - `error` is the error the check failed with, the same object, not a copy. For an error from
-  mysql2 it keeps `code` and `errno`. A wrong password has `code: 'ER_ACCESS_DENIED_ERROR'` and
-  `errno: 1045`. A node that is down has `code: 'ECONNREFUSED'`.
+  mysql2 it keeps `code`, and `errno` when there is one. A wrong password has
+  `code: 'ER_ACCESS_DENIED_ERROR'` and `errno: 1045`. A node that refuses the connection has
+  `code: 'ECONNREFUSED'`. A host that does not answer has `code: 'ETIMEDOUT'`. Go by `code`:
+  network errors do not always carry an `errno` or a message. A host name that resolves to
+  several addresses, such as `localhost`, gives an `AggregateError` with the `code` and an empty
+  message.
 - `poolId` is the `id` of the pool the check ran on.
 
 ```ts
 cluster.on('pool_check_failed', ([error, poolId]) => {
     if (error.code === 'ER_ACCESS_DENIED_ERROR') {
         console.error('pool', poolId, 'has a wrong user or password', error.errno);
-    } else if (error.code === 'ECONNREFUSED') {
+    } else if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
         console.error('pool', poolId, 'is down');
     } else {
         console.error('pool', poolId, 'failed its check:', error.message);
@@ -117,6 +121,10 @@ What to know:
   listeners run, and the thrown error is logged. Other listeners of the same event that were
   added after the one that threw do not run for that check. The other events have no such
   guard.
+- An `async` listener that rejects is not caught. Node treats it as an unhandled rejection of
+  the app, which ends the process by default. Catch inside an async listener.
+- A check that is still running when the pool is disconnected reports nothing. No
+  `pool_check_failed` comes after `pool_disconnected`.
 
 ## Notes for subscribers
 

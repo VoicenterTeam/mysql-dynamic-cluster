@@ -136,11 +136,14 @@ export class PoolStatus {
     /**
      * Hand the error of a failed check to the app, with the id of the pool.
      * It runs after the next check is set, and a listener that throws is logged,
-     * so a listener cannot stop the checks
+     * so a listener that throws cannot stop the checks. An async listener that rejects
+     * is not caught here: that rejection belongs to the app.
+     * A check that was still running when the pool was stopped reports nothing
      * @param err error of the failed check
      * @private
      */
     private _emitCheckFailed(err: any) {
+        if (!this.active) return;
         try {
             Events.emit('pool_check_failed', err, this._pool.id);
         } catch (listenerError) {

@@ -11,6 +11,8 @@ const fakeClient = () => {
     return {
         on: jest.fn((event: string, handler: () => void) => { handlers[event] = handler; }),
         get: jest.fn().mockResolvedValue(null),
+        keys: jest.fn().mockResolvedValue([]),
+        pipeline: jest.fn(() => ({ del: jest.fn(), exec: jest.fn().mockResolvedValue([]) })),
         set: jest.fn().mockResolvedValue('OK'),
         ready: () => handlers.ready()
     };
@@ -42,6 +44,21 @@ describe('Redis.init', () => {
         const settings = parseSettings({ redis: { keyPrefix: 'app:' } }).redis;
         Redis.init(fakeClient() as any, 'one', settings);
         expect(settings.keyPrefix).toBe('app:');
+    });
+
+    it('clears only its own keys on start when clearOnStart is on', () => {
+        const client = fakeClient();
+        Redis.init(client as any, 'one', parseSettings({ redis: { clearOnStart: true } }).redis);
+        client.ready();
+        expect(client.keys).toHaveBeenCalledTimes(1);
+        expect(client.keys).toHaveBeenCalledWith('one_mdc:*');
+    });
+
+    it('clears nothing on start when clearOnStart is off', () => {
+        const client = fakeClient();
+        Redis.init(client as any, 'one', parseSettings({}).redis);
+        client.ready();
+        expect(client.keys).not.toHaveBeenCalled();
     });
 
     it('prefixes the cluster name once when it runs twice on the same settings', async () => {

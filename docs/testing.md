@@ -23,7 +23,7 @@ tests/
     no-valid-pool-cache.test.ts  # GaleraCluster.query when no pool is valid: stale cache fallback
     named-values.test.ts         # object values: escapeNamedValues on, off, per query, the one-time warning
     named-values-setting.test.ts # the escapeNamedValues setting through createPoolCluster
-    host-ids.test.ts             # Host ids: id 0 is kept, hosts without an id get the next free one
+    host-ids.test.ts             # Host ids: which id each host gets, with and without an id in the settings
     query.test.ts                # GaleraCluster.query() shapes: no values, scalar, array, named, timeout (stale)
   configs/
     settings.test.ts             # Settings schema: defaults, strict validation, mixSettings, no env reading

@@ -57,7 +57,7 @@ export class GaleraCluster {
         const poolIds: number[] = this._sortPoolIds(config.current.hosts);
 
         config.current.hosts.forEach(poolSettings => {
-            if (poolSettings.id === undefined) {
+            if (!poolSettings.id) {
                 poolSettings.id = poolIds.length <= 0 ? 0 : poolIds[poolIds.length - 1] + 1;
                 poolIds.push(poolSettings.id);
             }
@@ -82,7 +82,7 @@ export class GaleraCluster {
     private _sortPoolIds(pools: IUserPoolSettings[]): number[] {
         const poolIds: number[] = [];
         pools.forEach(pool => {
-            if (pool.id !== undefined) poolIds.push(pool.id);
+            if (pool.id) poolIds.push(pool.id);
         })
         poolIds.sort((a, b) => a - b);
         return poolIds;
