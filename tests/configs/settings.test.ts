@@ -263,6 +263,62 @@ describe('Settings.mixSettings', () => {
         expect(mixed.hosts[0].validators[3]).toEqual(extra);
     });
 
+    it('adds the loadFactors of a host after the default ones', () => {
+        const extra = { key: 'Threads_running', multiplier: 3 };
+        const mixed = Settings.mixSettings({ ...base(), hosts: [{ host: 'a', loadFactors: [extra] }] });
+        expect(mixed.hosts[0].loadFactors).toEqual([
+            { key: 'Connections', multiplier: 2 },
+            { key: 'wsrep_local_recv_queue_avg', multiplier: 10 },
+            extra
+        ]);
+    });
+
+    it('builds a host with exactly the default keys plus its own', () => {
+        const mixed = Settings.mixSettings({
+            ...base(),
+            hosts: [{ host: 'a', id: 7, name: 'first', redisExpire: 60, connectionLimit: 3 }]
+        });
+        expect(mixed.hosts[0]).toStrictEqual({
+            ...defaultsOf322.defaultPoolSettings,
+            user: 'u', password: 'p', database: 'd',
+            host: 'a', id: 7, name: 'first', redisExpire: 60, connectionLimit: 3
+        });
+    });
+
+    it('gives every host its own copies, sharing nothing with the defaults or another host', () => {
+        const settings = Settings.mixSettings({
+            ...base(),
+            defaultPoolSettings: { user: 'u', password: 'p', database: 'd', flags: ['-FOO'] },
+            hosts: [{ host: 'a' }, { host: 'b' }]
+        });
+        const [first, second] = settings.hosts;
+
+        first.validators[0].value = 'changed';
+        first.validators.push({ key: 'x', operator: '=', value: 1 });
+        first.loadFactors[0].multiplier = 99;
+        first.timerCheckRange.start = 1;
+        (first.flags as string[]).push('BAR');
+
+        for (const other of [second, settings.defaultPoolSettings]) {
+            expect(other.validators).toEqual(defaultsOf322.defaultPoolSettings.validators);
+            expect(other.loadFactors).toEqual(defaultsOf322.defaultPoolSettings.loadFactors);
+            expect(other.timerCheckRange).toEqual({ start: 5000, end: 15000 });
+            expect(other.flags).toEqual(['-FOO']);
+        }
+    });
+
+    it('does not keep the arrays and objects the app passed for a host', () => {
+        const validators = [{ key: 'k', operator: '=' as const, value: 1 }];
+        const timerCheckRange = { start: 10, end: 20 };
+        const mixed = Settings.mixSettings({ ...base(), hosts: [{ host: 'a', validators, timerCheckRange }] });
+
+        mixed.hosts[0].validators[3].value = 2;
+        mixed.hosts[0].timerCheckRange.start = 11;
+
+        expect(validators[0].value).toBe(1);
+        expect(timerCheckRange.start).toBe(10);
+    });
+
     it('throws on invalid settings', () => {
         const invalid = { ...base(), errorRetryCount: 'abc' } as any;
         expect(() => Settings.mixSettings(invalid)).toThrow('→ at errorRetryCount');

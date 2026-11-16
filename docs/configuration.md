@@ -142,7 +142,7 @@ The values are lowercase. `LOGLEVEL` is exported from the package for them. Wher
 
 1. **Take the live objects off.** `redisInstant` and `logger` are removed from a copy of the object. The caller's object is not changed.
 2. **Validate and fill defaults.** `parseSettings` runs the zod schema. Keys you left out get their default, also inside nested objects: `redis: { enabled: true }` keeps every other `redis` default. An array you pass replaces the default array.
-3. **Mix every host with the default pool settings.** Each host becomes `deepmerge(defaultPoolSettings, host)`. A host that omits `port`, or sets it to `undefined`, inherits it. Arrays are concatenated in this step: `validators` on a host are added to the default ones, not swapped for them. `flags` is the exception, a host's value replaces the default one.
+3. **Mix every host with the default pool settings.** Each host becomes the default pool settings with its own keys on top, merged in `Settings._mix`. A host that omits `port`, or sets it to `undefined`, inherits it. Arrays are concatenated in this step: `validators` on a host are added to the default ones, not swapped for them. `flags` is the exception, a host's value replaces the default one.
 4. **Store.** The result is loaded into the `config` singleton ([src/configs/index.ts](../src/configs/index.ts)). The rest of the library reads `config.current`, a plain typed object.
 
 Before `createPoolCluster` runs, `config.current` holds the defaults. A second `createPoolCluster` call in one process replaces the settings of the first and logs a warning to the first cluster's logger.

@@ -41,7 +41,6 @@
     "coverage": "jest --coverage"
   },
   "dependencies": {
-    "deepmerge": "^4.2.2",
     "ioredis": "^4.28.3",
     "mysql2": "^3.24.4",
     "zod": "^4.6.7"

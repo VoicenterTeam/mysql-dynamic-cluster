@@ -3,9 +3,8 @@
  */
 
 import { IParsedSettings, IUserSettings } from "../types/SettingsInterfaces";
-import { IUserPoolSettings } from "../types/PoolSettingsInterfaces";
+import { IDefaultPoolSettings, IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { parseSettings } from "../configs/schema";
-import deepmerge from "deepmerge";
 
 export class Settings {
     /**
@@ -18,15 +17,31 @@ export class Settings {
         const settings = parseSettings(userSettings);
 
         settings.hosts = settings.hosts.map(host => {
-            const own = Settings._withoutUndefined(host);
-            const mixed = deepmerge(settings.defaultPoolSettings, own) as IUserPoolSettings;
-            // flags of a host replace the default ones:
-            // added to them, a host could not undo a "-FLAG"
-            if (own.flags !== undefined) mixed.flags = own.flags;
-            return mixed;
+            return Settings._mix(settings.defaultPoolSettings, Settings._withoutUndefined(host));
         })
 
         return settings;
+    }
+
+    /**
+     * The default pool settings with the keys of the host on top. Every array and object in
+     * the result is a copy, so hosts share nothing with the defaults or with each other
+     * @private
+     */
+    private static _mix(defaults: IDefaultPoolSettings, own: IUserPoolSettings): IUserPoolSettings {
+        // flags of a host replace the default ones:
+        // added to them, a host could not undo a "-FLAG"
+        const flags = own.flags !== undefined ? own.flags : defaults.flags;
+        const mixed: IUserPoolSettings = {
+            ...defaults,
+            ...own,
+            // validators and loadFactors of a host are added to the default ones
+            validators: [...defaults.validators, ...(own.validators || [])].map(item => ({ ...item })),
+            loadFactors: [...defaults.loadFactors, ...(own.loadFactors || [])].map(item => ({ ...item })),
+            timerCheckRange: { ...defaults.timerCheckRange, ...own.timerCheckRange }
+        };
+        if (flags !== undefined) mixed.flags = Array.isArray(flags) ? [...flags] : flags;
+        return mixed;
     }
 
     /**
