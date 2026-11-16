@@ -5,6 +5,7 @@ import path from 'path';
 import { parseSettings } from '../../src/configs/schema';
 import { Settings } from '../../src/utils/Settings';
 import { IUserSettings } from '../../src/types/SettingsInterfaces';
+import { IUserPoolSettings } from '../../src/types/PoolSettingsInterfaces';
 
 const root = path.resolve(__dirname, '../..');
 
@@ -322,7 +323,32 @@ describe('Settings.mixSettings', () => {
         expect(({} as any).x).toBeUndefined();
     });
 
-    it('gives every host its own copies, sharing nothing with the defaults or another host', () => {
+    // One row per copy a host gets: the row changes that copy on the first host,
+    // then reads the same field of the second host and of the defaults
+    type Copied = 'validators' | 'loadFactors' | 'timerCheckRange' | 'flags';
+    type Mixed = Pick<IUserPoolSettings, Copied>;
+    const copyRows: [string, (first: Mixed) => void, (other: Mixed) => unknown, unknown][] = [
+        ['the validators array',
+            first => { first.validators.push({ key: 'x', operator: '=', value: 1 }); },
+            other => other.validators.length, 3],
+        ['each validator in it',
+            first => { first.validators[0].value = 'changed'; },
+            other => other.validators[0], defaultsOf322.defaultPoolSettings.validators[0]],
+        ['the loadFactors array',
+            first => { first.loadFactors.push({ key: 'x', multiplier: 1 }); },
+            other => other.loadFactors.length, 2],
+        ['each load factor in it',
+            first => { first.loadFactors[0].multiplier = 99; },
+            other => other.loadFactors[0], defaultsOf322.defaultPoolSettings.loadFactors[0]],
+        ['timerCheckRange',
+            first => { first.timerCheckRange.start = 1; },
+            other => other.timerCheckRange, { start: 5000, end: 15000 }],
+        ['the flags array',
+            first => { (first.flags as string[]).push('BAR'); },
+            other => other.flags, ['-FOO']]
+    ];
+
+    it.each(copyRows)('gives every host its own copy of %s', (_copy, change, read, untouched) => {
         const settings = Settings.mixSettings({
             ...base(),
             defaultPoolSettings: { user: 'u', password: 'p', database: 'd', flags: ['-FOO'] },
@@ -330,18 +356,11 @@ describe('Settings.mixSettings', () => {
         });
         const [first, second] = settings.hosts;
 
-        first.validators[0].value = 'changed';
-        first.validators.push({ key: 'x', operator: '=', value: 1 });
-        first.loadFactors[0].multiplier = 99;
-        first.timerCheckRange.start = 1;
-        (first.flags as string[]).push('BAR');
+        change(first);
 
-        for (const other of [second, settings.defaultPoolSettings]) {
-            expect(other.validators).toEqual(defaultsOf322.defaultPoolSettings.validators);
-            expect(other.loadFactors).toEqual(defaultsOf322.defaultPoolSettings.loadFactors);
-            expect(other.timerCheckRange).toEqual({ start: 5000, end: 15000 });
-            expect(other.flags).toEqual(['-FOO']);
-        }
+        // one object, so a failure names which of the two shares the copy
+        expect({ secondHost: read(second), defaults: read(settings.defaultPoolSettings) })
+            .toEqual({ secondHost: untouched, defaults: untouched });
     });
 
     it('does not keep the arrays and objects the app passed for a host', () => {

@@ -10,6 +10,16 @@ const BASE_CAPABILITIES = 0x00ffffff;
 jest.setTimeout(10000);
 
 const servers: any[] = [];
+// server-side sockets of the servers that keep them after the logout
+const keptSockets: Socket[] = [];
+
+// Poll until the condition holds or the time is up. The caller asserts the condition afterwards
+const until = async (condition: () => boolean, limitMs: number): Promise<void> => {
+    const deadline = Date.now() + limitMs;
+    while (!condition() && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+    }
+};
 
 const listen = (
     serverVersion: string, capabilityFlags: number, refuse = false, closeOnQuit = true
@@ -18,6 +28,12 @@ const listen = (
     servers.push(server);
     server.on('connection', (connection: any) => {
         connection.on('error', () => undefined);
+        if (!closeOnQuit) {
+            // keeps its own side open after the client's FIN too:
+            // only a socket the client destroys itself goes away
+            connection.stream.allowHalfOpen = true;
+            keptSockets.push(connection.stream);
+        }
         connection.serverHandshake({
             protocolVersion: 10,
             serverVersion,
@@ -100,18 +116,23 @@ describe('probeServer against a real greeting packet', () => {
     });
 
     it('closes its socket itself when the server keeps it after the logout', async () => {
-        // reads the logout and does nothing about it
+        // reads the logout and does nothing about it, and stays open when the client half-closes
         const port = await listen('8.0.36', BASE_CAPABILITIES | CLIENT_QUERY_ATTRIBUTES, false, false);
         const created = jest.spyOn(mysql, 'createConnection');
         const pending = probeServer({ host: '127.0.0.1', port, user: 'u', password: 'p', database: 'd' });
         const client: any = created.mock.results[0].value;
         created.mockRestore();
 
-        await pending.greeting;
-        // the server gets its time first
-        expect(client.stream.destroyed).toBe(false);
-        await new Promise(resolve => setTimeout(resolve, 2300));
-        expect(client.stream.destroyed).toBe(true);
+        try {
+            await pending.greeting;
+            // the server gets its time first
+            expect(client.stream.destroyed).toBe(false);
+            // the probe waits 2 s, so 6 s is a deadline, not a measure
+            await until(() => client.stream.destroyed, 6000);
+            expect(client.stream.destroyed).toBe(true);
+        } finally {
+            keptSockets.splice(0).forEach(socket => socket.destroy());
+        }
     });
 
     it('rejects when nothing listens', async () => {

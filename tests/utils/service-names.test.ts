@@ -24,6 +24,18 @@ describe('ServiceNames.getID', () => {
         expect(options).toEqual({ maxRetry: 1, database: 'db', redis: false });
     });
 
+    // the lookup is a LIKE: a caller may rely on % and _ in the name
+    it.each([
+        ['%', 'billing%'],
+        ['_', 'billing_v_']
+    ])('passes a name with the LIKE wildcard %s through unchanged', async (_wildcard, name) => {
+        const { names, query } = make([{ Result: 7 }]);
+
+        await expect(names.getID(name)).resolves.toBe(7);
+
+        expect(query.mock.calls[0][1]).toStrictEqual([name]);
+    });
+
     it('asks once per name', async () => {
         const { names, query } = make([{ Result: 7 }]);
         await names.getID('a');
