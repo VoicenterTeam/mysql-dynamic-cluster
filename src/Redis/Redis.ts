@@ -15,8 +15,8 @@ class Redis {
 	init(newRedis: RedisLib | Cluster, clusterName: string, redisSettings: IRedisSettings): void {
 
 		this.redis = newRedis;
-		this.redisSettings = redisSettings;
-		this.redisSettings.keyPrefix = `${clusterName}_${this.redisSettings.keyPrefix}`;
+		this.redisSettings = { ...redisSettings }; // a copy: the loaded settings keep their keyPrefix
+		this.redisSettings.keyPrefix = `${clusterName}_${redisSettings.keyPrefix}`;
 		this.connectEvents();
 		Logger.debug("Initialized Redis");
 	}

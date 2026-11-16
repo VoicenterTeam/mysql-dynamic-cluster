@@ -31,9 +31,9 @@ method:
 
 1. Stores the `ioredis` `Redis` or `Cluster` instance on
    `this.redis` ([src/Redis/Redis.ts:17](../../src/Redis/Redis.ts#L17)).
-2. Stores the merged `redisSettings`
+2. Stores a copy of the merged `redisSettings`
    ([src/Redis/Redis.ts:18](../../src/Redis/Redis.ts#L18)).
-3. **Prefixes `keyPrefix` with the cluster name**:
+3. **Prefixes `keyPrefix` of that copy with the cluster name**:
    `this.redisSettings.keyPrefix = ${clusterName}_${redisSettings.keyPrefix}`
    ([src/Redis/Redis.ts:19](../../src/Redis/Redis.ts#L19)). This is the
    only place `clusterName` is used by the cache, and it guarantees that
@@ -190,8 +190,8 @@ cached `data` rather than throwing. The behaviour:
 
 ## Key prefix override
 
-Because `init()` rewrites
-`redisSettings.keyPrefix → ${clusterName}_${redisSettings.keyPrefix}`
+Because `init()` builds its own prefix,
+`${clusterName}_${redisSettings.keyPrefix}`
 ([src/Redis/Redis.ts:19](../../src/Redis/Redis.ts#L19)), two
 `GaleraCluster` instances pointed at the same Redis server with
 different `clusterName` values cannot collide on keys, even if their
@@ -199,10 +199,9 @@ SQL hashes happen to match. The combined prefix is also what
 `clearAll()` matches against (see below), so each cluster's clear is
 scoped to its own keys.
 
-The downside is that `keyPrefix` is mutated in place on the **shared**
-settings object: re-initialising the singleton (e.g. in tests) without
-recreating the settings would double-prefix it. Tests that call
-`init()` repeatedly should rebuild `redisSettings` each time.
+The prefix lives on a copy of the settings that the singleton keeps.
+`config.current.redis.keyPrefix` stays as the app set it, so calling
+`init()` again with the same settings prefixes the cluster name once.
 
 ## `clearOnStart`
 

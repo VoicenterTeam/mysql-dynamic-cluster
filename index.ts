@@ -9,15 +9,27 @@ import config from './src/configs';
 import { Redis as RedisLib, Cluster}  from 'ioredis'
 
 function createPoolCluster(userSettings: IUserSettings): GaleraCluster {
-    // anything but an object fails validation here, with the settings error
+    // anything but an object is not valid settings
     if (userSettings === null || typeof userSettings !== 'object' || Array.isArray(userSettings)) {
-        Settings.mixSettings(userSettings);
+        throw settingsError(userSettings);
     }
     // live objects of the app, not settings to validate
     const { redisInstant, logger, ...settings } = userSettings;
     config.load(Settings.mixSettings(settings as IUserSettings));
     init(redisInstant, logger);
     return new GaleraCluster();
+}
+
+/**
+ * The error the settings validation throws for these settings
+ */
+function settingsError(userSettings: IUserSettings): Error {
+    try {
+        Settings.mixSettings(userSettings);
+    } catch (e) {
+        return e;
+    }
+    return new Error("Invalid mysql-dynamic-cluster settings");
 }
 
 function init(redisInstant, logger?: ILogger): void {

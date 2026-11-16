@@ -23,9 +23,11 @@ tests/
     no-valid-pool-cache.test.ts  # GaleraCluster.query when no pool is valid: stale cache fallback
     named-values.test.ts         # object values: escapeNamedValues on, off, per query, the one-time warning
     named-values-setting.test.ts # the escapeNamedValues setting through createPoolCluster
+    host-ids.test.ts             # Host ids: id 0 is kept, hosts without an id get the next free one
     query.test.ts                # GaleraCluster.query() shapes: no values, scalar, array, named, timeout (stale)
   configs/
     settings.test.ts             # Settings schema: defaults, strict validation, mixSettings, no env reading
+    settings-guard.test.ts       # createPoolCluster with settings that are not an object
   metrics/
     no-side-effects.test.ts      # Requiring the package has no side effects
     otel-metrics.test.ts         # OpenTelemetry metrics recorded by the cluster
@@ -46,6 +48,7 @@ tests/
   utils/
     logger.test.ts               # Logger: levels, console default, app-supplied logger
     logger-injection.test.ts     # A logger passed to createPoolCluster
+    redis-init.test.ts           # Redis.init: the key prefix, the settings left as they were
     service-names.test.ts        # ServiceNames.getID: the name is passed as a value
     settings.test.ts             # Merge of user settings + defaults via Settings (stale, dev API)
     utils.test.ts                # Pure-unit tests for Timer and Utils.clamp
