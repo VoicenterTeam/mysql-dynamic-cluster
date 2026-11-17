@@ -465,4 +465,58 @@ export class Pool {
             conn?.release();
         }
     }
+
+    /**
+     * Take one connection out of the pool and hand it to the caller as it is: no database
+     * change, no timeout, no metric. One request to mysql2, which waits when the pool is at
+     * its limit. Rejects with the error object of mysql2
+     */
+    public getConnection(): Promise<mysql.PoolConnection> {
+        return new Promise((resolve, reject) => {
+            if (!this._pool) return reject(this._notConnected());
+            this._pool.getConnection((error, connection) => {
+                return error ? reject(error) : resolve(connection);
+            });
+        });
+    }
+
+    /**
+     * Fail every request that waits for a connection of this pool. Connections in use and
+     * logins that are still running are left alone
+     * @param error error the waiting requests are failed with
+     * @returns how many requests were failed. 0 before connect() created the mysql2 pool
+     */
+    public failWaiting(error: Error): number {
+        // mysql2 keeps the callbacks of the waiting requests here, called as (error, connection)
+        const queue = (this._pool as any)?._connectionQueue;
+        if (!queue) return 0;
+
+        // taken out first: a callback that asks again waits in the queue, it is not failed here
+        const waiting: ((error: Error) => void)[] = [];
+        while (queue.length > 0) waiting.push(queue.shift());
+        waiting.forEach(callback => {
+            try {
+                callback(error);
+            } catch (thrown) {
+                // the requests behind it are already out of the queue and must still be failed
+                Logger.error("A request that waited in pool by host " + this.host +
+                    " threw while it was failed: " + (thrown?.message || thrown));
+            }
+        });
+        return waiting.length;
+    }
+
+    /**
+     * Connection counts read from mysql2's own lists. All zeros before connect() created the
+     * mysql2 pool. A connection that still logs in counts as used
+     */
+    public stats(): { used: number, idle: number, pending: number } {
+        const pool = this._pool as any;
+        if (!pool?._allConnections) return { used: 0, idle: 0, pending: 0 };
+        return {
+            used: pool._allConnections.length - pool._freeConnections.length,
+            idle: pool._freeConnections.length,
+            pending: pool._connectionQueue.length
+        };
+    }
 }

@@ -18,6 +18,10 @@ import ServiceNames from "../utils/ServiceNames";
 import { IRedisData } from "../types/RedisInterfaces";
 import { QueryResultSource } from "../types/MetricsInterfaces";
 import config from "../configs";
+import {
+    IClusterConnection, IGetConnectionOptions, INodeInfo, INodePoolStats, INodeReadyResult
+} from "../types/NodeInterfaces";
+import { types } from "util";
 
 export class GaleraCluster {
     public connected: boolean = false;
@@ -42,6 +46,19 @@ export class GaleraCluster {
 
     private readonly _clusterName: string;
     private readonly _nullServiceName: string = "mdc"
+
+    // the promise behind `ready`, and its resolver until a connect() call takes it
+    private _ready: Promise<INodeReadyResult[]>;
+    private _resolveReady?: (results: INodeReadyResult[]) => void;
+    /**
+     * Resolves once every pool finished the first connect of the current connect() call, with
+     * one result per node. It never rejects. Pending until connect() is called. Every later
+     * connect() call replaces it with a new promise
+     */
+    public get ready(): Promise<INodeReadyResult[]> {
+        if (!this._ready) this._newReady();
+        return this._ready;
+    }
 
     /**
      * @param userSettings global user settings
@@ -92,10 +109,16 @@ export class GaleraCluster {
      * Connect all cluster pools what created from host information in config
      */
     public async connect(): Promise<void> {
+        // the first call resolves the promise `ready` already handed out, a later call a new one
+        if (!this._resolveReady) this._newReady();
+        const resolveReady = this._resolveReady;
+        this._resolveReady = undefined;
+
         return new Promise((resolve, reject) => {
             Logger.debug("Connecting all pools");
-            this._pools.forEach((pool) => {
-                pool.connect().then(async () => {
+            const results = this._pools.map((pool) => {
+                const connecting = pool.connect();
+                connecting.then(async () => {
                     if (this.connected) return;
 
                     this.connected = true;
@@ -109,8 +132,47 @@ export class GaleraCluster {
                     Logger.error(err.message);
                     reject(err.message);
                 });
+                return GaleraCluster._readyResult(pool.id, connecting);
             })
+            Promise.all(results).then(resolveReady);
         })
+    }
+
+    /**
+     * Make the promise behind `ready` and keep its resolver for the connect() call that takes it
+     * @private
+     */
+    private _newReady(): void {
+        this._ready = new Promise(resolve => {
+            this._resolveReady = resolve;
+        });
+    }
+
+    /**
+     * How the connect of one pool ended. The promise it returns never rejects
+     * @param nodeId id of the pool
+     * @param connecting the connect() of the pool
+     * @private
+     */
+    private static _readyResult(
+        nodeId: number, connecting: Promise<void>
+    ): Promise<INodeReadyResult> {
+        return connecting.then(
+            () => ({ nodeId, ok: true }),
+            reason => ({
+                nodeId,
+                ok: false,
+                error: GaleraCluster._isError(reason) ? reason : new Error(String(reason))
+            })
+        );
+    }
+
+    /**
+     * An Error, also one that was made in another realm such as a vm context
+     * @private
+     */
+    private static _isError(value: unknown): value is Error {
+        return value instanceof Error || types.isNativeError(value);
     }
 
     /**
@@ -395,7 +457,8 @@ export class GaleraCluster {
     }
 
     /**
-     * Valid pools that are not in exclude, lowest load score first
+     * Valid pools that are not in exclude, lowest load score first.
+     * query() and getConnection() both choose their pools here
      * @param exclude ids of the pools to leave out
      * @private
      */
@@ -403,5 +466,74 @@ export class GaleraCluster {
         return this._pools
             .filter(pool => pool.status.isValid && !exclude.includes(pool.id))
             .sort((a, b) => a.status.loadScore - b.status.loadScore);
+    }
+
+    /**
+     * Take a connection of one node: the valid node with the lowest load score that is not
+     * excluded. One node and one request to its pool, with no retry. The caller owns the
+     * connection: the cluster sets no timeout on it, does not change its database, does not
+     * reset it and records no metric for it. See docs/node-api.md
+     * @param options exclude: ids of the nodes to leave out
+     */
+    public async getConnection(options?: IGetConnectionOptions): Promise<IClusterConnection> {
+        const exclude = options?.exclude;
+        const isIds = Array.isArray(exclude) && exclude.every(id => typeof id === 'number');
+        if (exclude !== undefined && !isIds) {
+            throw new TypeError("getConnection: options.exclude must be an array of numbers");
+        }
+
+        const pool = this._validPools(exclude ?? [])[0];
+        if (!pool) {
+            throw Object.assign(new Error("No valid node is left to take a connection from"), {
+                code: 'MDC_NO_NODE_AVAILABLE'
+            });
+        }
+
+        try {
+            return { connection: await pool.getConnection(), nodeId: pool.id };
+        } catch (error) {
+            // the error of mysql2 itself, so the caller sees its code. Only the node is added
+            if (error !== null && typeof error === 'object') error.nodeId = pool.id;
+            throw error;
+        }
+    }
+
+    /**
+     * Fail every request that waits for a connection of one node, the queued queries of the
+     * cluster itself included. Connections in use and logins that still run are left alone
+     * @param nodeId id of the node, as nodes() reports it
+     * @param error error the waiting requests are failed with
+     * @returns how many requests were failed. 0 for an unknown node or a pool not created yet
+     */
+    public failWaiting(nodeId: number, error: Error): number {
+        // without an error a waiting request would read its missing connection as handed out
+        if (!GaleraCluster._isError(error)) {
+            throw new TypeError("failWaiting: error must be an Error");
+        }
+        const pool = this._pools.find(candidate => candidate.id === nodeId);
+        return pool ? pool.failWaiting(error) : 0;
+    }
+
+    /**
+     * Connection counts of the pool of every node
+     */
+    public getPoolStats(): INodePoolStats[] {
+        return this._pools.map(pool => ({
+            nodeId: pool.id, ...pool.stats(), limit: pool.connectionLimit
+        }));
+    }
+
+    /**
+     * The nodes of the cluster as they are now. New plain objects on every call
+     */
+    public nodes(): INodeInfo[] {
+        return this._pools.map(pool => ({
+            id: pool.id,
+            name: pool.name,
+            host: pool.host,
+            port: pool.port,
+            isValid: pool.status.isValid,
+            loadScore: pool.status.loadScore
+        }));
     }
 }

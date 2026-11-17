@@ -1,6 +1,9 @@
 import { IUserSettings } from "./src/types/SettingsInterfaces";
 import { GaleraCluster } from "./src/cluster/GaleraCluster";
 import { ILogger, LOGLEVEL } from './src/types/LoggerInterfaces';
+import {
+    IClusterConnection, IGetConnectionOptions, INodeInfo, INodePoolStats, INodeReadyResult
+} from './src/types/NodeInterfaces';
 import Logger from "./src/utils/Logger";
 import { Settings } from "./src/utils/Settings";
 import Redis from "./src/Redis/Redis";
@@ -45,5 +48,10 @@ export {
     createPoolCluster,
     LOGLEVEL,
     IUserSettings,
-    ILogger
+    ILogger,
+    IGetConnectionOptions,
+    IClusterConnection,
+    INodeInfo,
+    INodePoolStats,
+    INodeReadyResult
 };
