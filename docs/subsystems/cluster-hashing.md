@@ -103,7 +103,7 @@ recreate the helper schema on next boot.
    `GaleraCluster` (see below).
 
 Any thrown error in steps 1-3 propagates out of `connect`; `GaleraCluster._enableHashing`
-([src/cluster/GaleraCluster.ts:116-124](../../src/cluster/GaleraCluster.ts#L116))
+([`_enableHashing`](../../src/cluster/GaleraCluster.ts))
 catches and logs it so a hashing failure does not abort
 `GaleraCluster.connect`.
 
@@ -232,25 +232,24 @@ hashing not connected) or the map returns `undefined`, it stays at
 
 ## Effect on routing — `_getActivePools`
 
-[src/cluster/GaleraCluster.ts:321-344](../../src/cluster/GaleraCluster.ts#L321).
+[`_getActivePools`](../../src/cluster/GaleraCluster.ts) and its helper
+[`_validPools`](../../src/cluster/GaleraCluster.ts).
 
 The pinning logic threads through three steps of active-pool selection:
 
-1. **Filter and exclude the pin.** The valid-pool filter explicitly
-   removes the pinned pool from the candidate set:
+1. **Filter and exclude the pin.** `_getActivePools` hands the pinned
+   pool id to the helper that filters the pools:
    ```ts
-   activePools = this._pools.filter(pool => {
-       return pool.status.isValid && pool.id !== poolIdService;
-   })
+   activePools = this._validPools([poolIdService]);
    ```
-   ([src/cluster/GaleraCluster.ts:329-331](../../src/cluster/GaleraCluster.ts#L329)).
-2. **Sort by load score.** The remaining candidates are sorted ascending
-   by `pool.status.loadScore`
-   ([src/cluster/GaleraCluster.ts:332](../../src/cluster/GaleraCluster.ts#L332)).
-3. **Prepend the pin.** If the pinned pool id is non-negative *and*
-   the pool can be found in `_pools`, `unshift` it onto the front of
-   the sorted list
-   ([src/cluster/GaleraCluster.ts:334-337](../../src/cluster/GaleraCluster.ts#L334)).
+   `_validPools` keeps the pools that are valid and whose id is not in
+   that list, so the pinned pool is out of the candidate set. Before
+   4.5.0 the same filter was inline in `_getActivePools`.
+2. **Sort by load score.** `_validPools` also sorts the remaining
+   candidates ascending by `pool.status.loadScore`.
+3. **Prepend the pin.** Back in `_getActivePools`, if the pinned pool id
+   is non-negative *and* the pool can be found in `_pools`, `unshift` it
+   onto the front of the sorted list.
 
 The consequence: a valid pinned pool always goes first, even if its
 load score is the worst in the cluster. If the pinned pool is invalid
@@ -286,7 +285,7 @@ ends, and logs nothing, also when `connect` ran again before it ended.
 
 `GaleraCluster.disconnect` invokes `this._clusterHashing?.stop()`
 as part of teardown
-([src/cluster/GaleraCluster.ts:129-138](../../src/cluster/GaleraCluster.ts#L129));
+([`disconnect`](../../src/cluster/GaleraCluster.ts));
 see [cluster.md](cluster.md) for the full shutdown order.
 
 ## Public API summary

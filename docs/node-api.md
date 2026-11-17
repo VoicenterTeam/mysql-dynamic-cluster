@@ -49,6 +49,8 @@ One entry per host of the settings, in the order of the settings. It works befor
 
 - `name` is the `name` of the host, or `host:port` when it has none.
 - `isValid` is the result of the last health check. It is `false` before the first check.
+  `disconnect()` does not clear it, so it can still be `true` for a node of a cluster that
+  was disconnected.
 - `loadScore` is the load the last health check computed. Lower is better. It is `100000`
   before the first check. See [health-and-scoring.md](./subsystems/health-and-scoring.md).
 
@@ -72,6 +74,9 @@ It takes one connection out of the pool of one node and hands it to you. `connec
 The cluster takes the nodes that are valid and not in `exclude`, and picks the one with the
 lowest load score. `query()` filters and sorts its pools with the same code. Service hashing
 plays no part here. There is no service, so no node is pinned.
+
+Only `exclude` is read. A value passed as `options` that is not an object, such as the list
+in `getConnection([2])`, is ignored with no error, and no node is left out.
 
 It asks that one node once. It does not retry and it does not try a second node. To move on
 to another node, call again with the failed node in `exclude`:
@@ -130,6 +135,9 @@ async function connectionWithin(cluster, ms) {
 | The error of mysql2, with `nodeId` added | The node gave no connection. It is the same object mysql2 made, so `code`, `errno` and `fatal` are as mysql2 set them. Examples: a refused login, a node that went down after its last check, `Pool is closed.` after `disconnect()`. |
 | The error passed to `failWaiting()`, with `nodeId` added | The request waited and `failWaiting()` failed it. |
 | `TypeError` | `exclude` is given and is not an array of numbers. No node is asked. |
+
+An error that cannot take a new property, such as a frozen `Error` passed to
+`failWaiting()`, is rejected as it is, without `nodeId`.
 
 A node that fails here stays valid until its health check says otherwise. The next call
 without `exclude` may pick it again.
@@ -245,6 +253,10 @@ keeps, at the moment of the call.
 `used`, `idle` and `pending` are `0` while the mysql2 pool of the node does not exist, which
 is before `connect()`. `limit` is set from the start.
 
+After `disconnect()` the closed mysql2 pool still exists. `getPoolStats()` keeps the counts
+that pool had when it was closed, and they do not go back to `0`. A connection the app held
+at that moment stays counted as `used`.
+
 ## `failWaiting(nodeId, error)`
 
 ```ts
@@ -270,9 +282,13 @@ What it touches and what it does not:
   valid nodes that are left. A health check that waits is failed too and counts as a failed
   check.
 - Connections in use are left alone. So are logins that are still running.
-- The node stays in the cluster and stays valid. A request that comes after the call waits
-  again. A callback that asks for a connection again while it is being failed is not failed
-  in the same call.
+- The node stays in the cluster, and the call does not set `isValid`. It can still cost the
+  node its validity through a health check. A check that waits is failed with the others
+  and counts as a failed check, and the second failed check in a row marks the node not
+  valid. A check waits when every connection of the node is in use, so this is the case of a
+  full pool. Two calls that each catch a waiting check take the node out.
+- A request that comes after the call waits again. A callback that asks for a connection
+  again while it is being failed is not failed in the same call.
 
 It returns `0` for a node id that does not exist and for a node whose pool is not created
 yet. It throws a `TypeError` when `error` is not an `Error`. A waiting request that is called
