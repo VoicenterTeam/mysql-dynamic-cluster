@@ -284,6 +284,27 @@ not move. `GaleraCluster` calls them for the node API of
   `_freeConnections.length` and `_connectionQueue.length`. All zeros before
   the mysql2 pool exists.
 
+Added in 4.6.0, after them, for `checkError` and `firstReady` of the node
+API:
+
+- `checkError` (getter) returns `status.checkError`: what the last health
+  check failed with, reduced to `code`, `errno` and `sqlState`, or
+  `undefined`. See
+  [health-and-scoring.md](health-and-scoring.md#the-error-of-the-last-check).
+- `connectAttempt` (getter) returns `_connectAttempt`, the count of
+  `connect()` and `disconnect()` calls. `connect()` counts itself before it
+  first waits. `GaleraCluster` reads it right after it called `connect()`
+  and again when that call settled, to see whether the pool was closed or
+  connected again in between.
+
+The errors `Pool` makes with a code of its own are marked with
+`PoolStatus.ownError()`, so a health check that fails with one reports an
+empty `checkError`: the `POOL_NOT_CONNECTED` error of `_notConnected()` and
+the `PROTOCOL_SEQUENCE_TIMEOUT` error of the timer in `_changeUser`.
+`failWaiting(error)` marks the error of the app the same way. The mark
+changes nothing on the error object, and `query()`, `getConnection()` and
+the waiting requests reject with it as before.
+
 ## Public API summary
 
 | Member | Kind | Source |
@@ -301,6 +322,8 @@ not move. `GaleraCluster` calls them for the node API of
 | `getConnection()` | `() => Promise<PoolConnection>` | [`getConnection`](../../src/pool/Pool.ts) |
 | `failWaiting(error)` | `(error: Error) => number` | [`failWaiting`](../../src/pool/Pool.ts) |
 | `stats()` | `() => { used, idle, pending }` | [`stats`](../../src/pool/Pool.ts) |
+| `checkError` | getter returning `INodeCheckError \| undefined` | [`checkError`](../../src/pool/Pool.ts) |
+| `connectAttempt` | getter returning `number` | [`connectAttempt`](../../src/pool/Pool.ts) |
 
 Consumers normally talk to `GaleraCluster`, not to `Pool` directly;
 the cluster picks a healthy pool via its routing logic and then

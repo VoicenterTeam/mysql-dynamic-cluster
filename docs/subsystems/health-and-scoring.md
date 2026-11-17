@@ -34,6 +34,7 @@ The public surface that `GaleraCluster` and `Pool` read from:
 | `isValid` | `boolean` (getter over `_isValid`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Set by `Validator.check`. Initially `false` (the field default, re-asserted in the constructor) — a pool that has never been polled is not yet routable. |
 | `queryTime` | `number` (getter over `_queryTime`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Wall-clock duration in seconds of the most recent `SHOW GLOBAL STATUS`, measured via `QueryTimer`. Set after both the success and the error branches of `checkStatus`. |
 | `loadScore` | `number` (getter over `_loadScore`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Sum from `LoadFactor.check`. **Initial value is `100000`** (set in the constructor at [PoolStatus.ts](../../src/pool/PoolStatus.ts), overriding the field's `= 0`). A pool that has never been polled sorts last in `_getActivePools` — see [cluster.md](cluster.md). |
+| `checkError` | `INodeCheckError \| undefined` (getter over `_checkError`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Since 4.6.0. What the last check failed with, reduced to `code`, `errno` and `sqlState`. `undefined` before the first check and after a check whose query ran. A new object on every read. See [The error of the last check](#the-error-of-the-last-check). |
 
 Private members worth knowing about:
 
@@ -111,6 +112,49 @@ A missing status key no longer throws: `Validator.check` logs the key by
 name and that validator fails, so the pool is marked invalid (see
 [known-issues.md#3](../known-issues.md#3-validatorcheck-crashes-on-missing-status-key)).
 
+### The error of the last check
+
+Since 4.6.0 `PoolStatus` keeps what the last check failed with, and
+`checkError` hands it out. `GaleraCluster` reads it through
+`Pool.checkError` for `nodes()` and for the results of `ready` and
+`firstReady`. The contract is in
+[../node-api.md](../node-api.md#checkerror).
+
+- The `catch` branch sets it, before it logs. The value is the error the
+  status query was rejected with, reduced by `_reduce`: `code` when it is a
+  string, `errno` when it is an integer, `sqlState` when it is a string.
+  The message is never taken. The reduction is done once, at that moment,
+  so a later change of the error object does not show.
+- The success branch clears it as soon as the query ran, before the
+  validators are asked. So it is cleared also when a validator then says no.
+- A check that is dropped because it outlived `stopTimerCheck()` neither
+  sets nor clears it.
+- `stopTimerCheck()` does not clear it. It keeps its value over a
+  `disconnect()`, as `isValid` does.
+
+Only values that mysql2, the socket or the server produced are kept. The
+value is an empty object in these cases:
+
+- The check ran into its own timer. That error has no code.
+- The error was marked with `PoolStatus.ownError(error)`. `Pool` marks the
+  errors it makes with a code of its own, `POOL_NOT_CONNECTED` and the
+  `PROTOCOL_SEQUENCE_TIMEOUT` of its timer around the change of database,
+  and the error the app passes to `failWaiting()`. The mark is kept in a
+  `WeakSet`, so the error object is not changed and still has its code for
+  every other caller.
+- The error was thrown after the answer came, by the code that reads the
+  answer. Only what the status query is rejected with is reduced.
+- The error is not an object, or reading one of the three fields throws.
+
+A check that times out ends by its own timer, not by the `timeout` option
+of mysql2 that the status query is sent with. Both have the same length,
+and the timer of the check is set first: mysql2 sets its timer only after
+the connection was handed out and the database was changed, which is never
+in the same turn. So a timed out check reports `{}`, not
+`PROTOCOL_SEQUENCE_TIMEOUT`. The connect timeout of mysql2 is set when the
+connection is made, before the timer of the check, and is 10 s. It ends the
+check with `ETIMEDOUT` when the timer of the check is longer than that.
+
 ## Adaptive timer
 
 [src/pool/PoolStatus.ts](../../src/pool/PoolStatus.ts).
@@ -155,8 +199,8 @@ disconnect.
 
 A check that is still running at `stopTimerCheck()` belongs to a
 connection that is gone. When it ends it changes neither `isValid` nor the
-failure count, sets no timer, logs nothing and emits nothing, also when
-the pool was connected again in the meantime.
+failure count nor `checkError`, sets no timer, logs nothing and emits
+nothing, also when the pool was connected again in the meantime.
 
 A check may be rejected with anything. The log line of a failed check
 prints the message of the error, its `code` when the message is empty, the
@@ -164,8 +208,9 @@ value itself when it is not an error, and `unreadable error` for a value
 that cannot be turned into text. A dropped check and a restart are logged
 at `debug`.
 
-`disconnect()` does not reset `isValid` or the failure count. They keep
-their last values until the first check of the next `connect()` ends.
+`disconnect()` does not reset `isValid`, the failure count or `checkError`.
+They keep their last values until the first check of the next `connect()`
+ends.
 
 ## `Validator`
 

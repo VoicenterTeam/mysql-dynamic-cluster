@@ -96,6 +96,13 @@ other payload.
   message.
 - `poolId` is the `id` of the pool the check ran on.
 
+Since 4.6.0 the same error, reduced to `code`, `errno` and `sqlState`, is also on `nodes()`
+and on the results of `ready` and `firstReady`, as `checkError`. An app that only wants to
+know why a node is down can read it there and needs no listener. See
+[node-api.md](./node-api.md#checkerror). The event still hands out the whole error object,
+message included. A code the package made itself, such as `POOL_NOT_CONNECTED`, is on the
+error of the event and never in `checkError`.
+
 ```ts
 cluster.on('pool_check_failed', ([error, poolId]) => {
     if (error.code === 'ER_ACCESS_DENIED_ERROR') {

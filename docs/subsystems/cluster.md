@@ -85,6 +85,16 @@ resolves once every `pool.connect()` of that call ended, with one result per
 pool, and it never rejects. `connect()` itself resolves and rejects as
 described above. See [../node-api.md](../node-api.md#ready).
 
+Since 4.6.0 every `connect()` call also settles the `firstReady` promise. It
+resolves when the first `pool.connect()` of that call passed, with the
+results that are in by then, or together with `ready` when none passed. It
+does not wait for `_enableHashing()`. Each result is built by `_readyResult`
+when the `pool.connect()` settles, and takes `pool.checkError` at that
+moment. `_readyResult` reads `pool.connectAttempt` right after the call and
+again at that moment. A count that moved means `disconnect()` or another
+`connect()` came in between, and the result gets an empty `checkError`. See
+[../node-api.md](../node-api.md#firstready).
+
 ## `disconnect()`
 
 `disconnect` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
@@ -256,11 +266,12 @@ loop in `query`.
 | `disconnect(): Promise<void>` | [`disconnect`](../../src/cluster/GaleraCluster.ts) | Synchronous in practice — does not await pool disconnects. |
 | `on(event, callback)` | [`on`](../../src/cluster/GaleraCluster.ts) | Pass-through to the shared `Events` emitter. |
 | `query<T>(sql, values?, queryOptions?)` | [`query`](../../src/cluster/GaleraCluster.ts) | The full routing pipeline described above. |
-| `ready: Promise<INodeReadyResult[]>` (getter) | [`ready`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Resolves once every pool finished the first connect of the current `connect()` call. Never rejects. |
+| `ready: Promise<INodeReadyResult[]>` (getter) | [`ready`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Resolves once every pool finished the first connect of the current `connect()` call. Never rejects. Since 4.6.0 a result has `checkError` when the health check of that connect did not get its answer. |
+| `firstReady: Promise<INodeReadyResult[]>` (getter) | [`firstReady`](../../src/cluster/GaleraCluster.ts) | Since 4.6.0. Resolves when the first pool passed the first connect of the current `connect()` call, with the results that are in by then. With every result when none passed. Never rejects. |
 | `getConnection(options?)` | [`getConnection`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. One connection of the valid node with the lowest load score. The caller owns it. |
 | `failWaiting(nodeId, error): number` | [`failWaiting`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Fails the requests that wait for a connection of one node. |
 | `getPoolStats(): INodePoolStats[]` | [`getPoolStats`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Used, idle and waiting connections per node. |
-| `nodes(): INodeInfo[]` | [`nodes`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. A snapshot of the nodes as plain objects. |
+| `nodes(): INodeInfo[]` | [`nodes`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. A snapshot of the nodes as plain objects. Since 4.6.0 a node has `checkError` when its last health check did not get its answer. |
 
-The last five rows are the node API. Its contract, errors and examples are in
+The last six rows are the node API. Its contract, errors and examples are in
 [../node-api.md](../node-api.md).

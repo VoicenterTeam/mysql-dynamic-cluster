@@ -30,7 +30,10 @@ tests/
     node-api-public.test.ts      # Node API through createPoolCluster, before connect()
     node-api-loopback.test.ts    # Node API with the real mysql2 against its server class on loopback
     ready.test.ts                # cluster.ready: pass, fail, never rejects, one promise per connect(); connect() as before
-    ready-unhandled.test.ts      # cluster.ready leaves no unhandled rejection, in a clean Node process
+    ready-unhandled.test.ts      # cluster.ready and firstReady leave no unhandled rejection, in a clean Node process
+    first-ready.test.ts          # cluster.firstReady: first pass, none pass, never rejects, one promise per connect()
+    check-error.test.ts          # checkError over fake pools: nodes(), the results of ready and firstReady
+    check-error-loopback.test.ts # checkError with the real mysql2 on loopback: refused login, timeouts, reconnect
     query.test.ts                # GaleraCluster.query() shapes: no values, scalar, array, named, timeout (stale)
   configs/
     settings.test.ts             # Settings schema: defaults, strict validation, mixSettings, no env reading
@@ -54,6 +57,8 @@ tests/
     check-failed-event.test.ts   # pool_check_failed: the payload, every failed check, a listener that throws
     check-failed-event-public.test.ts # pool_check_failed through createPoolCluster and cluster.on
     check-loop.test.ts           # Health check loop: stop and start, a check that ends late, odd errors
+    check-error.test.ts          # PoolStatus.checkError: what it holds, when it is set and cleared, odd errors
+    check-error-paths.test.ts    # Every way a check of a real Pool fails, and what checkError holds after each
     reconnect-checks.test.ts     # A pool connected, disconnected and connected again is checked again
     node-api.test.ts             # Pool.getConnection, failWaiting and stats over a mocked mysql2 pool
   toolchain/
