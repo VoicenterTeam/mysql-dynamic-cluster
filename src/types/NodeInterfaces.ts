@@ -34,7 +34,9 @@ export interface INodeInfo {
     // result of the last health check
     isValid: boolean,
     // load of the last health check, lower is better
-    loadScore: number
+    loadScore: number,
+    // set when the last health check did not get its answer
+    checkError?: INodeCheckError
 }
 
 // Connection counts of the pool of one node, as GaleraCluster.getPoolStats() reports them
@@ -50,10 +52,12 @@ export interface INodePoolStats {
     limit: number
 }
 
-// How the first connect of one node ended, as GaleraCluster.ready reports it
+// How the first connect of one node ended, as GaleraCluster.ready and firstReady report it
 export interface INodeReadyResult {
     nodeId: number,
     ok: boolean,
     // set when ok is false
-    error?: Error
+    error?: Error,
+    // set when the health check of that connect did not get its answer
+    checkError?: INodeCheckError
 }

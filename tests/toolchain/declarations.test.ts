@@ -60,7 +60,8 @@ const compileApp = (
 const app = `
 import { createPoolCluster } from './index';
 import type {
-    IGetConnectionOptions, IClusterConnection, INodeInfo, INodePoolStats, INodeReadyResult
+    IGetConnectionOptions, IClusterConnection, INodeInfo, INodePoolStats, INodeReadyResult,
+    INodeCheckError
 } from './index';
 import type { PoolConnection } from 'mysql2';
 
@@ -73,13 +74,17 @@ export const interfaces: [
     Same<IGetConnectionOptions, { exclude?: number[] }>,
     Same<IClusterConnection, { connection: PoolConnection; nodeId: number }>,
     Same<INodeInfo, {
-        id: number; name: string; host: string; port: number; isValid: boolean; loadScore: number
+        id: number; name: string; host: string; port: number; isValid: boolean; loadScore: number;
+        checkError?: INodeCheckError
     }>,
     Same<INodePoolStats, {
         nodeId: number; used: number; idle: number; pending: number; limit: number
     }>,
-    Same<INodeReadyResult, { nodeId: number; ok: boolean; error?: Error }>
-] = [true, true, true, true, true];
+    Same<INodeReadyResult, {
+        nodeId: number; ok: boolean; error?: Error; checkError?: INodeCheckError
+    }>,
+    Same<INodeCheckError, { code?: string; errno?: number; sqlState?: string }>
+] = [true, true, true, true, true, true];
 
 export const members: [
     Same<
@@ -88,10 +93,20 @@ export const members: [
     Same<Cluster['ready'], Promise<INodeReadyResult[]>>,
     Same<Cluster['failWaiting'], (nodeId: number, error: Error) => number>,
     Same<Cluster['getPoolStats'], () => INodePoolStats[]>,
-    Same<Cluster['nodes'], () => INodeInfo[]>
-] = [true, true, true, true, true];
+    Same<Cluster['nodes'], () => INodeInfo[]>,
+    Same<Cluster['firstReady'], Promise<INodeReadyResult[]>>
+] = [true, true, true, true, true, true];
 
 export const calls = [cluster.getConnection(), cluster.getConnection({ exclude: [1] })];
+
+// what an app does with the new members, with strict on
+export async function refusedLogins(): Promise<number[]> {
+    const results = await cluster.firstReady;
+    const refused = results.filter(result => result.checkError?.errno === 1045);
+    const codes: (string | undefined)[] = cluster.nodes().map(info => info.checkError?.code);
+    const states: (string | undefined)[] = results.map(result => result.checkError?.sqlState);
+    return codes.length + states.length > 0 ? refused.map(result => result.nodeId) : [];
+}
 `;
 
 describe('the declarations of the built package', () => {
@@ -102,8 +117,12 @@ describe('the declarations of the built package', () => {
         expect(declarations.has(path.join(outDir, 'index.d.ts'))).toBe(true);
     });
 
-    it('export the five node API types and type the five members as agreed', () => {
+    it('export the six node API types and type the six members as agreed', () => {
         expect(compileApp(declarations, app)).toEqual([]);
+    });
+
+    it('compile in an app that reads the optional fields exactly', () => {
+        expect(compileApp(declarations, app, { exactOptionalPropertyTypes: true })).toEqual([]);
     });
 
     // such an app checks the declarations of every package it imports, and a default import
@@ -121,6 +140,22 @@ describe('the declarations of the built package', () => {
         const errors = compileApp(declarations, app + 'cluster.ready = cluster.ready;\n');
         expect(errors).toHaveLength(1);
         expect(errors[0]).toMatch(/^2540 /);
+    });
+
+    it('make firstReady read-only', () => {
+        const errors = compileApp(declarations, app + 'cluster.firstReady = cluster.firstReady;\n');
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatch(/^2540 .*firstReady/);
+    });
+
+    it.each([
+        ['a message', 'message'],
+        ['a fatal flag', 'fatal']
+    ])('give checkError no field for %s', (_name, field) => {
+        const read = 'export const leaked = cluster.nodes()[0].checkError?.' + field + ';\n';
+        const errors = compileApp(declarations, app + read);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatch(new RegExp('^2339 .*' + field));
     });
 
     // the control: an app that asks for a type the package does not export does not compile

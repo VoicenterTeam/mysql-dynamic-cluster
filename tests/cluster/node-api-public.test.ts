@@ -57,6 +57,12 @@ describe('the node API of a cluster that has not connected yet', () => {
         expect(cluster.firstReady).not.toBe(cluster.ready);
     });
 
+    it('nodes() has no checkError on a node that was never checked', () => {
+        const [info] = makeCluster([{ id: 1 }]).nodes();
+
+        expect('checkError' in info).toBe(false);
+    });
+
     it('firstReady and ready resolve with an empty list for a cluster without hosts', async () => {
         const cluster = makeCluster([]);
         // connect() of a cluster without hosts never settles, so it is not awaited

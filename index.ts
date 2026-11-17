@@ -2,7 +2,8 @@ import { IUserSettings } from "./src/types/SettingsInterfaces";
 import { GaleraCluster } from "./src/cluster/GaleraCluster";
 import { ILogger, LOGLEVEL } from './src/types/LoggerInterfaces';
 import {
-    IClusterConnection, IGetConnectionOptions, INodeInfo, INodePoolStats, INodeReadyResult
+    IClusterConnection, IGetConnectionOptions, INodeCheckError, INodeInfo, INodePoolStats,
+    INodeReadyResult
 } from './src/types/NodeInterfaces';
 import Logger from "./src/utils/Logger";
 import { Settings } from "./src/utils/Settings";
@@ -53,5 +54,6 @@ export {
     IClusterConnection,
     INodeInfo,
     INodePoolStats,
-    INodeReadyResult
+    INodeReadyResult,
+    INodeCheckError
 };

@@ -152,7 +152,7 @@ export class GaleraCluster {
                     Logger.error(err.message);
                     reject(err.message);
                 });
-                const result = GaleraCluster._readyResult(pool.id, connecting);
+                const result = GaleraCluster._readyResult(pool, connecting);
                 result.then(ended => {
                     settled[index] = ended;
                     // only the first pass resolves it. filter leaves out the nodes not in yet
@@ -190,21 +190,38 @@ export class GaleraCluster {
 
     /**
      * How the connect of one pool ended. The promise it returns never rejects
-     * @param nodeId id of the pool
-     * @param connecting the connect() of the pool
+     * @param pool the pool
+     * @param connecting the connect() of the pool, called just now
      * @private
      */
-    private static _readyResult(
-        nodeId: number, connecting: Promise<void>
-    ): Promise<INodeReadyResult> {
+    private static _readyResult(pool: Pool, connecting: Promise<void>): Promise<INodeReadyResult> {
+        const nodeId = pool.id;
+        // connect() counted itself before it first waited, so this is the count of that call
+        const attempt = pool.connectAttempt;
+        // Read when the connect settled. A count that moved means a disconnect() or a later
+        // connect() came in between: this connect was given up, which is no error of the server
+        const checked = () => GaleraCluster._withCheckError(
+            pool.connectAttempt === attempt ? pool.checkError : {}
+        );
         return connecting.then(
-            () => ({ nodeId, ok: true }),
+            () => ({ nodeId, ok: true, ...checked() }),
             reason => ({
                 nodeId,
                 ok: false,
-                error: GaleraCluster._isError(reason) ? reason : new Error(String(reason))
+                error: GaleraCluster._isError(reason) ? reason : new Error(String(reason)),
+                ...checked()
             })
         );
+    }
+
+    /**
+     * The checkError field of a result or of a node. Left out when there is no check error
+     * @private
+     */
+    private static _withCheckError(
+        checkError: INodeInfo['checkError']
+    ): Pick<INodeInfo, 'checkError'> {
+        return checkError ? { checkError } : {};
     }
 
     /**
@@ -577,7 +594,8 @@ export class GaleraCluster {
             host: pool.host,
             port: pool.port,
             isValid: pool.status.isValid,
-            loadScore: pool.status.loadScore
+            loadScore: pool.status.loadScore,
+            ...GaleraCluster._withCheckError(pool.checkError)
         }));
     }
 }
