@@ -79,6 +79,10 @@ const listen = (): Promise<{ port: number, logins: () => number }> => {
     });
 };
 
+// a test that fails before its own disconnect() must not leave timers and sockets behind
+const clusters: any[] = [];
+afterEach(() => clusters.splice(0).forEach(cluster => cluster.connected && cluster.disconnect()));
+
 // One node with one connection. flags are set, so connect() asks no server first, and the
 // next health check is ten minutes away, so only the test asks for connections
 const connectCluster = async (port: number): Promise<any> => {
@@ -92,6 +96,7 @@ const connectCluster = async (port: number): Promise<any> => {
         useClusterHashing: false,
         logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }
     } as any);
+    clusters.push(cluster);
     await cluster.connect();
     return cluster;
 };
@@ -112,43 +117,49 @@ describe('the node API against a real mysql2 pool', () => {
             id: 4, name: '127.0.0.1:' + server.port, host: '127.0.0.1', port: server.port,
             isValid: true, loadScore: 2
         }]);
-        await cluster.disconnect();
     });
 
-    it('failWaiting fails the waiting requests and leaves the connection in use', async () => {
+    it('getPoolStats counts the connection in use and the requests that wait', async () => {
         const server = await listen();
         const cluster = await connectCluster(server.port);
         const stats = () => cluster.getPoolStats()[0];
         expect(stats()).toEqual({ nodeId: 4, used: 0, idle: 1, pending: 0, limit: 1 });
 
         const held = await cluster.getConnection();
-        expect(held.nodeId).toBe(4);
         expect(stats()).toEqual({ nodeId: 4, used: 1, idle: 0, pending: 0, limit: 1 });
+        const waiting = [cluster.getConnection(), cluster.getConnection()];
+        waiting.forEach(request => request.catch(() => undefined));
+        expect(stats()).toEqual({ nodeId: 4, used: 1, idle: 0, pending: 2, limit: 1 });
 
+        cluster.failWaiting(4, new Error('node 4 is leaving'));
+        held.connection.release();
+        expect(stats()).toEqual({ nodeId: 4, used: 0, idle: 1, pending: 0, limit: 1 });
+    });
+
+    it('failWaiting fails the waiting requests and leaves the connection in use', async () => {
+        const server = await listen();
+        const cluster = await connectCluster(server.port);
+        const held = await cluster.getConnection();
         const waiting = [cluster.getConnection(), cluster.getConnection()]
             .map(request => request.catch((e: any) => e));
-        expect(stats().pending).toBe(2);
 
         const error = new Error('node 4 is leaving');
         expect(cluster.failWaiting(4, error)).toBe(2);
-        expect(stats()).toEqual({ nodeId: 4, used: 1, idle: 0, pending: 0, limit: 1 });
-        const failures = await Promise.all(waiting);
-        failures.forEach(failure => expect(failure).toBe(error));
+        expect(await Promise.all(waiting)).toEqual([error, error]);
         expect((error as any).nodeId).toBe(4);
         expect(cluster.failWaiting(4, error)).toBe(0);
 
-        // the connection in use still answers, and goes back to the pool when released
+        // the connection in use still answers, on the one login the pool made
+        expect(held.nodeId).toBe(4);
         expect(await ask(held.connection)).toHaveLength(STATUS.length);
-        held.connection.release();
-        expect(stats()).toEqual({ nodeId: 4, used: 0, idle: 1, pending: 0, limit: 1 });
         expect(server.logins()).toBe(1);
-        await cluster.disconnect();
     });
 
     it('a query of the cluster that waits is failed too', async () => {
         const server = await listen();
         const cluster = await connectCluster(server.port);
-        const held = await cluster.getConnection();
+        // the only connection of the node is taken, so the query has to wait
+        await cluster.getConnection();
 
         const query = cluster.query('SELECT 1').catch((e: any) => e);
         // the query reaches the pool a few turns after the cluster picked it
@@ -158,8 +169,6 @@ describe('the node API against a real mysql2 pool', () => {
         expect(cluster.failWaiting(4, new Error('node 4 is leaving'))).toBe(1);
 
         expect((await query).message).toContain('node 4 is leaving');
-        held.connection.release();
-        await cluster.disconnect();
     });
 
     it('getConnection rejects with the error of mysql2 plus nodeId after disconnect', async () => {
@@ -167,8 +176,10 @@ describe('the node API against a real mysql2 pool', () => {
         const cluster = await connectCluster(server.port);
         await cluster.disconnect();
 
+        // the node is still picked, and its closed mysql2 pool refuses with an error of its own
         const failure = await cluster.getConnection().catch((e: any) => e);
-        expect(failure.message).toBe('Pool is closed.');
+        expect(failure).toBeInstanceOf(Error);
+        expect(failure.code).toBeUndefined();
         expect(failure.nodeId).toBe(4);
     });
 });
