@@ -60,6 +60,20 @@ export class GaleraCluster {
         return this._ready;
     }
 
+    // the promise behind `firstReady`, and its resolver until a connect() call takes it
+    private _firstReady: Promise<INodeReadyResult[]>;
+    private _resolveFirstReady?: (results: INodeReadyResult[]) => void;
+    /**
+     * Resolves when the first pool passed the first connect of the current connect() call, with
+     * the results that are in by then, in the order of the nodes. When no pool passes it
+     * resolves with every result, at the moment `ready` does. It never rejects. Pending until
+     * connect() is called. Every later connect() call replaces it with a new promise
+     */
+    public get firstReady(): Promise<INodeReadyResult[]> {
+        if (!this._firstReady) this._newFirstReady();
+        return this._firstReady;
+    }
+
     /**
      * @param userSettings global user settings
      */
@@ -113,10 +127,16 @@ export class GaleraCluster {
         if (!this._resolveReady) this._newReady();
         const resolveReady = this._resolveReady;
         this._resolveReady = undefined;
+        // the same for `firstReady`
+        if (!this._resolveFirstReady) this._newFirstReady();
+        const resolveFirstReady = this._resolveFirstReady;
+        this._resolveFirstReady = undefined;
 
         return new Promise((resolve, reject) => {
             Logger.debug("Connecting all pools");
-            const results = this._pools.map((pool) => {
+            // the results that are in, each at the place of its node
+            const settled: INodeReadyResult[] = [];
+            const results = this._pools.map((pool, index) => {
                 const connecting = pool.connect();
                 connecting.then(async () => {
                     if (this.connected) return;
@@ -132,9 +152,18 @@ export class GaleraCluster {
                     Logger.error(err.message);
                     reject(err.message);
                 });
-                return GaleraCluster._readyResult(pool.id, connecting);
+                const result = GaleraCluster._readyResult(pool.id, connecting);
+                result.then(ended => {
+                    settled[index] = ended;
+                    // only the first pass resolves it. filter leaves out the nodes not in yet
+                    if (ended.ok) resolveFirstReady(settled.filter(() => true));
+                });
+                return result;
             })
-            Promise.all(results).then(resolveReady);
+            const all = Promise.all(results);
+            all.then(resolveReady);
+            // no pool passed: every result, at the moment of `ready`. After a pass it does nothing
+            all.then(everyResult => resolveFirstReady(everyResult.slice()));
         })
     }
 
@@ -145,6 +174,17 @@ export class GaleraCluster {
     private _newReady(): void {
         this._ready = new Promise(resolve => {
             this._resolveReady = resolve;
+        });
+    }
+
+    /**
+     * Make the promise behind `firstReady` and keep its resolver for the connect() call that
+     * takes it
+     * @private
+     */
+    private _newFirstReady(): void {
+        this._firstReady = new Promise(resolve => {
+            this._resolveFirstReady = resolve;
         });
     }
 

@@ -49,6 +49,23 @@ describe('the node API of a cluster that has not connected yet', () => {
         expect(cluster.ready).toBe(cluster.ready);
     });
 
+    it('firstReady is a promise, the same one on every read, and not the one of ready', () => {
+        const cluster = makeCluster([{ id: 1 }]);
+
+        expect(cluster.firstReady).toBeInstanceOf(Promise);
+        expect(cluster.firstReady).toBe(cluster.firstReady);
+        expect(cluster.firstReady).not.toBe(cluster.ready);
+    });
+
+    it('firstReady and ready resolve with an empty list for a cluster without hosts', async () => {
+        const cluster = makeCluster([]);
+        // connect() of a cluster without hosts never settles, so it is not awaited
+        cluster.connect();
+
+        expect(await cluster.firstReady).toStrictEqual([]);
+        expect(await cluster.ready).toStrictEqual([]);
+    });
+
     it('all of it works for a cluster without hosts', async () => {
         const cluster = makeCluster([]);
 

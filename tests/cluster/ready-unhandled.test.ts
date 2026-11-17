@@ -70,6 +70,49 @@ describe('a cluster whose pools all fail to connect', () => {
         expect(res.status).toBe(0);
     });
 
+    it('leaves none when the app reads firstReady and never handles a rejection of it', () => {
+        const res = run(`
+            cluster.connect().catch(quiet);
+            cluster.firstReady.then(results => {
+                console.log(JSON.stringify(results.map(r => [r.nodeId, r.ok, r.error.message])));
+                finish();
+            });
+        `);
+
+        expect(res.stderr).toBe('');
+        expect(res.stdout).toBe(
+            '[[1,false,"refused by node 1"],[2,false,"refused by node 2"]]\nalive\n'
+        );
+        expect(res.status).toBe(0);
+    });
+
+    it('leaves none when one pool passes and the app reads neither promise', () => {
+        const res = run(`
+            cluster.pools[1].connect = () => Promise.resolve();
+            cluster.connect().catch(quiet);
+            finish();
+        `);
+
+        expect(res.stderr).toBe('');
+        expect(res.stdout).toBe('alive\n');
+        expect(res.status).toBe(0);
+    });
+
+    it('resolves firstReady in such an app when one pool passes after the other failed', () => {
+        const res = run(`
+            cluster.pools[1].connect = () => new Promise(resolve => setImmediate(resolve));
+            cluster.connect().catch(quiet);
+            cluster.firstReady.then(results => {
+                console.log(JSON.stringify(results.map(r => [r.nodeId, r.ok])));
+                finish();
+            });
+        `);
+
+        expect(res.stderr).toBe('');
+        expect(res.stdout).toBe('[[1,false],[2,true]]\nalive\n');
+        expect(res.status).toBe(0);
+    });
+
     // the control: this harness sees an unhandled rejection. connect() rejects as it always did
     it('still ends the process when the app does not handle the rejection of connect()', () => {
         const res = run(`
