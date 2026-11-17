@@ -174,7 +174,7 @@ quiet pool. And another `getConnection()` caller gets the connection with no res
 MySQL 5.7.3 or later.
 
 ```ts
-const { connection, nodeId } = await cluster.getConnection();
+const { connection } = await cluster.getConnection();
 const db = connection.promise();
 try {
     await db.query('START TRANSACTION');
