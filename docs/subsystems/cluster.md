@@ -2,7 +2,8 @@
 
 `GaleraCluster` is the orchestrator. It owns the `Pool` instances, the
 `ClusterHashing` module, the `ServiceNames` cache, and the query routing
-logic. Every consumer call (`connect`, `disconnect`, `on`, `query`) flows
+logic. Every consumer call (`connect`, `disconnect`, `on`, `query`, and the
+node API of [../node-api.md](../node-api.md)) flows
 through this class. It is constructed by `createPoolCluster` after the
 settings have been validated and loaded into the `config` singleton; see
 [../architecture.md](../architecture.md) for the boot flow that precedes
@@ -27,7 +28,7 @@ Fields populated from `config.current`, at the top of the constructor:
 - `_useRedis` ← `redis.enabled`.
 - `_escapeNamedValues` ← `escapeNamedValues`.
 - `_nullServiceName` is a constant `"mdc"` initialized on the field
-  ([src/cluster/GaleraCluster.ts:44](../../src/cluster/GaleraCluster.ts#L44));
+  ([src/cluster/GaleraCluster.ts:48](../../src/cluster/GaleraCluster.ts#L48));
   the fallback service name becomes `${clusterName}_mdc`.
 
 Pool construction, in the constructor:
@@ -78,6 +79,11 @@ This is tracked behaviour — see [../known-issues.md](../known-issues.md).
 `_enableHashing`
 awaits `_clusterHashing.connect()`, emits `'hashing_created'`, and logs;
 errors are caught and logged but do not propagate to `connect`.
+
+Since 4.5.0 every `connect()` call also settles the `ready` promise. It
+resolves once every `pool.connect()` of that call ended, with one result per
+pool, and it never rejects. `connect()` itself resolves and rejects as
+described above. See [../node-api.md](../node-api.md#ready).
 
 ## `disconnect()`
 
@@ -147,6 +153,9 @@ The first lines of the `try` block.
 2. Filter `_pools` to those where `pool.status.isValid` is true **and**
    the pool id is **not** the pinned pool id.
 3. Sort the filtered list ascending by `pool.status.loadScore`.
+   Since 4.5.0 steps 2 and 3 are the helper `_validPools(exclude)`, called
+   here with the pinned pool id. `getConnection()` picks its node through the
+   same helper, with the caller's `exclude` and without steps 1 and 4.
 4. If the pinned pool exists in `_pools`, find it and `unshift` it to
    the front so the pinned pool is tried first.
 5. Throw `"There is no pool that satisfies the parameters"` if the
@@ -241,9 +250,17 @@ loop in `query`.
 
 | Member | Source | Notes |
 | --- | --- | --- |
-| `connected: boolean` | [:23](../../src/cluster/GaleraCluster.ts#L23) | Flipped to `true` by the first successful pool connect; reset to `false` by `disconnect()`. |
-| `pools: Pool[]` (getter) | [:30](../../src/cluster/GaleraCluster.ts#L30) | Tagged `@internal` at [:28](../../src/cluster/GaleraCluster.ts#L28). Used by `ClusterHashing`, `ServiceNames`, and the test harness; not meant for consumers. |
+| `connected: boolean` | [:27](../../src/cluster/GaleraCluster.ts#L27) | Flipped to `true` by the first successful pool connect; reset to `false` by `disconnect()`. |
+| `pools: Pool[]` (getter) | [:34](../../src/cluster/GaleraCluster.ts#L34) | Tagged `@internal` at [:32](../../src/cluster/GaleraCluster.ts#L32). Used by `ClusterHashing`, `ServiceNames`, and the test harness; not meant for consumers. Apps use the node API below instead. |
 | `connect(): Promise<void>` | [`connect`](../../src/cluster/GaleraCluster.ts) | Resolves on the first pool that comes up; rejects on the first failure before any success. |
 | `disconnect(): Promise<void>` | [`disconnect`](../../src/cluster/GaleraCluster.ts) | Synchronous in practice — does not await pool disconnects. |
 | `on(event, callback)` | [`on`](../../src/cluster/GaleraCluster.ts) | Pass-through to the shared `Events` emitter. |
 | `query<T>(sql, values?, queryOptions?)` | [`query`](../../src/cluster/GaleraCluster.ts) | The full routing pipeline described above. |
+| `ready: Promise<INodeReadyResult[]>` (getter) | [`ready`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Resolves once every pool finished the first connect of the current `connect()` call. Never rejects. |
+| `getConnection(options?)` | [`getConnection`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. One connection of the valid node with the lowest load score. The caller owns it. |
+| `failWaiting(nodeId, error): number` | [`failWaiting`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Fails the requests that wait for a connection of one node. |
+| `getPoolStats(): INodePoolStats[]` | [`getPoolStats`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Used, idle and waiting connections per node. |
+| `nodes(): INodeInfo[]` | [`nodes`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. A snapshot of the nodes as plain objects. |
+
+The last five rows are the node API. Its contract, errors and examples are in
+[../node-api.md](../node-api.md).

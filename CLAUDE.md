@@ -34,6 +34,7 @@ There is **no** `lint`, `typecheck`, or `test:load` script, and no linter is ins
 | `GaleraCluster.query` / routing | [docs/subsystems/cluster.md](docs/subsystems/cluster.md) |
 | Pool health checks / scoring | [docs/subsystems/health-and-scoring.md](docs/subsystems/health-and-scoring.md) |
 | Redis caching | [docs/subsystems/redis-cache.md](docs/subsystems/redis-cache.md) |
+| `getConnection` / `ready` / `failWaiting` / `getPoolStats` / `nodes` | [docs/node-api.md](docs/node-api.md) |
 | Config / settings | [docs/configuration.md](docs/configuration.md) |
 | Hashing helper DB | [docs/sql-assets.md](docs/sql-assets.md) + [docs/subsystems/cluster-hashing.md](docs/subsystems/cluster-hashing.md) |
 | Tests | [docs/testing.md](docs/testing.md) **first** — four suites are stale on V3.0 |
@@ -80,6 +81,7 @@ Full human-facing index lives in [docs/README.md](docs/README.md). Quick map:
 - [docs/branch-divergence.md](docs/branch-divergence.md) — `dev` vs V3 API shapes side-by-side.
 - [docs/glossary.md](docs/glossary.md) — Galera, validator, load factor, hashing, OpenTelemetry metric terms.
 - [docs/releasing.md](docs/releasing.md): how a release is cut: version bump, npm config check, dry run, registry and tag.
+- [docs/node-api.md](docs/node-api.md): the node API added in 4.5.0: `getConnection`, `ready`, `failWaiting`, `getPoolStats`, `nodes`, and who owns a connection.
 
 **Subsystems**
 

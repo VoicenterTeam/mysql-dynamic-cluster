@@ -264,6 +264,26 @@ transaction). Before 3.2.2 the statements were fired from a `forEach`
 and committed before any of them ran — see
 [../known-issues.md#2-poolmultistatementquery-commits-before-queries-finish](../known-issues.md#2-poolmultistatementquery-commits-before-queries-finish).
 
+## Node API helpers
+
+Added in 4.5.0, at the end of the class, so the line references above did
+not move. `GaleraCluster` calls them for the node API of
+[../node-api.md](../node-api.md). `_pool` stays private.
+
+- `getConnection()` takes one connection from the mysql2 pool and resolves
+  with it as it is. It does not change the database, sets no timeout and
+  records no metric. It rejects with the error object of mysql2, or with
+  `POOL_NOT_CONNECTED` before `connect()` created the mysql2 pool.
+- `failWaiting(error)` empties `_connectionQueue` of the mysql2 pool, then
+  calls every callback it took out with `error`, and returns how many. The
+  queue is emptied first, so a callback that asks for a connection again is
+  not failed in the same call. A callback that throws is logged and the
+  others are still called. It returns `0` before the mysql2 pool exists.
+- `stats()` returns `{ used, idle, pending }` from mysql2's own lists:
+  `_allConnections.length - _freeConnections.length`,
+  `_freeConnections.length` and `_connectionQueue.length`. All zeros before
+  the mysql2 pool exists.
+
 ## Public API summary
 
 | Member | Kind | Source |
@@ -278,6 +298,9 @@ and committed before any of them ran — see
 | `disconnect()` | `() => void` | [:223](../../src/pool/Pool.ts#L223) |
 | `query<T>(sql, options?)` | `async => Promise<T \| T[]>` | [:247](../../src/pool/Pool.ts#L247) |
 | `multiStatementQuery<T>(sqls, options)` | `async => Promise<T[]>` | [:324](../../src/pool/Pool.ts#L324) |
+| `getConnection()` | `() => Promise<PoolConnection>` | [`getConnection`](../../src/pool/Pool.ts) |
+| `failWaiting(error)` | `(error: Error) => number` | [`failWaiting`](../../src/pool/Pool.ts) |
+| `stats()` | `() => { used, idle, pending }` | [`stats`](../../src/pool/Pool.ts) |
 
 Consumers normally talk to `GaleraCluster`, not to `Pool` directly;
 the cluster picks a healthy pool via its routing logic and then

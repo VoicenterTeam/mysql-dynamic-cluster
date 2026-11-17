@@ -25,6 +25,12 @@ tests/
     named-values.test.ts         # object values: escapeNamedValues on, off, per query, the one-time warning
     named-values-setting.test.ts # the escapeNamedValues setting through createPoolCluster
     host-ids.test.ts             # Host ids: which id each host gets, with and without an id in the settings
+    query-pool-order.test.ts     # The order query() tries its pools in: load score, the pool of the service first
+    node-api.test.ts             # Node API over fake pools: getConnection, failWaiting, getPoolStats, nodes
+    node-api-public.test.ts      # Node API through createPoolCluster, before connect()
+    node-api-loopback.test.ts    # Node API with the real mysql2 against its server class on loopback
+    ready.test.ts                # cluster.ready: pass, fail, never rejects, one promise per connect(); connect() as before
+    ready-unhandled.test.ts      # cluster.ready leaves no unhandled rejection, in a clean Node process
     query.test.ts                # GaleraCluster.query() shapes: no values, scalar, array, named, timeout (stale)
   configs/
     settings.test.ts             # Settings schema: defaults, strict validation, mixSettings, no env reading
@@ -49,8 +55,10 @@ tests/
     check-failed-event-public.test.ts # pool_check_failed through createPoolCluster and cluster.on
     check-loop.test.ts           # Health check loop: stop and start, a check that ends late, odd errors
     reconnect-checks.test.ts     # A pool connected, disconnected and connected again is checked again
+    node-api.test.ts             # Pool.getConnection, failWaiting and stats over a mocked mysql2 pool
   toolchain/
     compiler.test.ts             # The compiler parses the syntax zod 4 needs; every import resolves through exports maps
+    declarations.test.ts         # The built declarations export the node API types, checked by compiling an app
   utils/
     logger.test.ts               # Logger: levels, console default, app-supplied logger
     logger-injection.test.ts     # A logger passed to createPoolCluster
