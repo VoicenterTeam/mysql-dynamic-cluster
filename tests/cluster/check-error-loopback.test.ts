@@ -49,6 +49,8 @@ type Mode =
     | 'is not synced'
     // takes the login and the change of database, and never answers the query
     | 'never answers the query'
+    // takes the login and the change of database, and closes the connection on the query
+    | 'hangs up on the query'
     // takes the TCP connection and never sends its greeting
     | 'never greets'
     // closes the TCP connection as soon as it is open
@@ -95,6 +97,7 @@ const listen = async (mode: Mode): Promise<IServer> => {
         });
         connection.on('query', () => {
             if (mode === 'never answers the query') return;
+            if (mode === 'hangs up on the query') return connection.stream.destroy();
             connection.sequenceId = 1;
             const rows = mode === 'is not synced' ? NOT_SYNCED : STATUS;
             connection.writeTextResult(rows, [column('Variable_name'), column('Value')]);
@@ -128,9 +131,14 @@ const disconnectFinally = async (cluster: any): Promise<void> => {
 
 // The errors the checks of a test failed with, as pool_check_failed hands them out. The events
 // of every cluster go through one emitter, so the first cluster of the file adds the listener
+// A test that wants to act on a failed check, as a listener of an app would, sets onFailed
 let failed: any[];
+let onFailed: () => void;
 let listening = false;
-beforeEach(() => { failed = []; });
+beforeEach(() => {
+    failed = [];
+    onFailed = () => undefined;
+});
 
 // One node per port, with ids from 1. With flags the pool logs in at once, without them it
 // asks the server for its version first. The next health check is ten minutes away, so the
@@ -151,7 +159,12 @@ const makeCluster = (ports: number[], withFlags = true, pool: object = {}): any 
         logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }
     } as any);
     clusters.push(cluster);
-    if (!listening) cluster.on('pool_check_failed', ([error]: any[]) => failed.push(error));
+    if (!listening) {
+        cluster.on('pool_check_failed', ([error]: any[]) => {
+            failed.push(error);
+            onFailed();
+        });
+    }
     listening = true;
     return cluster;
 };
@@ -205,6 +218,38 @@ describe.each([
         const ready = await cluster.ready;
         expect(ready.map(checkErrorOf)).toStrictEqual([DENIED, undefined]);
         expect(cluster.nodes().map(checkErrorOf)).toStrictEqual([DENIED, undefined]);
+    });
+});
+
+// The check of these connects ended and the server refused. What comes after that check, a
+// disconnect() or another connect(), must not turn the code of the server into an empty object
+describe('a refused login whose check ran to its end', () => {
+    it.each([
+        ['with flags in the settings', true],
+        ['without flags', false]
+    ])('keeps its code when a listener disconnects on that check, %s', async (_name, withFlags) => {
+        const server = await listen('refuses the login');
+        const cluster = makeCluster([server.port], withFlags);
+        onFailed = () => { disconnectFinally(cluster); };
+        const [ready, firstReady] = [cluster.ready, cluster.firstReady];
+
+        expect(await connectOf(cluster)).toBe(NOT_VALID);
+        expect(failed.map(checkErrorOf)).toHaveLength(1);
+        expect((await ready).map(checkErrorOf)).toStrictEqual([DENIED]);
+        expect((await firstReady).map(checkErrorOf)).toStrictEqual([DENIED]);
+    });
+
+    it('keeps its code on the results of the first of two connect() calls', async () => {
+        const server = await listen('refuses the login');
+        const cluster = makeCluster([server.port]);
+        const first = connectOf(cluster);
+        const [ready, firstReady] = [cluster.ready, cluster.firstReady];
+        const second = connectOf(cluster);
+
+        expect([await first, await second]).toEqual([NOT_VALID, NOT_VALID]);
+        expect((await ready).map(checkErrorOf)).toStrictEqual([DENIED]);
+        expect((await firstReady).map(checkErrorOf)).toStrictEqual([DENIED]);
+        expect((await cluster.ready).map(checkErrorOf)).toStrictEqual([DENIED]);
     });
 });
 
@@ -330,6 +375,25 @@ describe('checkError over the life of a node', () => {
         expect(await connectOf(cluster)).toBeUndefined();
         expect(await cluster.ready).toStrictEqual([{ nodeId: 1, ok: true }]);
         expect('checkError' in cluster.nodes()[0]).toBe(false);
+    });
+
+    // The node passed, one later check failed and left it valid, and it was disconnected. The
+    // next connect() is cut short, so no check of it is recorded. It still passes, as it did
+    // before: the node kept its validity. Its result must not show the error of the old check
+    it('is not on a passed result when it comes from before the last disconnect()', async () => {
+        const server = await listen('accepts');
+        const cluster = makeCluster([server.port]);
+        await connectOf(cluster);
+        server.become('hangs up on the query');
+        await cluster.pools[0].status.checkStatus();
+        await cluster.disconnect();
+        const connecting = connectOf(cluster);
+        await disconnectFinally(cluster);
+        await connecting;
+
+        const lost = { isValid: true, checkError: { code: 'PROTOCOL_CONNECTION_LOST' } };
+        expect(cluster.nodes()[0]).toMatchObject(lost);
+        expect(await cluster.ready).toStrictEqual([{ nodeId: 1, ok: true }]);
     });
 
     // disconnect() cut the connect short, so the result has an empty object

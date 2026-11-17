@@ -137,7 +137,9 @@ export class GaleraCluster {
             // the results that are in, each at the place of its node
             const settled: INodeReadyResult[] = [];
             const results = this._pools.map((pool, index) => {
-                const connecting = pool.connect();
+                // the pool fills it: how the health check of this connect ended
+                const outcome: CheckOutcome = {};
+                const connecting = pool.connect(outcome);
                 connecting.then(async () => {
                     if (this.connected) return;
 
@@ -152,7 +154,7 @@ export class GaleraCluster {
                     Logger.error(err.message);
                     reject(err.message);
                 });
-                const result = GaleraCluster._readyResult(pool, connecting);
+                const result = GaleraCluster._readyResult(pool, connecting, outcome);
                 result.then(ended => {
                     settled[index] = ended;
                     // only the first pass resolves it. filter leaves out the nodes not in yet
@@ -191,28 +193,52 @@ export class GaleraCluster {
     /**
      * How the connect of one pool ended. The promise it returns never rejects
      * @param pool the pool
-     * @param connecting the connect() of the pool, called just now
+     * @param connecting the connect() of the pool
+     * @param outcome the object that connect() fills with how its own health check ended
      * @private
      */
-    private static _readyResult(pool: Pool, connecting: Promise<void>): Promise<INodeReadyResult> {
+    private static _readyResult(
+        pool: Pool, connecting: Promise<void>, outcome: CheckOutcome
+    ): Promise<INodeReadyResult> {
         const nodeId = pool.id;
-        // connect() counted itself before it first waited, so this is the count of that call
-        const attempt = pool.connectAttempt;
-        // the check error is read when the connect settled, not before
+        // The outcome is read when the connect settled. A result carries the error of the check
+        // of its own connect only, never what the pool holds from another check
         return connecting.then(
             // a pool that passed has one only when its check failed and it was still valid
-            () => ({ nodeId, ok: true, ...GaleraCluster._withCheckError(pool.checkError) }),
+            () => ({
+                nodeId,
+                ok: true,
+                ...GaleraCluster._withCheckError(outcome.recorded ? outcome.checkError : undefined)
+            }),
             reason => ({
                 nodeId,
                 ok: false,
                 error: GaleraCluster._isError(reason) ? reason : new Error(String(reason)),
-                // A count that moved means a disconnect() or a later connect() came in between:
-                // this connect was given up, which is no error of the server
-                ...GaleraCluster._withCheckError(
-                    pool.connectAttempt === attempt ? pool.checkError : {}
-                )
+                ...GaleraCluster._failedCheckError(pool, outcome)
             })
         );
+    }
+
+    /**
+     * The checkError field of the result of a connect that failed.
+     * A check that was recorded gives its own error, or nothing when it got its answer and a
+     * validator said no. A check that was dropped, or that never ran, gives an empty object:
+     * the pool was closed or the connect was given up, so there is nothing of mysql2, the
+     * socket or the server to report. That case is logged, since the empty object alone does
+     * not tell it from a check that ran into its own timeout
+     * @param pool the pool
+     * @param outcome what connect() filled in
+     * @private
+     */
+    private static _failedCheckError(
+        pool: Pool, outcome: CheckOutcome
+    ): Pick<INodeInfo, 'checkError'> {
+        if (outcome.recorded) return GaleraCluster._withCheckError(outcome.checkError);
+        // a pool that tells nothing about its check has nothing to report here
+        if (outcome.recorded === undefined) return {};
+        Logger.debug("The connect of a node ended without a recorded health check, " +
+            "its result gets an empty checkError", { nodeId: pool.id, pool: pool.name });
+        return { checkError: {} };
     }
 
     /**
@@ -600,3 +626,7 @@ export class GaleraCluster {
         }));
     }
 }
+
+// The object Pool.connect() fills for its caller: how the health check of that connect ended.
+// Named here, below the class, so the import lines above keep their line numbers
+type CheckOutcome = Parameters<Pool['connect']>[0];
