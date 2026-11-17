@@ -116,9 +116,9 @@ name and that validator fails, so the pool is marked invalid (see
 
 Since 4.6.0 `PoolStatus` keeps what the last check failed with, and
 `checkError` hands it out. `GaleraCluster` reads it through
-`Pool.checkError` for `nodes()` and for the results of `ready` and
-`firstReady`. The contract is in
-[../node-api.md](../node-api.md#checkerror).
+`Pool.checkError` for `nodes()`. The results of `ready` and `firstReady`
+take the outcome of the check of their own connect instead, see below. The
+contract is in [../node-api.md](../node-api.md#checkerror).
 
 - The `catch` branch sets it, before it logs. The value is the error the
   status query was rejected with, reduced by `_reduce`: `code` when it is a
@@ -131,6 +131,15 @@ Since 4.6.0 `PoolStatus` keeps what the last check failed with, and
   sets nor clears it.
 - `stopTimerCheck()` does not clear it. It keeps its value over a
   `disconnect()`, as `isValid` does.
+
+`checkStatus(outcome?)` also tells a caller how this one check ended. The
+caller hands in an object. A check that is recorded, in either branch, sets
+`recorded: true` on it, and the `catch` branch adds a copy of the reduced
+error as `checkError`. A check that is dropped, and a call while the status
+is not active, leave the object as it was. `Pool.connect()` passes the object
+of its own caller through, so `GaleraCluster` can put the error of exactly
+that check on a result of `ready` and `firstReady`. The timer calls
+`checkStatus()` with no object.
 
 Only values that mysql2, the socket or the server produced are kept. The
 value is an empty object in these cases:

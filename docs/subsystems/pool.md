@@ -291,11 +291,17 @@ API:
   check failed with, reduced to `code`, `errno` and `sqlState`, or
   `undefined`. See
   [health-and-scoring.md](health-and-scoring.md#the-error-of-the-last-check).
-- `connectAttempt` (getter) returns `_connectAttempt`, the count of
-  `connect()` and `disconnect()` calls. `connect()` counts itself before it
-  first waits. `GaleraCluster` reads it right after it called `connect()`
-  and again when that call settled, to see whether the pool was closed or
-  connected again in between.
+- `connect(outcome?)` takes an object from its caller and fills it with how
+  the health check of that call ended (`ICheckOutcome`). `_newAttempt`, at
+  the end of the class, sets `recorded: false` before `connect()` first
+  waits. `status.checkStatus(outcome)` sets `recorded: true` when the check
+  ended while the pool was still running, and adds the reduced `checkError`
+  when it failed. A check that was dropped by a `disconnect()`, and a
+  `connect()` that is given up before its check, leave `recorded: false`.
+  Each call fills its own object, also when two calls overlap.
+  `GaleraCluster` builds the results of `ready` and `firstReady` from it.
+  The steps of `connect()` above did not change, and no line number of the
+  references above moved.
 
 The errors `Pool` makes with a code of its own are marked with
 `PoolStatus.ownError()`, so a health check that fails with one reports an
@@ -315,7 +321,7 @@ the waiting requests reject with it as before.
 | `port` | `readonly number` | [:29](../../src/pool/Pool.ts#L29) |
 | `connectionLimit` | `readonly number` | [:31](../../src/pool/Pool.ts#L31) |
 | `status` | getter returning `PoolStatus` | [:22-24](../../src/pool/Pool.ts#L22) |
-| `connect()` | `async () => Promise<void>` | [:97](../../src/pool/Pool.ts#L97) |
+| `connect(outcome?)` | `async (outcome?: ICheckOutcome) => Promise<void>` | [:97](../../src/pool/Pool.ts#L97) |
 | `disconnect()` | `() => void` | [:223](../../src/pool/Pool.ts#L223) |
 | `query<T>(sql, options?)` | `async => Promise<T \| T[]>` | [:247](../../src/pool/Pool.ts#L247) |
 | `multiStatementQuery<T>(sqls, options)` | `async => Promise<T[]>` | [:324](../../src/pool/Pool.ts#L324) |
@@ -323,7 +329,6 @@ the waiting requests reject with it as before.
 | `failWaiting(error)` | `(error: Error) => number` | [`failWaiting`](../../src/pool/Pool.ts) |
 | `stats()` | `() => { used, idle, pending }` | [`stats`](../../src/pool/Pool.ts) |
 | `checkError` | getter returning `INodeCheckError \| undefined` | [`checkError`](../../src/pool/Pool.ts) |
-| `connectAttempt` | getter returning `number` | [`connectAttempt`](../../src/pool/Pool.ts) |
 
 Consumers normally talk to `GaleraCluster`, not to `Pool` directly;
 the cluster picks a healthy pool via its routing logic and then

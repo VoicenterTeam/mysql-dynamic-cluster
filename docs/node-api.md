@@ -285,6 +285,10 @@ if (!results.some(result => result.ok)) {
 
 Each result carries the [`checkError`](#checkerror) of its node, if there is one.
 
+The results of `firstReady` are objects of their own, and so are their `checkError` objects.
+Changing one does not change the result `ready` gives for the same node. Only the `error` of
+a failed node is the same `Error` object in both.
+
 ## `checkError`
 
 Added in 4.6.0.
@@ -339,22 +343,30 @@ On `nodes()` it is the error of the last check, not of this moment. A node is ch
 `timerCheckRange.start` to `timerCheckRange.end` ms, 5 to 15 seconds with the defaults, so
 the value can be up to one check interval old, plus the time the check itself takes.
 
-On a result of `ready` or `firstReady` it is read once, when the connect of that node
-settled. It does not change later. For the state of a node now, read `nodes()`.
+On a result of `ready` or `firstReady` it is the error of the health check of that connect,
+and of no other check. It does not change later. For the state of a node now, read
+`nodes()`.
 
 ### On a result
 
 - A result with `ok: false` and a `checkError` with a `code`: the check of that connect
-  failed with that code.
+  failed with that code. The code stays on the result whatever is called after the check.
+  A `pool_check_failed` listener that calls `disconnect()` on a refused login still finds
+  the 1045 on the result, and so does the first of two `connect()` calls.
 - A result with `ok: false` and no `checkError`: the server answered and a validator said no.
-- A result with `checkError: {}`: the check failed with nothing from mysql2, the socket or
-  the server to report. Mostly the timer of the check ran out. A result with `ok: false`
-  also has `checkError: {}` when `disconnect()` or another `connect()` was called while the
-  node connected. Then the connect was given up and the server refused nothing.
+- A result with `checkError: {}`: there is nothing from mysql2, the socket or the server to
+  report. There are two cases. Mostly the check ran into its own timer. Or the check of that
+  connect never ended: `disconnect()` came while the check was out, or `disconnect()` or
+  another `connect()` came while the pool still asked the server for its version. Such a
+  result says nothing about the server, neither that it refused nor that it would have
+  answered. The cluster logs the second case at `debug`, with the message
+  `The connect of a node ended without a recorded health check, its result gets an empty
+  checkError` and the fields `nodeId` and `pool`.
 - A result with `ok: true` has no `checkError`, with one exception. A node that was valid
   before a `disconnect()` keeps `isValid` over one failed check, so its next connect can pass
-  though its first check failed. That result has `ok: true` and the `checkError` of the
-  check.
+  though its first check failed. That result has `ok: true` and the `checkError` of that
+  check. A passed result never shows the error of an earlier check. When the check of its
+  connect never ended, it has none.
 
 ### What a timeout gives
 
@@ -385,6 +397,18 @@ a refused login. These are common, and none of them is one:
 | `ECONNRESET`, `EPIPE`, `EHOSTUNREACH`, `ENETUNREACH`, `ENOTFOUND`, `EAI_AGAIN` | Other network and name lookup failures. | the socket |
 | `ER_CON_COUNT_ERROR` (`errno` 1040) | The server has too many connections. | the server |
 | `ER_BAD_DB_ERROR` (`errno` 1049) | The `database` of the settings does not exist on that node. | the server |
+
+mysql2 makes more codes of its own while it logs in. They are listed here from reading the
+source of mysql2 3.24.6. No test of this package produces them, so take the list as a guide.
+None of them is a wrong user or password:
+
+| `code` | When mysql2 makes it |
+| --- | --- |
+| `HANDSHAKE_UNKNOWN_ERROR` | The server sent a packet mysql2 did not expect during the login. |
+| `AUTH_SWITCH_PLUGIN_ERROR` | An authentication plugin failed, or the server asked for one mysql2 does not have. |
+| `MYSQL_CLEAR_PASSWORD_NOT_ENABLED` | The server asked for the password in clear text, which mysql2 refuses by default. |
+| `HANDSHAKE_NO_SSL_SUPPORT`, `HANDSHAKE_SSL_ERROR` | Only with TLS. This package sets no `ssl` option on its pools, so it should not come up. |
+| `PROTOCOL_ERROR`, `PROTOCOL_UNEXPECTED_PACKET` | The server sent a packet when no command was waiting for one. mysql2 raises these on the connection, so they may never reach a health check. |
 
 A refused login is `ER_ACCESS_DENIED_ERROR` with `errno` 1045 and `sqlState` `'28000'`.
 

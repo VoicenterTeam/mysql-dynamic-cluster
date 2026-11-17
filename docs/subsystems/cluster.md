@@ -88,11 +88,18 @@ described above. See [../node-api.md](../node-api.md#ready).
 Since 4.6.0 every `connect()` call also settles the `firstReady` promise. It
 resolves when the first `pool.connect()` of that call passed, with the
 results that are in by then, or together with `ready` when none passed. It
-does not wait for `_enableHashing()`. Each result is built by `_readyResult`
-when the `pool.connect()` settles, and takes `pool.checkError` at that
-moment. `_readyResult` reads `pool.connectAttempt` right after the call and
-again at that moment. A count that moved means `disconnect()` or another
-`connect()` came in between, and a failed result gets an empty `checkError`.
+does not wait for `_enableHashing()`. `connect()` hands every
+`pool.connect()` an empty object, and the pool fills it with how the health
+check of that connect ended (`ICheckOutcome` in
+[src/types/PoolInterfaces.ts](../../src/types/PoolInterfaces.ts)).
+`_readyResult` builds the result when the `pool.connect()` settles and reads
+that object then. A check that was recorded puts its own error on the result,
+whatever was called after it. A failed connect whose check was dropped, or
+that ran no check, gets an empty `checkError`, and `_failedCheckError` logs
+that at `debug` with `nodeId` and `pool`. A passed connect whose check was
+dropped gets none. `nodes()` is different: it reads `pool.checkError`, the
+error of the last check of the pool. `firstReady` resolves with copies of the
+results, made by `_ownResults`, so the two promises share no result object.
 See [../node-api.md](../node-api.md#firstready).
 
 ## `disconnect()`
