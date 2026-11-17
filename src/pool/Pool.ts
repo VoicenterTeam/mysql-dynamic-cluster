@@ -528,7 +528,8 @@ export class Pool {
     /**
      * What the last health check failed with, as PoolStatus.checkError keeps it: reduced to
      * code, errno and sqlState, a new object on every read, undefined when the last check got
-     * its answer. The cluster reads it for nodes() and for the results of ready and firstReady
+     * its answer. The cluster reads it for nodes(). The results of ready and firstReady take
+     * the outcome of their own connect() instead
      */
     public get checkError(): PoolStatus['checkError'] {
         return this._status.checkError;
@@ -545,15 +546,5 @@ export class Pool {
     private _newAttempt(outcome: ICheckOutcome): number {
         outcome.recorded = false;
         return ++this._connectAttempt;
-    }
-
-    /**
-     * How many connect() and disconnect() calls this pool has had. connect() counts itself
-     * before it first waits. A caller that reads the count right after it called connect(),
-     * and again when that connect() settled, sees whether the pool was closed or connected
-     * again in between
-     */
-    public get connectAttempt(): number {
-        return this._connectAttempt;
     }
 }

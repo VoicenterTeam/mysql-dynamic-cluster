@@ -350,14 +350,4 @@ describe('checkError of a pool over connect() and disconnect()', () => {
             pool.disconnect();
         });
     });
-
-    it('counts every connect() and disconnect() in connectAttempt', async () => {
-        const pool = answering(makePool(), [], []);
-        const start = pool.connectAttempt;
-        const connecting = pool.connect();
-        expect(pool.connectAttempt).toBe(start + 1);
-        await connecting;
-        pool.disconnect();
-        expect(pool.connectAttempt).toBe(start + 2);
-    });
 });
