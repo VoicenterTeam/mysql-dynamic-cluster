@@ -249,3 +249,32 @@ describe.each(['ready', 'firstReady'])('checkError in the results of %s', (membe
         });
     });
 });
+
+describe('the results of ready and of firstReady', () => {
+    // a write through one of the two does not show in the other
+    it.each([
+        ['a node passed', (pool: any) => pool.connects[0].pass()],
+        ['no node passed', (pool: any) => failCheck(pool, REFUSED)]
+    ])('are objects of their own when %s', async (_name, endSecond) => {
+        const pools = [node(1), node(2)];
+        const cluster = connecting(pools);
+        failCheck(pools[0], DENIED);
+        endSecond(pools[1]);
+        const [first, ready] = [await cluster.firstReady, await cluster.ready];
+        first[0].ok = true;
+        first[0].checkError.code = 'CHANGED_BY_APP';
+        first[1].nodeId = 99;
+
+        expect(ready[0]).toMatchObject({ nodeId: 1, ok: false, checkError: DENIED });
+        expect(ready[1].nodeId).toBe(2);
+    });
+
+    it('still share the Error of a node that failed', async () => {
+        const pools = [node(1)];
+        const cluster = connecting(pools);
+        const error = failCheck(pools[0], DENIED);
+
+        expect((await cluster.firstReady)[0].error).toBe(error);
+        expect((await cluster.ready)[0].error).toBe(error);
+    });
+});

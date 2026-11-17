@@ -158,14 +158,15 @@ export class GaleraCluster {
                 result.then(ended => {
                     settled[index] = ended;
                     // only the first pass resolves it. filter leaves out the nodes not in yet
-                    if (ended.ok) resolveFirstReady(settled.filter(() => true));
+                    const inByNow = () => GaleraCluster._ownResults(settled.filter(() => true));
+                    if (ended.ok) resolveFirstReady(inByNow());
                 });
                 return result;
             })
             const all = Promise.all(results);
             all.then(resolveReady);
             // no pool passed: every result, at the moment of `ready`. After a pass it does nothing
-            all.then(everyResult => resolveFirstReady(everyResult.slice()));
+            all.then(everyResult => resolveFirstReady(GaleraCluster._ownResults(everyResult)));
         })
     }
 
@@ -239,6 +240,19 @@ export class GaleraCluster {
         Logger.debug("The connect of a node ended without a recorded health check, " +
             "its result gets an empty checkError", { nodeId: pool.id, pool: pool.name });
         return { checkError: {} };
+    }
+
+    /**
+     * The results for `firstReady`: a new array of new objects, each with a checkError object
+     * of its own, so a write through a result of `firstReady` does not show in `ready`.
+     * The Error of a failed node is the same object in both
+     * @private
+     */
+    private static _ownResults(results: INodeReadyResult[]): INodeReadyResult[] {
+        return results.map(result => ({
+            ...result,
+            ...GaleraCluster._withCheckError(result.checkError && { ...result.checkError })
+        }));
     }
 
     /**
