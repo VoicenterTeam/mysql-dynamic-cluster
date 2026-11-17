@@ -43,7 +43,7 @@ describe('the pool order of GaleraCluster.query', () => {
         await cluster.query('SELECT 1', undefined, { serviceId }).catch(() => undefined);
         return tried;
     };
-    const pinnedTo = (nodeId: number) => ({
+    const pinnedTo = (nodeId?: number) => ({
         connected: true, getNodeByService: () => nodeId, updateNodeForService: jest.fn()
     });
 
@@ -53,6 +53,8 @@ describe('the pool order of GaleraCluster.query', () => {
         ['the node of the service first, then by load score', pinnedTo(1), 7, [1, 2, 3]],
         ['the node of the service once, when it is also the best', pinnedTo(2), 7, [2, 3, 1]],
         ['by load score when the service has no node', pinnedTo(-1), 7, [2, 3, 1]],
+        // what the hashing module answers for a service it has no node for
+        ['by load score when the node of the service is undefined', pinnedTo(), 7, [2, 3, 1]],
         ['by load score when the node of the service is not a node', pinnedTo(9), 7, [2, 3, 1]]
     ])('%s', async (_name, hashing, serviceId, expected) => {
         const pools = [node(1, 30), node(2, 10), node(3, 20)];

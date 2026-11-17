@@ -144,9 +144,23 @@ describe('GaleraCluster.getConnection', () => {
         const pools = [node(1, 30), node(2, 10)];
         const failure = await makeCluster(pools).getConnection({ exclude }).catch((e: any) => e);
 
+        // the whole text: a TypeError of the engine about exclude is not this check
         expect(failure).toBeInstanceOf(TypeError);
-        expect(failure.message).toContain('exclude');
+        expect(failure.message).toBe('getConnection: options.exclude must be an array of numbers');
         expect(acquires(pools)).toBe(0);
+    });
+
+    // only exclude is read. A value that is no options object has none, so nothing is left out
+    it.each([
+        ['an array of ids', [2]],
+        ['a number', 2],
+        ['a string', '2'],
+        ['null', null]
+    ])('ignores options that are %s, with no error', async (_name, options) => {
+        const pools = [node(1, 30), node(2, 10)];
+
+        expect((await makeCluster(pools).getConnection(options)).nodeId).toBe(2);
+        expect(acquires(pools)).toBe(1);
     });
 
     it('leaves the connection as the pool handed it out and records no metric', async () => {
