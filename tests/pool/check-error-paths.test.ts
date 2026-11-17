@@ -62,9 +62,14 @@ const poolWith = (getConnection: (cb: Cb) => void): any => {
 };
 const handsOut = (conn: any, err: any = null) => poolWith(cb => later(() => cb(err, conn)));
 
-// the errors the checks failed with, as pool_check_failed hands them out
+// the errors the checks failed with, as pool_check_failed hands them out. A test that wants
+// to act on a failed check, as a listener of an app would, sets onFailed
 let failed: any[];
-Events.on('pool_check_failed', ([error]: any[]) => failed.push(error));
+let onFailed: () => void;
+Events.on('pool_check_failed', ([error]: any[]) => {
+    failed.push(error);
+    onFailed();
+});
 
 // one health check of the pool, then what it reports
 const check = async (pool: any) => {
@@ -87,6 +92,7 @@ const driverTimeout = () => Object.assign(new Error('Query inactivity timeout'),
 beforeEach(() => {
     jest.clearAllMocks();
     failed = [];
+    onFailed = () => undefined;
 });
 
 describe('checkError after a failure the package makes itself', () => {
@@ -278,6 +284,71 @@ describe('checkError of a pool over connect() and disconnect()', () => {
         await expect(pool.connect()).resolves.toBeUndefined();
         expect(pool.checkError).toStrictEqual(DENIED);
         pool.disconnect();
+    });
+
+    describe('the outcome a caller hands to connect()', () => {
+        it('says at once that no check of this connect is recorded yet', async () => {
+            const pool = answering(makePool(), []);
+            const outcome: any = {};
+            const connecting = pool.connect(outcome);
+
+            expect(outcome).toStrictEqual({ recorded: false });
+            await connecting;
+            pool.disconnect();
+        });
+
+        it('says recorded, with the error, when the first check failed', async () => {
+            const pool = answering(makePool(), accessDenied());
+            const outcome: any = {};
+            await pool.connect(outcome).catch(() => undefined);
+
+            expect(outcome).toStrictEqual({ recorded: true, checkError: DENIED });
+            pool.disconnect();
+        });
+
+        it('says recorded, with no error, when the first check got its answer', async () => {
+            const pool = answering(makePool(), []);
+            const outcome: any = {};
+            await pool.connect(outcome);
+
+            expect(outcome).toStrictEqual({ recorded: true });
+            pool.disconnect();
+        });
+
+        it('stays not recorded when disconnect() comes while the first check is out', async () => {
+            const pool = makePool();
+            let rejectQuery: (error: Error) => void;
+            pool.query = jest.fn(() => new Promise((_, reject) => { rejectQuery = reject; }));
+            const outcome: any = {};
+            const connecting = pool.connect(outcome).catch((e: any) => e);
+            await turns();
+            pool.disconnect();
+            rejectQuery(accessDenied());
+            await connecting;
+
+            expect(outcome).toStrictEqual({ recorded: false });
+        });
+
+        // the check ended and was recorded. What a listener does after it changes nothing
+        it('stays recorded when disconnect() comes right after the check failed', async () => {
+            const pool = answering(makePool(), accessDenied());
+            onFailed = () => pool.disconnect();
+            const outcome: any = {};
+            await pool.connect(outcome).catch(() => undefined);
+
+            expect(outcome).toStrictEqual({ recorded: true, checkError: DENIED });
+        });
+
+        it('is of its own connect when two connect() calls overlap', async () => {
+            const pool = answering(makePool(), accessDenied(), []);
+            const [first, second]: any[] = [{}, {}];
+            const connects = [pool.connect(first), pool.connect(second)];
+            await Promise.all(connects.map(connect => connect.catch(() => undefined)));
+
+            expect(first).toStrictEqual({ recorded: true, checkError: DENIED });
+            expect(second).toStrictEqual({ recorded: true });
+            pool.disconnect();
+        });
     });
 
     it('counts every connect() and disconnect() in connectAttempt', async () => {

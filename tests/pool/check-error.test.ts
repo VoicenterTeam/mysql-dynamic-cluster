@@ -329,6 +329,76 @@ describe('PoolStatus.checkError', () => {
         });
     });
 
+    describe('the outcome a caller hands to checkStatus()', () => {
+        // one check with this outcome object, which the caller keeps
+        const checked = async (settle: () => void = () => undefined) => {
+            const outcome: any = {};
+            const check = status.checkStatus(outcome);
+            settle();
+            await check;
+            return outcome;
+        };
+
+        it('says recorded, with no error, for a check that got its answer', async () => {
+            pool.query.mockResolvedValueOnce([]);
+            expect(await checked()).toStrictEqual({ recorded: true });
+        });
+
+        it('says recorded, with the reduced error, for a check that failed', async () => {
+            pool.query.mockRejectedValueOnce(accessDenied());
+            expect(await checked()).toStrictEqual({ recorded: true, checkError: DENIED });
+        });
+
+        it('says recorded, with an empty error, for a check that ran into its own timeout', async () => {
+            pool.query.mockReturnValue(new Promise(() => undefined));
+            const outcome = await checked(() => jest.advanceTimersByTime(10000));
+
+            expect(outcome).toStrictEqual({ recorded: true, checkError: {} });
+        });
+
+        it('holds an error object of its own, not the one the status hands out', async () => {
+            pool.query.mockRejectedValueOnce(accessDenied());
+            const outcome = await checked();
+            outcome.checkError.code = 'CHANGED';
+
+            expect(status.checkError).toStrictEqual(DENIED);
+        });
+
+        it.each([
+            ['fails', (query: any) => query.reject(accessDenied())],
+            ['gets its answer', (query: any) => query.resolve([])]
+        ])('is left as it was by a check that %s after the pool was stopped', async (_name, end) => {
+            const query = pending();
+            pool.query.mockReturnValueOnce(query.promise);
+            const outcome = await checked(() => {
+                status.active = false;
+                status.stopTimerCheck();
+                end(query);
+            });
+
+            expect(outcome).toStrictEqual({});
+        });
+
+        it('is left as it was while the status is not active, as no check runs', async () => {
+            status.active = false;
+            expect(await checked()).toStrictEqual({});
+        });
+
+        it('is of this check only: a later check does not write to it', async () => {
+            pool.query.mockRejectedValueOnce(accessDenied());
+            const outcome = await checked();
+            pool.query.mockResolvedValueOnce([]);
+            await status.checkStatus();
+
+            expect(outcome).toStrictEqual({ recorded: true, checkError: DENIED });
+        });
+
+        it('is not needed: a check without one still resolves with nothing', async () => {
+            pool.query.mockResolvedValueOnce([]);
+            await expect(status.checkStatus()).resolves.toBeUndefined();
+        });
+    });
+
     describe('across a stop and a new start', () => {
         it('keeps its value after the stop, as isValid does', async () => {
             await after(accessDenied());

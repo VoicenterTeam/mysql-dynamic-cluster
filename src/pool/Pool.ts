@@ -6,7 +6,7 @@ import mysql, { PoolConnection } from "mysql2";
 import Logger from "../utils/Logger";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
-import { IQueryOptions, QueryResult } from "../types/PoolInterfaces";
+import { ICheckOutcome, IQueryOptions, QueryResult } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
 import { IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
@@ -94,8 +94,8 @@ export class Pool {
     /**
      * Create pool connection
      */
-    public async connect() {
-        const attempt = ++this._connectAttempt;
+    public async connect(outcome: ICheckOutcome = {}) {
+        const attempt = this._newAttempt(outcome);
         // flags of the settings are used as they are. Without them the server decides
         const flags = this._flags === undefined ? await this._flagsFromServer() : this._flags;
         if (attempt !== this._connectAttempt) {
@@ -114,7 +114,7 @@ export class Pool {
         this._reaper.start(this._pool as any);
         this.status.startTimerCheck(); // marks the status active, and undoes the stop of a disconnect()
         this._connectEvents();
-        await this.status.checkStatus();
+        await this.status.checkStatus(outcome);
 
         if (this.status.isValid) {
             Logger.info('Pool is connected');
@@ -532,6 +532,19 @@ export class Pool {
      */
     public get checkError(): PoolStatus['checkError'] {
         return this._status.checkError;
+    }
+
+    /**
+     * Count a connect() call, and tell its caller that no health check of that call is recorded
+     * yet. The first check of the call says so when it is recorded. A call that is given up
+     * before its check, or whose check is dropped, leaves it at that
+     * @param outcome the object the caller of connect() handed in
+     * @returns the number of this connect() call
+     * @private
+     */
+    private _newAttempt(outcome: ICheckOutcome): number {
+        outcome.recorded = false;
+        return ++this._connectAttempt;
     }
 
     /**

@@ -3,6 +3,7 @@
  */
 
 import { OkPacket, ResultSetHeader, RowDataPacket } from "mysql2";
+import { INodeCheckError } from "./NodeInterfaces";
 
 // Validator operator
 type Operator = '>' | '<' | '=' | 'Like';
@@ -47,6 +48,18 @@ export interface IQueryOptions {
     redisRefreshCache?: boolean,
     // escape the values of an object of values, for this query. Default: the escapeNamedValues setting
     escapeNamedValues?: boolean
+}
+
+// How the health check of one connect() ended. The caller of Pool.connect() hands in an empty
+// object and the pool fills it, so the caller knows about that check and no other
+export interface ICheckOutcome {
+    // False from the start of connect(), true once its check was recorded: the check ended while
+    // the pool was still running, with an answer or with an error. It stays false when the check
+    // was dropped because the pool was stopped, and when no check ran. Not set by a pool that
+    // tells nothing
+    recorded?: boolean,
+    // what a recorded check failed with, reduced. Not set when it got its answer
+    checkError?: INodeCheckError
 }
 
 export interface IServiceNodeMap {

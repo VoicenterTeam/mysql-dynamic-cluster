@@ -2,7 +2,7 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { GlobalStatusResult } from "../types/PoolInterfaces";
+import { GlobalStatusResult, ICheckOutcome } from "../types/PoolInterfaces";
 import Logger from "../utils/Logger";
 import Events from "../utils/Events";
 import { Utils } from "../utils/Utils";
@@ -118,8 +118,10 @@ export class PoolStatus {
 
     /**
      * Check pool status
+     * @param outcome filled when this check is recorded, so the caller knows how its own check
+     * ended. Left as it is by a check that is dropped, and when no check runs
      */
-    public async checkStatus() {
+    public async checkStatus(outcome: ICheckOutcome = {}) {
         const queryTimer = new QueryTimer();
         // a check that outlives stopTimerCheck() belongs to a connection that is gone
         const run = this._checkRun;
@@ -151,6 +153,7 @@ export class PoolStatus {
 
             // the query ran: the error of an earlier check is over, whatever the validator says
             this._checkError = undefined;
+            outcome.recorded = true;
             queryTimer.end();
             this._queryTime = queryTimer.get();
 
@@ -165,6 +168,8 @@ export class PoolStatus {
             if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host);
             // an error thrown after the answer came is one of the package's own code
             this._checkError = asking ? PoolStatus._reduce(err) : {};
+            // the caller gets an object of its own
+            Object.assign(outcome, { recorded: true, checkError: { ...this._checkError } });
             Logger.error("Something wrong while checking status in host: " + this._pool.host +
                 ".\n Message: " + PoolStatus._errorText(err));
             if (++this._failedChecks >= 2) this._isValid = false;
