@@ -13,6 +13,9 @@ jest.mock('../../src/Redis/Redis', () => ({
 
 import { GaleraCluster } from '../../src/cluster/GaleraCluster';
 
+// no socket and no timer here: a test that waits this long waits for a promise that never settles
+jest.setTimeout(10000);
+
 // a pool whose connect() ends when the test says so. One entry in `connects` per call
 const node = (id: number): any => {
     const connects: { pass: () => void, fail: (error: any) => void }[] = [];

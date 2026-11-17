@@ -177,6 +177,14 @@ describe.each([
         expect(cluster.nodes()[0].checkError).toStrictEqual(DENIED);
     });
 
+    // the login that asks for the version is refused too, and the pool still logs in after it
+    it('reaches the server with ' + (withFlags ? 'one login' : 'two logins'), async () => {
+        const server = await listen('refuses the login');
+        await connectOf(makeCluster([server.port], withFlags));
+
+        expect(server.connections()).toBe(withFlags ? 1 : 2);
+    });
+
     it('leaves connect() and the error of the result as they were', async () => {
         const server = await listen('refuses the login');
         const cluster = makeCluster([server.port], withFlags);

@@ -13,6 +13,9 @@ jest.mock('../../src/Redis/Redis', () => ({
 
 import { GaleraCluster } from '../../src/cluster/GaleraCluster';
 
+// no socket and no timer here: a test that waits this long waits for a promise that never settles
+jest.setTimeout(10000);
+
 const DENIED = { code: 'ER_ACCESS_DENIED_ERROR', errno: 1045, sqlState: '28000' };
 const REFUSED = { code: 'ECONNREFUSED', errno: -111 };
 
