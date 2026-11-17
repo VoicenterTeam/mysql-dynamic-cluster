@@ -191,7 +191,7 @@ export class Pool {
     private _notConnected(): Error {
         const error: any = new Error("pool in host " + this.host + " is not connected yet");
         error.code = 'POOL_NOT_CONNECTED';
-        return error;
+        return PoolStatus.ownError(error);
     }
 
     /**
@@ -432,7 +432,9 @@ export class Pool {
         let done = false;
         const timer = setTimeout(() => {
             done = true;
-            callback(Object.assign(new Error("Change database timeout"), { code: 'PROTOCOL_SEQUENCE_TIMEOUT' }));
+            // the code is the one mysql2 has for a timeout, but this timer is the package's own
+            const error = PoolStatus.ownError(new Error("Change database timeout"));
+            callback(Object.assign(error, { code: 'PROTOCOL_SEQUENCE_TIMEOUT' }));
         }, timeout);
 
         conn.changeUser({ database }, (error) => {
@@ -490,6 +492,9 @@ export class Pool {
         // mysql2 keeps the callbacks of the waiting requests here, called as (error, connection)
         const queue = (this._pool as any)?._connectionQueue;
         if (!queue) return 0;
+        // the error is the app's. A health check that waits must not report its code as the
+        // server's
+        PoolStatus.ownError(error);
 
         // taken out first: a callback that asks again waits in the queue, it is not failed here
         const waiting: ((error: Error) => void)[] = [];
@@ -518,5 +523,24 @@ export class Pool {
             idle: pool._freeConnections.length,
             pending: pool._connectionQueue.length
         };
+    }
+
+    /**
+     * What the last health check failed with, as PoolStatus.checkError keeps it: reduced to
+     * code, errno and sqlState, a new object on every read, undefined when the last check got
+     * its answer. The cluster reads it for nodes() and for the results of ready and firstReady
+     */
+    public get checkError(): PoolStatus['checkError'] {
+        return this._status.checkError;
+    }
+
+    /**
+     * How many connect() and disconnect() calls this pool has had. connect() counts itself
+     * before it first waits. A caller that reads the count right after it called connect(),
+     * and again when that connect() settled, sees whether the pool was closed or connected
+     * again in between
+     */
+    public get connectAttempt(): number {
+        return this._connectAttempt;
     }
 }

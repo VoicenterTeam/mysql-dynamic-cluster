@@ -12,6 +12,7 @@ import { Validator } from "./Validator";
 import { LoadFactor } from "./LoadFactor";
 import { ITimerCheckRange, IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
+import { INodeCheckError } from "../types/NodeInterfaces";
 
 export class PoolStatus {
     public active: boolean;
@@ -42,6 +43,17 @@ export class PoolStatus {
     private _loadFactor: LoadFactor;
     // Failed checks in a row. One failure (network blip) doesn't take the pool out of rotation
     private _failedChecks: number = 0;
+    // What the last check failed with, reduced. Not set when the last check got its answer
+    private _checkError?: INodeCheckError;
+    /**
+     * The error of the last check, reduced to code, errno and sqlState. Undefined when the last
+     * check got its answer, whatever the validator then said, and before the first check.
+     * An empty object stands for a failure the package made itself. stopTimerCheck() does not
+     * clear it. A new object on every read
+     */
+    public get checkError(): INodeCheckError | undefined {
+        return this._checkError && { ...this._checkError };
+    }
     // Status check timeout: a check slower than the longest check interval counts as failed
     private readonly _checkTimeout: number;
 
@@ -111,6 +123,9 @@ export class PoolStatus {
         const queryTimer = new QueryTimer();
         // a check that outlives stopTimerCheck() belongs to a connection that is gone
         const run = this._checkRun;
+        // true while the status query is out. Only what the query is rejected with can come
+        // from mysql2, the socket or the server
+        let asking = false;
         try {
             if (!this.active) return;
 
@@ -121,17 +136,21 @@ export class PoolStatus {
             let checkTimer: NodeJS.Timeout;
             let result: GlobalStatusResult[];
             try {
+                asking = true;
                 result = await Promise.race([
                     this._pool.query(`SHOW GLOBAL STATUS;`, { redis: false, timeout: this._checkTimeout }),
                     new Promise<never>((_, reject) => {
                         checkTimer = setTimeout(() => reject(new Error("Status check timeout")), this._checkTimeout);
                     })
                 ]) as GlobalStatusResult[];
+                asking = false;
             } finally {
                 clearTimeout(checkTimer);
             }
             if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host);
 
+            // the query ran: the error of an earlier check is over, whatever the validator says
+            this._checkError = undefined;
             queryTimer.end();
             this._queryTime = queryTimer.get();
 
@@ -144,6 +163,8 @@ export class PoolStatus {
             this.nextCheckStatus()
         } catch (err) {
             if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host);
+            // an error thrown after the answer came is one of the package's own code
+            this._checkError = asking ? PoolStatus._reduce(err) : {};
             Logger.error("Something wrong while checking status in host: " + this._pool.host +
                 ".\n Message: " + PoolStatus._errorText(err));
             if (++this._failedChecks >= 2) this._isValid = false;
@@ -204,5 +225,45 @@ export class PoolStatus {
         this._nextCheckTime = Utils.clamp(this._nextCheckTime, this.timerCheckRange.start, this.timerCheckRange.end)
 
         this._timer.start(this._nextCheckTime);
+    }
+
+    // Errors the package made itself, or the app handed to it. A code on one of them is not
+    // a code of mysql2, the socket or the server, so a check does not report it
+    private static readonly _ownErrors = new WeakSet<object>();
+
+    /**
+     * Mark an error as made by this package, or handed to it by the app, not by mysql2, the
+     * socket or the server. A check that fails with it reports an empty checkError, so a code
+     * the package invented never looks like an answer of the server. The error itself is not
+     * changed. A value that is no object is left alone
+     * @param error the error to mark
+     * @returns the same error
+     */
+    public static ownError<T>(error: T): T {
+        // a WeakSet takes objects only
+        if (Object(error) === error) PoolStatus._ownErrors.add(error as unknown as object);
+        return error;
+    }
+
+    /**
+     * What a check reports of the error its status query was rejected with: code when it is a
+     * string, errno when it is an integer, sqlState when it is a string. Never the message,
+     * which can hold the user name. An empty object for an error marked with ownError(), for a
+     * value that is no object, and for one whose fields throw when read
+     * @private
+     */
+    private static _reduce(err: any): INodeCheckError {
+        const reduced: INodeCheckError = {};
+        try {
+            if (err === null || err === undefined || PoolStatus._ownErrors.has(err)) return reduced;
+            // read all three before any is kept: a field that throws leaves nothing half taken
+            const { code, errno, sqlState } = err;
+            if (typeof code === 'string') reduced.code = code;
+            if (Number.isInteger(errno)) reduced.errno = errno;
+            if (typeof sqlState === 'string') reduced.sqlState = sqlState;
+            return reduced;
+        } catch (unreadable) {
+            return {};
+        }
     }
 }

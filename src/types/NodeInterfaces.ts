@@ -13,6 +13,18 @@ export interface IClusterConnection {
     nodeId: number
 }
 
+// The error of the last health check of a node, reduced to what mysql2, the socket or the
+// server produced. Never the message, which can hold the user name. An empty object stands
+// for a failure the package made itself, such as its own timeout around the check
+export interface INodeCheckError {
+    // only when the error had a string here
+    code?: string,
+    // only when the error had an integer here
+    errno?: number,
+    // only when the error had a string here
+    sqlState?: string
+}
+
 // A node of the cluster, as GaleraCluster.nodes() reports it
 export interface INodeInfo {
     id: number,
