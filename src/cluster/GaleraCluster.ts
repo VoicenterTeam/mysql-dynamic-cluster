@@ -493,7 +493,11 @@ export class GaleraCluster {
             return { connection: await pool.getConnection(), nodeId: pool.id };
         } catch (error) {
             // the error of mysql2 itself, so the caller sees its code. Only the node is added
-            if (error !== null && typeof error === 'object') error.nodeId = pool.id;
+            try {
+                error.nodeId = pool.id;
+            } catch {
+                // a frozen error, or one that is no object, goes to the caller without the node
+            }
             throw error;
         }
     }

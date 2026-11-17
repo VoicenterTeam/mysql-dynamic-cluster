@@ -111,6 +111,19 @@ describe('GaleraCluster.getConnection', () => {
         expect(failure.message).toBe('connect ECONNREFUSED');
     });
 
+    // such an error cannot take the nodeId. The caller still gets it, not a TypeError about that
+    it.each([
+        ['frozen', Object.freeze(new Error('node 2 is leaving'))],
+        ['not extensible', Object.preventExtensions(new Error('node 2 is leaving'))],
+        ['a string', 'node 2 is leaving']
+    ])('rejects with the error of the failed acquire when it is %s', async (_name, error) => {
+        const pools = [node(1, 30), node(2, 10)];
+        pools[1].getConnection.mockRejectedValue(error);
+
+        expect(await makeCluster(pools).getConnection().catch((e: any) => e)).toBe(error);
+        expect(acquires(pools)).toBe(1);
+    });
+
     it('acquires once and tries no other node after a failed acquire', async () => {
         const pools = [node(1, 30), node(2, 10), node(3, 20)];
         pools[1].getConnection.mockRejectedValue(new Error('Pool is closed.'));
