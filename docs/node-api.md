@@ -348,9 +348,9 @@ settled. It does not change later. For the state of a node now, read `nodes()`.
   failed with that code.
 - A result with `ok: false` and no `checkError`: the server answered and a validator said no.
 - A result with `checkError: {}`: the check failed with nothing from mysql2, the socket or
-  the server to report. Mostly the timer of the check ran out. Or `disconnect()` or another
-  `connect()` was called while the node connected. Then the connect was given up and the
-  server refused nothing.
+  the server to report. Mostly the timer of the check ran out. A result with `ok: false`
+  also has `checkError: {}` when `disconnect()` or another `connect()` was called while the
+  node connected. Then the connect was given up and the server refused nothing.
 - A result with `ok: true` has no `checkError`, with one exception. A node that was valid
   before a `disconnect()` keeps `isValid` over one failed check, so its next connect can pass
   though its first check failed. That result has `ok: true` and the `checkError` of the

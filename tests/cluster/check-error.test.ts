@@ -172,6 +172,17 @@ describe.each(['ready', 'firstReady'])('checkError in the results of %s', (membe
             expect((await first)[0].checkError).toStrictEqual({});
         });
 
+        // the pool was connected again, but this connect passed: its check got its answer
+        it('is not on a passed result of the first of two connect() calls', async () => {
+            const pools = [node(1)];
+            const cluster = connecting(pools);
+            const first = cluster[member];
+            cluster.connect().catch(() => undefined);
+            pools[0].connects[0].pass();
+
+            expect(await first).toStrictEqual([{ nodeId: 1, ok: true }]);
+        });
+
         it('is the error of the check for the second of two connect() calls', async () => {
             const pools = [node(1)];
             const cluster = connecting(pools);

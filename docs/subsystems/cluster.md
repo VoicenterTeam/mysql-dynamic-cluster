@@ -92,8 +92,8 @@ does not wait for `_enableHashing()`. Each result is built by `_readyResult`
 when the `pool.connect()` settles, and takes `pool.checkError` at that
 moment. `_readyResult` reads `pool.connectAttempt` right after the call and
 again at that moment. A count that moved means `disconnect()` or another
-`connect()` came in between, and the result gets an empty `checkError`. See
-[../node-api.md](../node-api.md#firstready).
+`connect()` came in between, and a failed result gets an empty `checkError`.
+See [../node-api.md](../node-api.md#firstready).
 
 ## `disconnect()`
 

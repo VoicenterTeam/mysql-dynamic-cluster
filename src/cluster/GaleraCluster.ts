@@ -198,18 +198,19 @@ export class GaleraCluster {
         const nodeId = pool.id;
         // connect() counted itself before it first waited, so this is the count of that call
         const attempt = pool.connectAttempt;
-        // Read when the connect settled. A count that moved means a disconnect() or a later
-        // connect() came in between: this connect was given up, which is no error of the server
-        const checked = () => GaleraCluster._withCheckError(
-            pool.connectAttempt === attempt ? pool.checkError : {}
-        );
+        // the check error is read when the connect settled, not before
         return connecting.then(
-            () => ({ nodeId, ok: true, ...checked() }),
+            // a pool that passed has one only when its check failed and it was still valid
+            () => ({ nodeId, ok: true, ...GaleraCluster._withCheckError(pool.checkError) }),
             reason => ({
                 nodeId,
                 ok: false,
                 error: GaleraCluster._isError(reason) ? reason : new Error(String(reason)),
-                ...checked()
+                // A count that moved means a disconnect() or a later connect() came in between:
+                // this connect was given up, which is no error of the server
+                ...GaleraCluster._withCheckError(
+                    pool.connectAttempt === attempt ? pool.checkError : {}
+                )
             })
         );
     }
