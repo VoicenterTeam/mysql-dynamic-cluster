@@ -380,10 +380,7 @@ export class GaleraCluster {
             poolIdService = this._clusterHashing.getNodeByService(serviceId);
         }
 
-        activePools = this._pools.filter(pool => {
-            return pool.status.isValid && pool.id !== poolIdService;
-        })
-        activePools.sort((a, b) => a.status.loadScore - b.status.loadScore)
+        activePools = this._validPools([poolIdService]);
 
         if (poolIdService >= 0) {
             const servicePool = this._pools.find(pool => pool.id === poolIdService);
@@ -395,5 +392,16 @@ export class GaleraCluster {
         }
 
         return activePools;
+    }
+
+    /**
+     * Valid pools that are not in exclude, lowest load score first
+     * @param exclude ids of the pools to leave out
+     * @private
+     */
+    private _validPools(exclude: number[]): Pool[] {
+        return this._pools
+            .filter(pool => pool.status.isValid && !exclude.includes(pool.id))
+            .sort((a, b) => a.status.loadScore - b.status.loadScore);
     }
 }
