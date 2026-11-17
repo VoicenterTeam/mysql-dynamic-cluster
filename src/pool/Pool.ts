@@ -2,7 +2,7 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import mysql from "mysql2";
+import mysql, { PoolConnection } from "mysql2";
 import Logger from "../utils/Logger";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
@@ -471,7 +471,7 @@ export class Pool {
      * change, no timeout, no metric. One request to mysql2, which waits when the pool is at
      * its limit. Rejects with the error object of mysql2
      */
-    public getConnection(): Promise<mysql.PoolConnection> {
+    public getConnection(): Promise<PoolConnection> {
         return new Promise((resolve, reject) => {
             if (!this._pool) return reject(this._notConnected());
             this._pool.getConnection((error, connection) => {

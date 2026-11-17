@@ -17,8 +17,12 @@ const buildDeclarations = (): Map<string, string> => {
     return files;
 };
 
-// Compiles the code of an app that imports the built declarations, and returns its errors
-const compileApp = (declarations: Map<string, string>, source: string): string[] => {
+// Compiles the code of an app that imports the built declarations, and returns the errors
+// in the app and in the declarations of the package. An error in the declarations of
+// another package is not one of this package, and is left out
+const compileApp = (
+    declarations: Map<string, string>, source: string, appOptions: ts.CompilerOptions = {}
+): string[] => {
     const appFile = path.join(outDir, 'app.ts');
     const files = new Map(declarations).set(appFile, source);
     const options: ts.CompilerOptions = {
@@ -29,7 +33,8 @@ const compileApp = (declarations: Map<string, string>, source: string): string[]
         esModuleInterop: true,
         skipLibCheck: true,
         noEmit: true,
-        types: ['node']
+        types: ['node'],
+        ...appOptions
     };
     const host = ts.createCompilerHost(options);
     const onDisk = {
@@ -47,6 +52,7 @@ const compileApp = (declarations: Map<string, string>, source: string): string[]
         return ts.createSourceFile(file, text, version, true);
     };
     return ts.getPreEmitDiagnostics(ts.createProgram([appFile], options, host))
+        .filter(error => !error.file || files.has(path.resolve(error.file.fileName)))
         .map(error => `${error.code} ${ts.flattenDiagnosticMessageText(error.messageText, ' ')}`);
 };
 
@@ -98,6 +104,17 @@ describe('the declarations of the built package', () => {
 
     it('export the five node API types and type the five members as agreed', () => {
         expect(compileApp(declarations, app)).toEqual([]);
+    });
+
+    // such an app checks the declarations of every package it imports, and a default import
+    // of a module that has no default export is an error there
+    it('compile in an app that has esModuleInterop and skipLibCheck off', () => {
+        // TypeScript 6 only takes the two options set to false with ignoreDeprecations
+        const errors = compileApp(declarations, app, {
+            esModuleInterop: false, allowSyntheticDefaultImports: false, skipLibCheck: false,
+            ignoreDeprecations: '6.0'
+        });
+        expect(errors).toEqual([]);
     });
 
     it('make ready read-only', () => {
