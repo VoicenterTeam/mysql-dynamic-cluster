@@ -507,6 +507,22 @@ describe('a health check when the metric cannot be recorded', () => {
         expect(pool.status.isValid).toBe(true);
     });
 
+    it('records a failed check after its next check is set and the app was told', async () => {
+        const pool = await connectedPool();
+        fails(pool, coded({ code: 'ECONNRESET' }));
+        const nextCheck = jest.spyOn(pool.status._timer, 'start');
+        const emitted = jest.spyOn(Events, 'emit');
+        const recorded = jest.spyOn(Metrics, 'recordHealthCheck');
+        spies.push(nextCheck, emitted, recorded);
+
+        await pool.status.checkStatus();
+
+        const order = (spy: jest.SpyInstance) => spy.mock.invocationCallOrder;
+        expect(order(recorded)).toHaveLength(1);
+        expect(order(recorded)[0]).toBeGreaterThan(order(nextCheck)[0]);
+        expect(order(recorded)[0]).toBeGreaterThan(order(emitted)[0]);
+    });
+
     it('takes a node out with its second failed check when the provider throws', async () => {
         const pool = await connectedPool();
         fails(pool, coded({ code: 'ECONNRESET' }));
