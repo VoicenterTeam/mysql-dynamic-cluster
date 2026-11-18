@@ -303,6 +303,20 @@ describe('Pool.getConnection aborted while its connection logs in', () => {
         expect(() => logins[0](new Error('Access denied'))).not.toThrow();
         expect((await stateOf(request)).rejected).toBe(reason);
     });
+
+    it('drops the error of a login that fails later, with no log line at any level', async () => {
+        const { pool, mysqlPool } = await connected();
+        const logins = loggingIn(mysqlPool);
+        const controller = new AbortController();
+        quiet(pool.getConnection(controller.signal));
+        controller.abort();
+        // connect() logged on the way here. Only what the late answer logs is counted
+        const levels = Object.values(Logger) as jest.Mock[];
+        levels.forEach(level => level.mockClear());
+
+        logins[0](new Error('Access denied'));
+        levels.forEach(level => expect(level).not.toHaveBeenCalled());
+    });
 });
 
 describe('Pool.getConnection whose signal aborts after the call settled', () => {

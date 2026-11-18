@@ -261,7 +261,9 @@ describe('GaleraCluster.getConnection with a signal that is no AbortSignal', () 
         ['an object without addEventListener', { ...signalLike(), addEventListener: undefined }],
         ['an object without removeEventListener', {
             ...signalLike(), removeEventListener: undefined
-        }]
+        }],
+        // the check that it is a signal comes before the look at aborted
+        ['an object that says aborted and is no signal', { aborted: true }]
     ])('rejects with a TypeError that names signal when it is %s', async (_name, signal) => {
         const pools = [node(1, 30), node(2, 10)];
         const state = await stateOf(makeCluster(pools).getConnection({ signal }));
