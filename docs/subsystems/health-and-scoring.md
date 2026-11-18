@@ -96,6 +96,16 @@ counter and assigns `_isValid` from the validator again. Before 3.2.2 a
 failed check never touched `_isValid`, so a node whose checks all failed
 stayed in rotation.
 
+Every check that ends is recorded as the metric
+`mysql_dynamic_cluster.health_check.duration`, with the result `valid`,
+`invalid` or `error`. The success branch records it as its last step, after
+`nextCheckStatus()`, and the `catch` branch right after it stored
+`_queryTime`. A check that was dropped and a check that did not run record
+nothing. `isValid` and `loadScore` are also published, as the gauges
+`mysql_dynamic_cluster.node.valid` and
+`mysql_dynamic_cluster.node.load_score`. See
+[metrics.md](./metrics.md#health-check-metric).
+
 When every node is invalid, `GaleraCluster` throws
 `"There is no pool that satisfies the parameters"` before the Redis cache
 lookup — the reason one failed check isn't enough to drop a node.

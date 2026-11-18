@@ -1,7 +1,7 @@
 # Subsystem: Metrics
 
-The `Metrics` singleton records query and cache timings, and reports the
-connection counts of the pools, through the
+The `Metrics` singleton records query, cache and health-check timings, and
+reports the connection counts and the state of the nodes, through the
 [OpenTelemetry API](https://opentelemetry.io/docs/languages/js/instrumentation/).
 The package depends only on `@opentelemetry/api`, as a peer dependency. It
 never starts an SDK or an exporter, and requiring it adds no process
@@ -51,8 +51,8 @@ flag work the same way, since both register the global provider.
 The order does not matter. The library looks up the global provider on every
 record and creates its instruments again when the provider changed, so an app
 may register its SDK after the cluster already ran queries. Records made
-before that are dropped. The pool connection metrics follow at the next
-record, see [When they appear](#when-they-appear).
+before that are dropped. The pool connection metrics and the node gauges
+follow at the next record, see [When they appear](#when-they-appear).
 
 An app without OpenTelemetry does nothing. npm 7 and later install the peer
 dependency on their own, and the calls stay no-ops. npm 6 and Yarn 1 do not
@@ -66,13 +66,13 @@ The version is read from the package's own `package.json`.
 
 ## Metrics
 
-There are six: three duration histograms, which the library records as
-queries run, and three pool connection metrics, which the SDK reads from the
-pools at each collection.
+There are nine. The library records four duration histograms as queries and
+health checks run. The SDK reads the other five from the pools at each
+collection: three pool connection metrics and two node gauges.
 
 ### Duration metrics
 
-All three are histograms in seconds with the bucket boundaries the database
+All four are histograms in seconds with the bucket boundaries the database
 conventions recommend: `0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10`.
 A histogram carries its own count, so there are no separate counters. Totals
 and rates come from the count, errors from the `error.type` attribute.
@@ -82,14 +82,66 @@ and rates come from the count, errors from the `error.type` attribute.
 | `mysql_dynamic_cluster.operation.duration` | Query attempt in one pool. A transaction (`multiStatementQuery`) is one record. Health checks count too, since they run through `Pool.query`. | [src/pool/Pool.ts](../../src/pool/Pool.ts) |
 | `mysql_dynamic_cluster.query.duration` | `GaleraCluster.query` call, including the cache lookup and every retry. | [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts) |
 | `mysql_dynamic_cluster.cache.lookup.duration` | Redis cache lookup on the normal query path. | [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts) |
+| `mysql_dynamic_cluster.health_check.duration` | Finished health check of one node, see [Health-check metric](#health-check-metric). | [src/pool/PoolStatus.ts](../../src/pool/PoolStatus.ts) |
 
-All three names live in the package's own namespace. The per-attempt metric
+All four names live in the package's own namespace. The per-attempt metric
 has the shape of `db.client.operation.duration` from the
 [database client semantic conventions](https://opentelemetry.io/docs/specs/semconv/db/database-metrics/):
 seconds, the same buckets and the same attribute keys. It does not take that
 name on purpose. A wrapper or app that already records the convention metric
 for the same calls would otherwise show two series under one name, and a
 dashboard that sums by metric name would count MySQL time twice.
+
+### Health-check metric
+
+`mysql_dynamic_cluster.health_check.duration` has one record per finished
+health check of a node, made in `PoolStatus.checkStatus`. The duration is
+the whole check as the status times it. It includes the wait for a free
+connection, and it ends at the timeout of the check when the node does not
+answer. It is the value the status keeps as `queryTime`.
+
+`mysql_dynamic_cluster.health_check.result` says how that one check ended:
+
+| Result | Meaning |
+|---|---|
+| `valid` | The status query ran and the validators passed. |
+| `invalid` | The status query ran and a validator said no. A status key the validator did not find counts as no. |
+| `error` | The check did not get its answer. |
+
+A record with `error` also has `error.type`, and `db.response.status_code`
+when the error had an `errno`. They follow the rule of `checkError`, see
+[health-and-scoring.md](./health-and-scoring.md#the-error-of-the-last-check).
+`error.type` is the `code` of the error when mysql2, the socket or the server
+made it, such as `ECONNREFUSED` or `ER_ACCESS_DENIED_ERROR`. It is `_OTHER`
+for every failure the package made itself: the timeout of the check, a pool
+with no mysql2 pool yet, the error an app passed to `failWaiting()`, and
+anything thrown after the answer came.
+
+The result is about one check and not about the node. A node stays valid
+after one failed check, and the second failed check in a row takes it out.
+`mysql_dynamic_cluster.node.valid` shows that state, see
+[Node gauges](#node-gauges).
+
+Two kinds of check record nothing:
+
+- A check that was still running when its pool was stopped, by
+  `disconnect()` or `stopTimerCheck()`. The status drops its result too.
+- A check that did not run because the status was not active.
+
+A health check shows in two metrics. It runs through `Pool.query`, so it is
+also one record of `mysql_dynamic_cluster.operation.duration`, as it was
+before this metric existed. There it has `db.operation.name` = `SHOW`.
+
+- For the checks alone, read `mysql_dynamic_cluster.health_check.duration`.
+- For the queries without the checks, leave `SHOW` out of
+  `mysql_dynamic_cluster.operation.duration`. That also leaves out a `SHOW`
+  statement the app sent to a pool itself.
+- The two durations of one check differ. The operation times the query
+  attempt. The health check times the whole check, and its record carries
+  the result of the validators.
+
+A check that cannot be recorded still ends as it would have. The first
+failure is logged at `warn`, as for the other records.
 
 ### Pool connection metrics
 
@@ -141,6 +193,39 @@ The three have the shape of `db.client.connection.count`,
 from the same conventions: up-down counters with these units and attribute
 keys. As with the durations, they keep the package's own names.
 
+### Node gauges
+
+Two observable gauges, read at each collection from the status of every
+registered pool. They are the `isValid` and `loadScore` that
+`cluster.nodes()` returns.
+
+| Metric | Value |
+|---|---|
+| `mysql_dynamic_cluster.node.valid` | `1` when the node is valid, so queries may go to it. `0` when not. |
+| `mysql_dynamic_cluster.node.load_score` | Load score of the node from its last answered health check. Lower is better. |
+
+- A node turns `0` when a validator says no, or with the second failed
+  check in a row. It turns `1` again with the next check that passes.
+- A node that was never checked reports `0` and a load score of `100000`.
+  That is the score a status starts with, and it puts an unchecked node
+  last. Both points are reported as the status holds them, so a node that
+  has not connected yet shows as not valid. Read the load score together
+  with `mysql_dynamic_cluster.node.valid`.
+- A failed check leaves the load score of the last answered check in place.
+- Neither gauge has a unit. One is a state and the other a weighted sum of
+  status values, set by `loadFactors`.
+
+The gauges use the registry of the pool connection metrics. A cluster's
+nodes are reported from its `connect()` call until its `disconnect()` call,
+and the gauges reach a late provider as described under
+[When they appear](#when-they-appear). After `disconnect()` a cumulative
+reader keeps the last value of a gauge too.
+
+The gauges and the connection metrics do not depend on each other. A node
+whose status cannot be read still reports its connection metrics, and a
+provider that cannot make one kind of instrument still gets the other and
+the histograms.
+
 #### When they appear
 
 The instruments belong to the provider that was the global one when they
@@ -163,23 +248,25 @@ to look.
 
 | Attribute | Value | On |
 |---|---|---|
-| `db.system.name` | `mysql` | operation, query, connection |
+| `db.system.name` | `mysql` | operation, query, connection, health check, node |
 | `db.namespace` | Database of the query. On the cluster metric only when the caller passed `database`. | operation, query |
 | `db.operation.name` | First SQL keyword, see below | operation, query |
-| `error.type` | mysql2 error `code` such as `ER_ACCESS_DENIED_ERROR` or `ECONNREFUSED`, or `_OTHER`. Set only on failure. | operation, query |
-| `db.response.status_code` | mysql `errno` as a string, when the error has one | operation, query |
-| `server.address`, `server.port` | Host and port of the pool | operation, connection |
-| `db.client.connection.pool.name` | Pool `name` setting, `host:port` by default | operation, connection |
+| `error.type` | mysql2 error `code` such as `ER_ACCESS_DENIED_ERROR` or `ECONNREFUSED`, or `_OTHER`. Set only on failure. | operation, query, health check |
+| `db.response.status_code` | mysql `errno` as a string, when the error has one | operation, query, health check |
+| `server.address`, `server.port` | Host and port of the pool | operation, connection, health check, node |
+| `db.client.connection.pool.name` | Pool `name` setting, `host:port` by default | operation, connection, health check, node |
 | `db.client.connection.state` | `idle` or `used` | connection count |
-| `mysql_dynamic_cluster.cluster.name` | `clusterName` setting | all six |
+| `mysql_dynamic_cluster.cluster.name` | `clusterName` setting | all nine |
+| `mysql_dynamic_cluster.health_check.result` | `valid`, `invalid` or `error` | health check |
 | `mysql_dynamic_cluster.service.name` | `serviceName` of the query, or the `serviceId` as text. Left out for queries without a service. | operation, query |
 | `mysql_dynamic_cluster.result.source` | `pool`, `cache` or `stale_cache`. Left out when the query failed. | query |
 | `mysql_dynamic_cluster.cache.result` | `hit`, `expired` or `miss` | cache lookup |
 
-In the last column, connection stands for the three pool connection metrics.
-They carry the attributes named for them and no other. They leave out
-`db.namespace`, since a connection of the pool changes its database with
-every query.
+In the last column, connection stands for the three pool connection metrics
+and node for the two node gauges. They carry the attributes named for them
+and no other. They leave out `db.namespace`, since a connection of the pool
+changes its database with every query. The health-check metric leaves it out
+as well, since a check is about the node.
 
 Notes on cardinality and content:
 
@@ -210,6 +297,9 @@ Notes on cardinality and content:
   Development.
 - The pool connection metrics add series per node only: two for the count,
   one for the waiting requests and one for the limit.
+- The node gauges add two series per node. The health-check metric adds,
+  per node, one series for `valid`, one for `invalid`, and one for every
+  distinct pair of `error.type` and status code among its failed checks.
 
 ## Migrating from the pm2 metrics
 
@@ -250,7 +340,9 @@ Other changes:
 2. Create the instrument in `_getInstruments` in
    [src/metrics/Metrics.ts](../../src/metrics/Metrics.ts) and add a `record*`
    method. Never create an instrument at module load: it would be bound to
-   the no-op provider.
+   the no-op provider. Create it after the first three histograms and inside
+   its own `_safely`, as the health-check histogram is, so a provider that
+   cannot make it still gets the others.
 3. Call the method from the call site. Keep attribute values to a small fixed
    set, never raw SQL, ids of rows or error messages.
 4. Cover it in [tests/metrics/otel-metrics.test.ts](../../tests/metrics/otel-metrics.test.ts),
@@ -269,10 +361,18 @@ metrics, takes other steps 2 to 4:
    A cumulative reader shows the values as they are. A delta reader shows
    that reporting stopped.
 
+A value read from the status of a node goes with the node gauges instead:
+`_moveNodeInstruments` and `_observeNodes`, covered in
+[tests/metrics/health-metrics.test.ts](../../tests/metrics/health-metrics.test.ts).
+The two groups have a callback each, so one that fails leaves the other
+reporting.
+
 ## See also
 
 - [./pool.md](./pool.md) for the call sites of the per-attempt metric.
 - [../node-api.md](../node-api.md#getpoolstats) for the counts behind the
   pool connection metrics.
 - [./cluster.md](./cluster.md) for the call sites of the cluster metric.
+- [./health-and-scoring.md](./health-and-scoring.md) for the health check
+  behind the health-check metric and the node gauges.
 - [./redis-cache.md](./redis-cache.md) for the cache lookup.
