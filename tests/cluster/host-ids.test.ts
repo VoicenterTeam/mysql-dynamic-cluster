@@ -41,17 +41,21 @@ describe('host ids', () => {
         expect(idsOf(hosts)).toEqual(ids);
     });
 
-    it('warns when an id 0 is replaced, with the host and the id the node got', () => {
-        expect(zeroWarnings([{ host: 'db-zero.example', id: 0 }, { id: 1 }, { id: 2 }])).toEqual([
-            'Host db-zero.example has id 0, which counts as not set: the node got the id 3'
-        ]);
-    });
+    const warning = (host: string, id: number) =>
+        `Host ${host} has id 0, which counts as not set: the node got the id ${id}`;
 
-    it('warns once per host whose id 0 is replaced', () => {
-        expect(zeroWarnings([{ id: 0 }, { id: 5 }, { id: 0 }])).toEqual([
-            'Host 127.0.0.1 has id 0, which counts as not set: the node got the id 6',
-            'Host 127.0.0.1 has id 0, which counts as not set: the node got the id 7'
-        ]);
+    it.each([
+        ['beside ids that are not 0', [{ host: 'db-zero.example', id: 0 }, { id: 1 }, { id: 2 }],
+            [warning('db-zero.example:3306', 3)]],
+        ['with its own port in the line', [{ id: 5 }, { id: 0, port: 3307 }],
+            [warning('127.0.0.1:3307', 6)]],
+        ['once per host', [{ id: 0 }, { id: 5 }, { id: 0 }],
+            [warning('127.0.0.1:3306', 6), warning('127.0.0.1:3306', 7)]],
+        // no host wrote another id, and the 0 still moves: the first host took 0
+        ['after a host without an id', [{}, { id: 0 }], [warning('127.0.0.1:3306', 1)]],
+        ['after another id 0', [{ id: 0 }, { id: 0 }], [warning('127.0.0.1:3306', 1)]]
+    ])('warns when an id 0 is replaced %s', (_name, hosts, warnings) => {
+        expect(zeroWarnings(hosts)).toEqual(warnings);
     });
 
     it.each([

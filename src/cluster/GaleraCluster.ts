@@ -89,13 +89,14 @@ export class GaleraCluster {
 
         config.current.hosts.forEach(poolSettings => {
             if (!poolSettings.id) {
-                // id 0 counts as not set. The app that wrote 0 is told when the node got another id
+                // id 0 counts as not set. The app that wrote 0 is told when
+                // the node got another id
                 const wroteZero = poolSettings.id === 0;
                 poolSettings.id = poolIds.length <= 0 ? 0 : poolIds[poolIds.length - 1] + 1;
                 poolIds.push(poolSettings.id);
                 if (wroteZero && poolSettings.id !== 0) {
-                    Logger.warn(`Host ${poolSettings.host} has id 0, which counts as not set: `
-                        + `the node got the id ${poolSettings.id}`);
+                    Logger.warn(`Host ${poolSettings.host}:${poolSettings.port} has id 0, which `
+                        + `counts as not set: the node got the id ${poolSettings.id}`);
                 }
             }
             // a host without `host` never gets here: the settings schema rejects it
