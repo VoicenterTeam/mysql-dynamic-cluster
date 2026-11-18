@@ -275,12 +275,15 @@ describe('pool connection metrics', () => {
 });
 
 describe('attributes of the pool connection metrics', () => {
-    const node = { [POOL]: 'node1', 'server.address': 'db1.example', 'server.port': 3301 };
+    const node = {
+        'db.system.name': 'mysql',
+        [POOL]: 'node1', 'server.address': 'db1.example', 'server.port': 3301
+    };
     const attributes = (metric: IMetric) => metric.points
         .map(point => point.attributes)
         .sort((a, b) => String(a[STATE]).localeCompare(String(b[STATE])));
 
-    it('names the pool, its address and the cluster on every point', async () => {
+    it('names the system, the pool, its address and the cluster on every point', async () => {
         const sdk = registeredSdk();
         await makeCluster(makePool(1)).connect();
 
@@ -322,6 +325,7 @@ describe('pool connection metrics of a cluster made by createPoolCluster', () =>
         const point = (await sdk.collect())[LIMIT].points[0];
         expect(point.value).toBe(8);
         expect(point.attributes).toEqual({
+            'db.system.name': 'mysql',
             [POOL]: 'db1.example:3311', 'server.address': 'db1.example', 'server.port': 3311,
             [CLUSTER]: 'orders'
         });

@@ -348,6 +348,7 @@ class Metrics {
     private _observePools(result: BatchObservableResult, instruments: IPoolInstruments) {
         this._pools.forEach(pool => this._safely(() => {
             const attributes: Attributes = {
+                [MetricAttributes.dbSystem]: 'mysql',
                 [MetricAttributes.poolName]: pool.name,
                 [MetricAttributes.serverAddress]: pool.host,
                 [MetricAttributes.serverPort]: pool.port

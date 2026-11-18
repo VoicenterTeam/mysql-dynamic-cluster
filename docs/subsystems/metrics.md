@@ -162,7 +162,7 @@ to look.
 
 | Attribute | Value | On |
 |---|---|---|
-| `db.system.name` | `mysql` | operation, query |
+| `db.system.name` | `mysql` | operation, query, connection |
 | `db.namespace` | Database of the query. On the cluster metric only when the caller passed `database`. | operation, query |
 | `db.operation.name` | First SQL keyword, see below | operation, query |
 | `error.type` | mysql2 error `code` such as `ER_ACCESS_DENIED_ERROR` or `ECONNREFUSED`, or `_OTHER`. Set only on failure. | operation, query |
