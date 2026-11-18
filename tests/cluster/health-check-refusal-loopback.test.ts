@@ -54,20 +54,26 @@ type Mode =
     // when the password changed while the connection was open
     | 'refuses the change of user'
     // takes the login and the change of user, and closes the connection on the query
-    | 'hangs up on the query';
+    | 'hangs up on the query'
+    // answers every login with error 1045 after LATE ms, as a server does that delays the
+    // answer to a wrong password
+    | 'refuses the login late';
+const LATE = 1000;
 
 // A server that behaves as its mode says. The mode can change while it runs. It counts the
-// logins, the changes of user and the queries that reached it
+// logins, the changes of user and the queries that reached it, and the late answers it sent
 interface IServer {
     port: number, become: (next: Mode) => void, hangUp: () => void,
-    logins: () => number, changes: () => number, queries: () => number
+    logins: () => number, changes: () => number, queries: () => number, late: () => number
 }
 const listen = async (mode: Mode): Promise<IServer> => {
     const server: any = (mysql as any).createServer();
     const connections: any[] = [];
-    const seen = { logins: 0, changes: 0, queries: 0 };
+    const seen = { logins: 0, changes: 0, queries: 0, late: 0 };
+    const pending: NodeJS.Timeout[] = [];
     const hangUp = () => connections.splice(0).forEach(connection => connection.stream.destroy());
     closers.push(() => {
+        pending.forEach(clearTimeout);
         hangUp();
         server.close();
     });
@@ -90,8 +96,12 @@ const listen = async (mode: Mode): Promise<IServer> => {
             capabilityFlags: 0x00ffffff,
             authCallback: (_params: object, done: (err: null, mysqlError?: object) => void) => {
                 seen.logins++;
-                if (mode !== 'refuses the login') return done(null);
-                done(null, refuse);
+                if (mode === 'refuses the login') return done(null, refuse);
+                if (mode !== 'refuses the login late') return done(null);
+                pending.push(setTimeout(() => {
+                    seen.late++;
+                    done(null, refuse);
+                }, LATE));
             }
         });
         // the pool changes the user of a connection before a query of its own
@@ -117,7 +127,8 @@ const listen = async (mode: Mode): Promise<IServer> => {
         hangUp,
         logins: () => seen.logins,
         changes: () => seen.changes,
-        queries: () => seen.queries
+        queries: () => seen.queries,
+        late: () => seen.late
     };
 };
 
@@ -147,12 +158,13 @@ beforeEach(() => {
 afterEach(() => started.mockRestore());
 const timerWaits = (): number[] => started.mock.calls.map(([ms]) => ms);
 
-// One node on the port, with one connection at most and with flags, so connect() logs in
-// once. `pool` goes into defaultPoolSettings: the healthCheck block, or the legacy range
-const makeCluster = (port: number, pool: object): any => {
+// One node on the port, with one connection at most unless `limit` says more, and with
+// flags, so connect() logs in once. `pool` goes into defaultPoolSettings: the healthCheck
+// block, or the legacy range
+const makeCluster = (port: number, pool: object, limit: number = 1): any => {
     const cluster: any = createPoolCluster({
         clusterName: 'test',
-        hosts: [{ host: '127.0.0.1', port, id: 1, connectionLimit: 1 }],
+        hosts: [{ host: '127.0.0.1', port, id: 1, connectionLimit: limit }],
         defaultPoolSettings: { user: 'u', password: 'p', database: 'd', flags: [], ...pool },
         useClusterHashing: false,
         logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }
@@ -267,6 +279,34 @@ describe('a node with a healthCheck block whose login the server refuses', () =>
         // the default rise is 2. The first pass already cleared the error
         expect(afterOnePass).toStrictEqual({ isValid: false, checkError: undefined });
         expect(node(cluster)).toStrictEqual({ isValid: true, checkError: undefined });
+    });
+});
+
+describe('a server that holds its refusal back for longer than a check waits', () => {
+    // The probe of the review of this rule. The check gives up after 150 ms, the server
+    // answers after 1000. With a wait of 200 ms two more logins would come in that time
+    const block = { interval: 200, timeout: 150, authRetryInterval: LONG, fall: 3 };
+
+    it('gets no further login while the first late answer is on its way', async () => {
+        const server = await listen('accepts');
+        // five connections: a login that still waits for its answer blocks no other one
+        const cluster = makeCluster(server.port, { healthCheck: block }, 5);
+        await connectOf(cluster);
+        // the timer of the node sees the first refusal, which comes in time
+        server.become('refuses the login');
+        server.hangUp();
+        const refused = () => node(cluster).checkError?.errno === 1045;
+        await until(refused, 'a refused check', () => node(cluster));
+        server.become('refuses the login late');
+        const before = server.logins();
+
+        await check(cluster);
+        const afterTimeout = node(cluster);
+        await until(() => server.late() > 0, 'the late answer of the server', server.late);
+
+        // that check ran into its own timeout, and the slow pace held
+        expect(afterTimeout).toStrictEqual({ isValid: false, checkError: {} });
+        expect([server.logins() - before, timerWaits().slice(-1)]).toEqual([1, [LONG]]);
     });
 });
 

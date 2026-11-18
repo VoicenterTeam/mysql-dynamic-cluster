@@ -211,14 +211,23 @@ const tooMany = packet(1040, 'ER_CON_COUNT_ERROR', '08004');
 // has too many connections open at once, which passes when one of them closes
 const overLimit = packet(1226, 'ER_USER_LIMIT_REACHED', '42000');
 
+// What the connect timeout of mysql2 ends a login with: a code, no errno, fatal. No server
+// sent it, the helper only puts it at the login
+const connectTimeout = () => {
+    return Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT', fatal: true });
+};
+
 // One letter per check. P passes, S passes after SLOW ms, N is answered and the validator
 // says no. The rest fail: R connection refused, L connection lost, H hangs, T too many
-// connections. Three are refused by the server: D the login of a new connection with 1045,
+// connections, U a limit of the account (1226), E the connect timeout of mysql2.
+// Three are refused by the server: D the login of a new connection with 1045,
 // C the change of user on an open one with 1045, Q the status query with 1044.
 // B and X are answered and then throw: the validators accepted B and said no to X
 const STEPS: { [letter: string]: Step } = {
     P: PASS, S: 'slow', N: NO, R: 'refused', D: 'denied', L: 'lost', H: 'hang',
     T: serverError('login', tooMany),
+    U: serverError('login', overLimit),
+    E: serverError('login', connectTimeout),
     C: serverError('changeUser', denied),
     Q: serverError('query', packet(1044, 'ER_DBACCESS_DENIED_ERROR', '42000')),
     B: PASS_THROWS, X: NO_THROWS
@@ -610,6 +619,106 @@ describe('health check with a healthCheck block: a login or account refusal', ()
     });
 });
 
+describe('health check with a healthCheck block: the slow pace after a refusal', () => {
+    // The time from each request for a connection to the next. A check that hangs takes
+    // its timeout, 5000 with an empty block, and the wait after it comes on top.
+    // After a refusal every check that gets no answer is followed by authRetryInterval too
+    it.each<[string, object, string, number[]]>([
+        ['a check that hangs after a refusal waits authRetryInterval again',
+            {}, 'P D H P', [5000, 60000, 65000]],
+        ['three checks that hang in a row after a refusal each do',
+            {}, 'P D H H H P', [5000, 60000, 65000, 65000, 65000]],
+        ['a refusal from the check of connect() on, then two that hang',
+            {}, 'D H H P P', [60000, 65000, 65000, 5000]],
+        ['a refusal between two that hang keeps it going',
+            {}, 'P D H C H P', [5000, 60000, 65000, 60000, 65000]],
+        ['the connect timeout of mysql2 after a refusal waits authRetryInterval again',
+            {}, 'P D E E P P', [5000, 60000, 60000, 60000, 5000]],
+        ['interval 2000, timeout 1000 and authRetryInterval 20000',
+            { interval: 2000, timeout: 1000, authRetryInterval: 20000 },
+            'P D H H P P', [2000, 20000, 21000, 21000, 2000]],
+        ['an authRetryInterval below the interval holds for the checks that hang too',
+            { interval: 10000, timeout: 3000, authRetryInterval: 2000 },
+            'P D H P P', [10000, 2000, 5000, 10000]]
+    ])('%s', async (_name, block, letters, wanted) => {
+        const node = fakeNode(stepsOf(letters));
+        await start({ healthCheck: block });
+
+        await pass(wanted.reduce((sum, wait) => sum + wait, 0));
+
+        expect(waits(node)).toEqual(wanted);
+    });
+
+    // The slow pace holds through the first check that hangs. Then a check gets `answer`,
+    // and the check that hangs after it is followed by the interval again: 5000 of its
+    // timeout and 5000 of the wait
+    it.each<[string, string]>([
+        ['a pass', 'P'],
+        ['a validator that says no', 'N'],
+        ['a refused connection', 'R'],
+        ['a lost connection', 'L'],
+        ['too many connections, errno 1040', 'T'],
+        ['a limit of the account, errno 1226', 'U'],
+        ['a pass that then throws in the package', 'B'],
+        ['a validator no that then throws in the package', 'X']
+    ])('%s ends it: the next check that hangs waits the interval', async (_name, answer) => {
+        const node = fakeNode(stepsOf('P D H ' + answer + ' H P'));
+        await start({ healthCheck: {} });
+
+        await pass(5000 + 60000 + 65000 + 5000 + 10000);
+
+        expect(waits(node)).toEqual([5000, 60000, 65000, 5000, 10000]);
+    });
+
+    it.each<[string, string, number[]]>([
+        ['a check that hangs', 'P H H P', [5000, 10000, 10000]],
+        ['the connect timeout of mysql2', 'P E E P', [5000, 5000, 5000]],
+        ['a check that hangs after a refused connection', 'P R H H P', [5000, 5000, 10000, 10000]]
+    ])('with no refusal before it %s waits the interval', async (_name, letters, wanted) => {
+        const node = fakeNode(stepsOf(letters));
+        await start({ healthCheck: {} });
+
+        await pass(wanted.reduce((sum, wait) => sum + wait, 0));
+
+        expect(waits(node)).toEqual(wanted);
+    });
+
+    it('a connect timeout of the socket, with errno -110, keeps it as well', async () => {
+        const socketTimeout = () => Object.assign(connectTimeout(), { errno: -110 });
+        const node = fakeNode([PASS, 'denied', serverError('login', socketTimeout), PASS]);
+        await start({ healthCheck: {} });
+
+        await pass(125000);
+
+        expect(askedAt(node)).toEqual([0, 5000, 65000, 125000]);
+    });
+
+    it('a check the app failed with failWaiting() after a refusal keeps it too', async () => {
+        const node = fakeNode([PASS, 'denied', 'waits', PASS]);
+        await start({ healthCheck: {} });
+        await pass(65000);
+
+        expect(cluster.failWaiting(0, Object.assign(new Error('leaving'), DENIED))).toBe(1);
+        await pass(60000);
+
+        expect(askedAt(node)).toEqual([0, 5000, 65000, 125000]);
+    });
+
+    it('the state is as after any failed check: the node comes back by rise', async () => {
+        expect(await upAfterEach({}, 'P D H P H P P')).toBe('U d d d d d U');
+    });
+
+    it('a node without the block waits by its range after such checks', async () => {
+        const node = fakeNode([PASS, 'denied', 'hang', 'hang', PASS]);
+        await start({});
+
+        await pass(13000 + 10000 + 22692 + 20917);
+
+        // 10000 * 1.3, then divided by 1.3 each time. A check that hangs takes 15000
+        expect(waits(node)).toEqual([13000, 10000, 22692, 20917]);
+    });
+});
+
 describe('health check with a healthCheck block: a check that throws after its answer', () => {
     // The check is answered, the validators say yes or no, and then the load factors throw.
     // It is a failed check with an empty checkError. A pass it held is dropped, a no holds.
@@ -707,6 +816,16 @@ describe('health check with a healthCheck block: the first pass after connect()'
         expect([valid(), info().checkError]).toEqual([true, undefined]);
         // and the next check comes one interval after the check of the new connect()
         await pass(5000);
+        expect(askedAt(node)).toEqual([0, 5000, 5000, 10000]);
+    });
+
+    it('a new connect() starts with no slow pace from before', async () => {
+        // refused before the disconnect(). The check of the new connect() runs into the
+        // connect timeout of mysql2, which would keep a slow pace going
+        const node = await reconnected('P D', 'E P');
+
+        await pass(5000);
+
         expect(askedAt(node)).toEqual([0, 5000, 5000, 10000]);
     });
 
@@ -1331,11 +1450,12 @@ describe('health check with a healthCheck block: the time a node takes to come b
 
 describe('health check with a healthCheck block: the logins of refused checks in an hour', () => {
     const HOUR = 3600000;
-    // A node that passed the check of connect() and from then on ends every check as `step`
-    // says. The times of its checks in the hour after the first of them, counted from it.
+    // A node that passed the check of connect() and from then on ends its checks as `steps`
+    // say, the last one for good. The times of its checks in the hour after the first of
+    // them, counted from it.
     // Every such check is one login at the server: the pool holds no connection to use again
-    const hourAfterFirst = async (pool: object, step: Step): Promise<number[]> => {
-        const node = fakeNode([PASS, step]);
+    const hourAfterFirst = async (pool: object, ...steps: Step[]): Promise<number[]> => {
+        const node = fakeNode([PASS, ...steps]);
         await start(pool);
         await nextCheck(node);
         const first = Date.now();
@@ -1366,6 +1486,27 @@ describe('health check with a healthCheck block: the logins of refused checks in
         const times = await hourAfterFirst(pool, 'denied');
 
         expect(times).toEqual(wanted);
+    });
+
+    // The server holds every refusal after the first back for longer than a check waits,
+    // as the connection control plugin of MySQL does. Each check hangs for 5000 and is
+    // followed by 60000, so the logins are 65000 apart
+    it('refusals that come too late after the first, an empty block: 55', async () => {
+        const times = await hourAfterFirst({ healthCheck: {} }, 'denied', 'hang');
+
+        expect(times).toEqual([60000, ...every(65000, 54, 60000)]);
+    });
+
+    // The floor of the setting: ten logins a second for as long as the server refuses,
+    // which is 36000 in an hour. Counted over one minute here
+    it('authRetryInterval 100, the lowest the schema takes: 600 in a minute', async () => {
+        const node = fakeNode([PASS, 'denied']);
+        await start({ healthCheck: { authRetryInterval: 100 } });
+        await nextCheck(node);
+
+        await pass(60000);
+
+        expect(waits(node)).toEqual([5000, ...new Array(600).fill(100)]);
     });
 
     // what a refused login cost before the list: a failure like this one, at the interval

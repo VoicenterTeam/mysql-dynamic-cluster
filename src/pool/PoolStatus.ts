@@ -48,7 +48,7 @@ export class PoolStatus {
     private _loadFactor: LoadFactor;
     // Failed checks in a row. One failure (network blip) doesn't take the pool out of rotation
     // With a healthCheck block a refused login is the exception: it takes the pool out at once
-    // and slows the next check down
+    // and slows the next checks down
     private _failedChecks: number = 0;
     // How many of them take the pool out of rotation
     private readonly _fall: number;
@@ -57,6 +57,10 @@ export class PoolStatus {
     // Whether a check passed since the last startTimerCheck(), so since connect(). Read
     // with a healthCheck block only, as the count above
     private _passedSinceStart: boolean = false;
+    // Whether the next check waits authRetryInterval: the server refused a check, and no
+    // check since got an answer that is no refusal. Only a node with a healthCheck block
+    // ever has it set. See _unanswered()
+    private _slowRetry: boolean = false;
     // What the last check failed with, reduced. Not set when the last check got its answer
     private _checkError?: INodeCheckError;
     /**
@@ -136,6 +140,8 @@ export class PoolStatus {
             // So no test can tell this line is here
             this._passedChecks = 0;
             this._passedSinceStart = false;
+            // a refusal from before does not slow the checks of this connect() down
+            this._slowRetry = false;
         }
         this._timer.activate();
         Logger.debug("Check status in pool started");
@@ -206,6 +212,8 @@ export class PoolStatus {
 
             // the query ran: the error of an earlier check is over, whatever the validator says
             this._checkError = undefined;
+            // and so is the slow pace of a refusal: the server took this login
+            this._slowRetry = false;
             outcome.recorded = true;
             queryTimer.end();
             this._queryTime = queryTimer.get();
@@ -257,12 +265,16 @@ export class PoolStatus {
             } else if (this._failedChecks >= this._fall) {
                 this._setValid(false, 'fall');
             }
+            // The slow pace starts with a refusal and holds over the failed checks after
+            // it that got no answer: a server can hold its refusal back for longer than a
+            // check waits. An error with an answer in it ends the slow pace
+            this._slowRetry = refused || (this._slowRetry && this._unanswered());
 
             queryTimer.end();
             this._queryTime = queryTimer.get();
 
             try {
-                this.nextCheckStatus(true, refused)
+                this.nextCheckStatus(true, this._slowRetry)
                 this._emitCheckFailed(err);
             } finally {
                 // the last step here too, after the next check is set and the app was told.
@@ -328,6 +340,21 @@ export class PoolStatus {
      */
     private _refused(): boolean {
         return !!this._healthCheck && PoolStatus._refusals.has(this._checkError.errno);
+    }
+
+    /**
+     * Whether the check that just failed got no answer about the node: it ran into the
+     * timeout of the check or failed with another error the package made, so its checkError
+     * is empty, or it ran into a connect timeout, ETIMEDOUT from mysql2 or the socket.
+     * After a refusal such a check keeps the slow pace. Every other error ends it: mysql2,
+     * the socket or the server said something that is no refusal, as a refused or a lost
+     * connection and too many connections do
+     * @private
+     */
+    private _unanswered(): boolean {
+        const { code, errno, sqlState } = this._checkError;
+        if (code === 'ETIMEDOUT') return true;
+        return code === undefined && errno === undefined && sqlState === undefined;
     }
 
     /**
@@ -401,17 +428,19 @@ export class PoolStatus {
     /**
      * Start timer for next pool check status
      * @param downgrade downgrade time for next check pool status?
-     * @param refused whether the server refused the login of this check. Only a node with
-     * a healthCheck block is ever refused in this sense, see _refused()
+     * @param slow whether the next check waits authRetryInterval: the server refused the
+     * login of this check, or of an earlier one and no check got an answer since. Only a
+     * node with a healthCheck block is ever slow in this sense, see _slowRetry
      * @private
      */
-    private nextCheckStatus(downgrade: boolean = false, refused: boolean = false) {
-        // A healthCheck block: the same wait after every check, but for one the server
-        // refused. Each new login can count against the account there, so that one waits
-        // authRetryInterval, as it is written: it may be shorter than the interval
+    private nextCheckStatus(downgrade: boolean = false, slow: boolean = false) {
+        // A healthCheck block: the same wait after every check, but while the slow pace of
+        // a refusal holds. Each new login can count against the account at the server, so
+        // those checks wait authRetryInterval, as it is written: it may be shorter than
+        // the interval
         if (this._healthCheck) {
             const { interval, authRetryInterval } = this._healthCheck;
-            return this._timer.start(refused ? authRetryInterval : interval);
+            return this._timer.start(slow ? authRetryInterval : interval);
         }
         if (downgrade) {
             this._nextCheckTime /= this.timerCheckMultiplier;
