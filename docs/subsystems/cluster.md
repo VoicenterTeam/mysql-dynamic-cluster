@@ -179,7 +179,7 @@ The first lines of the `try` block.
    here with the pinned pool id. `getConnection()` picks its node through the
    same helper, with the caller's `exclude` and without steps 1 and 4.
 4. If the pinned pool exists in `_pools`, find it and `unshift` it to
-   the front so the pinned pool is tried first.
+   the front so the pinned pool is tried first, also when it is not valid.
 5. Throw `"There is no pool that satisfies the parameters"` if the
    final list is empty. Since 3.2.2 `query()` first serves cached Redis
    data for that SQL, even expired, when `redis` is on for the query and
@@ -239,6 +239,15 @@ For `i` from `0` to `retryCount - 1`, calls
 `this._queryRequest(sql, activePools[i], queryOptions)`. First success
 records the query with source `pool` and returns. Each failure pushes
 `{ error, pool }` into `errorList` and the loop continues until exhausted.
+
+The list of step 4 is made once per call, and each turn of the loop takes
+the next pool of it, so a retry never asks the pool that just failed. For a
+node with a `healthCheck` block, `Pool.query` tells a connection error to
+[passive health](health-and-scoring.md#passive-health) before it rejects. A
+node that could not open a connection is not valid any more when the loop
+goes on, and step 4 of every later call leaves it out. The loop does not
+look at `isValid` again: a pool further down the list that went down in the
+meantime is still tried, as before.
 
 ### 9. Aggregated failure / stale-while-down
 

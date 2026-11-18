@@ -139,7 +139,7 @@ helper.
 
 ## `query()`
 
-[src/pool/Pool.ts:247-317](../../src/pool/Pool.ts#L247).
+[src/pool/Pool.ts:247-324](../../src/pool/Pool.ts#L247).
 
 `async query<T extends QueryResult>(sql: string, queryOptions?:
 IQueryOptions): Promise<T | T[]>`. The body wraps a callback-style
@@ -152,7 +152,7 @@ The provided `queryOptions` (or `{}`) is merged on top of the pool's
 own defaults:
 `{ timeout: _queryTimeout, database: _database, redisFactor:
 _redisFactor, redisExpire: _redisExpire, ...queryOptions }`
-([src/pool/Pool.ts:249-255](../../src/pool/Pool.ts#L249)). Caller
+([src/pool/Pool.ts:252-258](../../src/pool/Pool.ts#L252)). Caller
 overrides win.
 
 ### Metric tagging
@@ -169,7 +169,7 @@ can be broken down by pool, service and error type. See
 ### Execution sequence
 
 The `Promise` callback chain is, in order
-([src/pool/Pool.ts:280-315](../../src/pool/Pool.ts#L280)):
+([src/pool/Pool.ts:287-322](../../src/pool/Pool.ts#L287)):
 
 1. `_pool.getConnection((err, conn) => { ... })` — checks out a raw
    `mysql2.PoolConnection`. On error, records the
@@ -191,14 +191,33 @@ The `Promise` callback chain is, in order
 4. On success: stops the `QueryTimer`, records the attempt as
    `mysql_dynamic_cluster.operation.duration`, logs a slow-query
    warning if `queryTimer.get() >= _slowQueryTime`
-   ([src/pool/Pool.ts:299-301](../../src/pool/Pool.ts#L299)),
+   ([src/pool/Pool.ts:306-308](../../src/pool/Pool.ts#L306)),
    optionally writes the
    result to Redis (see below), and resolves with the mysql2 result.
+
+### Passive health
+
+Every failure of `query()` goes through `fail(error, conn?)`. For a query
+of the app it calls `status.realFailure(error, !conn)` before it rejects:
+without a connection the error came in place of one, with one it came on a
+connection the pool had handed out. `PoolStatus` decides what the error
+says about the node, and does nothing for a node without a `healthCheck`
+block. See
+[health-and-scoring.md](health-and-scoring.md#passive-health).
+
+The status query of a health check runs through `query()` too, and is not
+told: `query()` asks `PoolStatus.isCheckQuery(queryOptions)` first, on the
+object it was called with, before it copies the options.
+
+`multiStatementQuery()` tells every failure the same way, and a `ROLLBACK`
+that failed as an error on a connection. `getConnection()` tells an error
+of mysql2 as one that came in place of a connection, also when the signal
+ended the call before the error came. The abort itself is not told.
 
 ### Redis cache write
 
 If `queryOptions.redis` is truthy
-([src/pool/Pool.ts:303-310](../../src/pool/Pool.ts#L303)), the
+([src/pool/Pool.ts:310-317](../../src/pool/Pool.ts#L310)), the
 successful result is serialised into an `IRedisData`:
 
 - `data`: the raw query result.
@@ -221,7 +240,7 @@ and [#1a](../known-issues.md#1a-connections-released-back-to-the-pool-after-a-ti
 
 ## `multiStatementQuery()`
 
-[src/pool/Pool.ts:324-403](../../src/pool/Pool.ts#L324).
+[src/pool/Pool.ts:331-414](../../src/pool/Pool.ts#L331).
 
 `async multiStatementQuery<T extends QueryResult>(sqls: string[],
 queryOptions: IQueryOptions): Promise<T[]>`. Wraps a series of SQL
@@ -234,11 +253,11 @@ ship the SQL-asset bootstrap statements as one atomic unit (see
 Same merge pattern as `query()`, but the Redis-related defaults are
 omitted — this method does not cache:
 `{ timeout: _queryTimeout, database: _database, ...queryOptions }`
-([src/pool/Pool.ts:326-330](../../src/pool/Pool.ts#L326)).
+([src/pool/Pool.ts:333-337](../../src/pool/Pool.ts#L333)).
 
 ### Execution sequence
 
-[src/pool/Pool.ts:361-401](../../src/pool/Pool.ts#L361):
+[src/pool/Pool.ts:372-412](../../src/pool/Pool.ts#L372):
 
 1. `_pool.getConnection(...)` — same guards as `query()`. Reject on
    error or missing `conn`.
@@ -274,7 +293,8 @@ not move. `GaleraCluster` calls them for the node API of
   pool and resolves with it as it is. It does not change the database, sets
   no timeout and records no metric. It rejects with the error object of
   mysql2, or with `POOL_NOT_CONNECTED` before `connect()` created the mysql2
-  pool. Without a signal it does what it did before. With one, see
+  pool. An error of mysql2 is told to [passive health](#passive-health)
+  first. Without a signal it does what it did before. With one, see
   [A signal on getConnection](#a-signal-on-getconnection).
 - `failWaiting(error)` empties `_connectionQueue` of the mysql2 pool, then
   calls every callback it took out with `error`, and returns how many. The
@@ -390,7 +410,7 @@ the waiting requests reject with it as before.
 | `connect(outcome?)` | `async (outcome?: ICheckOutcome) => Promise<void>` | [:97](../../src/pool/Pool.ts#L97) |
 | `disconnect()` | `() => void` | [:223](../../src/pool/Pool.ts#L223) |
 | `query<T>(sql, options?)` | `async => Promise<T \| T[]>` | [:247](../../src/pool/Pool.ts#L247) |
-| `multiStatementQuery<T>(sqls, options)` | `async => Promise<T[]>` | [:324](../../src/pool/Pool.ts#L324) |
+| `multiStatementQuery<T>(sqls, options)` | `async => Promise<T[]>` | [:331](../../src/pool/Pool.ts#L331) |
 | `getConnection(signal?, outcome?)` | `(signal?: AbortSignal, outcome?: IAbortOutcome) => Promise<PoolConnection>` | [`getConnection`](../../src/pool/Pool.ts) |
 | `Pool.abortReason(signal)` | `static (signal: AbortSignal) => unknown` | [`abortReason`](../../src/pool/Pool.ts) |
 | `failWaiting(error)` | `(error: Error) => number` | [`failWaiting`](../../src/pool/Pool.ts) |

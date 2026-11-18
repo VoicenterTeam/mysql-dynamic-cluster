@@ -42,6 +42,10 @@ Keys of the `healthCheck` block. `fall` is how many checks have to fail in a row
 
 A check of a node with a `healthCheck` block that the server answered by refusing the login or the account: a wrong password, a locked account, a blocked host. It is told by the `errno` of the error, from a fixed list. Such a check takes the node down at once, whatever `fall` is, and the next check waits `authRetryInterval`, a key of the block, in place of `interval`. That slow pace holds until a check is answered and is no refusal. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#a-login-or-account-refusal).
 
+### Passive health
+
+What a node with a `healthCheck` block learns from the queries of the app between two checks, unless `passive` is `false`. A query, a transaction or a `getConnection()` that cannot open a connection takes the node down at once. One that loses its connection starts a check at once, and that check takes the node down when it fails. An answer of the server never counts, a deadlock and a refused login included. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#passive-health).
+
 ### Load factor
 
 A `{ key, multiplier }` pair telling the cluster how to weight one status variable when ranking healthy pools. Each load factor reads its `key` from the latest `SHOW GLOBAL STATUS` result and contributes `value * multiplier` to the pool's load score; see [src/pool/LoadFactor.ts:25](../src/pool/LoadFactor.ts#L25). Defaults at [src/configs/schema.ts](../src/configs/schema.ts) weight `Connections` by 2 and `wsrep_local_recv_queue_avg` by 10.

@@ -263,6 +263,16 @@ An error that cannot take a new property, such as a frozen `Error` passed to
 A node that fails here stays valid until its health check says otherwise. The next call
 without `exclude` may pick it again.
 
+A node with a `healthCheck` block is the exception, unless its `passive` is `false`. When
+the node gave no connection because none could be opened, with `fatal: true` and the `code`
+`ECONNREFUSED`, `ETIMEDOUT`, `EHOSTUNREACH`, `ENETUNREACH` or `ENOTFOUND`, the node is not
+valid any more by the time the call rejects, and the next call picks another node. The
+rejection itself is the same. A refused login does not do this, nor does an error passed to
+`failWaiting()`, nor the abort of a signal. A connection that cannot be opened after the
+signal ended the call still takes the node down. The package does not see what happens on a
+connection after it handed it to you. See
+[passive health](subsystems/health-and-scoring.md#passive-health).
+
 ### You own the connection
 
 The cluster does nothing to the connection before it hands it over, and nothing after.

@@ -125,6 +125,7 @@ What to know:
   A node with a `healthCheck` block is checked every `healthCheck.interval` ms, failing or not,
   and `healthCheck.authRetryInterval` ms after a check the server refused the login of, and
   after the checks that follow it without an answer.
+  Passive health can start one more check in between, see below.
 - It fires for the first check inside `connect()` too, so subscribe before calling `connect()`.
 - It fires when the check ends with an error: the status query was rejected, or the check
   timed out. A check that runs into its own timer gives an `Error` with the message
@@ -139,6 +140,11 @@ What to know:
   With a `healthCheck` block the count is `fall`, and the event fires for every one of them.
   A refused login takes such a node out with one check, and the event fires for it as for
   any failed check.
+- It never fires for a query of the app. Passive health of a node with a `healthCheck` block
+  takes a node down, or starts a check, when a query of the app cannot open a connection or
+  loses one. Neither emits an event. The check it starts emits this event when it fails,
+  like any check, with the error of that check and not the one of the query. See
+  [health-and-scoring.md](./subsystems/health-and-scoring.md#passive-health).
 - A listener that throws does not stop the health checks. The next check is set before the
   listeners run, and the thrown error is logged. Other listeners of the same event that were
   added after the one that threw do not run for that check. The other events have no such
