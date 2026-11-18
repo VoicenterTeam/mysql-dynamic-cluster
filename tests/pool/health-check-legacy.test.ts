@@ -347,6 +347,15 @@ describe('legacy health check: when a node goes down and comes back', () => {
             expect(info().checkError).toEqual({});
             expect(valid()).toBe(true);
         });
+
+        // It is a failed check all the same. Right after another failed check the count
+        // is not 0, so it is the second failure in a row
+        it('after one failed check is the second failure and takes the node out', async () => {
+            await afterChecks([PASS, 'refused', THROWS]);
+
+            expect(info().checkError).toEqual({});
+            expect(valid()).toBe(false);
+        });
     });
 
     it('a failed check keeps the load score, an answered one sets it, valid or not', async () => {
