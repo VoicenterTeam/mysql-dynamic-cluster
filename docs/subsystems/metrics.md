@@ -106,16 +106,19 @@ answer. It is the value the status keeps as `queryTime`.
 |---|---|
 | `valid` | The status query ran and the validators passed. |
 | `invalid` | The status query ran and a validator said no. A status key the validator did not find counts as no. |
-| `error` | The check did not get its answer. |
+| `error` | The check failed. It got no answer, or the package failed after the answer came. |
 
-A record with `error` also has `error.type`, and `db.response.status_code`
-when the error had an `errno`. They follow the rule of `checkError`, see
+A record with `error` also has `error.type`. It has
+`db.response.status_code` when the error came from mysql2, the socket or the
+server and had a whole number as its `errno`. That is the `errno` as text,
+and a socket `errno` such as `-111` is included. Both follow the rule of
+`checkError`, see
 [health-and-scoring.md](./health-and-scoring.md#the-error-of-the-last-check).
 `error.type` is the `code` of the error when mysql2, the socket or the server
 made it, such as `ECONNREFUSED` or `ER_ACCESS_DENIED_ERROR`. It is `_OTHER`
 for every failure the package made itself: the timeout of the check, a pool
 with no mysql2 pool yet, the error an app passed to `failWaiting()`, and
-anything thrown after the answer came.
+anything thrown after the answer came. Those have no status code either.
 
 The result is about one check and not about the node. A node stays valid
 after one failed check, and the second failed check in a row takes it out.
@@ -139,6 +142,15 @@ before this metric existed. There it has `db.operation.name` = `SHOW`.
 - The two durations of one check differ. The operation times the query
   attempt. The health check times the whole check, and its record carries
   the result of the validators.
+- The two can name one failed check differently. The operation record takes
+  `error.type` and the status code from the error as it is. So an error the
+  package made, or one the app passed to `failWaiting()`, shows its own code
+  there, such as `POOL_NOT_CONNECTED`, and its `errno` when it has one. The
+  health-check record has `_OTHER` and no status code for the same check.
+- A check that hits its timeout is recorded as a health check at that
+  moment. Its operation record is made when the query attempt itself ends.
+  That is later, and never for an attempt that keeps waiting for a
+  connection.
 
 A check that cannot be recorded still ends as it would have. The first
 failure is logged at `warn`, as for the other records.
@@ -226,7 +238,9 @@ whose status cannot be read still reports its connection metrics, and a
 provider that cannot make one kind of instrument still gets the other and
 the histograms.
 
-#### When they appear
+### When they appear
+
+This holds for the pool connection metrics and for the node gauges.
 
 The instruments belong to the provider that was the global one when they
 were created. The library creates them when a cluster connects and, like
@@ -252,7 +266,7 @@ to look.
 | `db.namespace` | Database of the query. On the cluster metric only when the caller passed `database`. | operation, query |
 | `db.operation.name` | First SQL keyword, see below | operation, query |
 | `error.type` | mysql2 error `code` such as `ER_ACCESS_DENIED_ERROR` or `ECONNREFUSED`, or `_OTHER`. Set only on failure. | operation, query, health check |
-| `db.response.status_code` | mysql `errno` as a string, when the error has one | operation, query, health check |
+| `db.response.status_code` | `errno` of the error as a string, when it has one. On the health check only for an error of mysql2, the socket or the server. | operation, query, health check |
 | `server.address`, `server.port` | Host and port of the pool | operation, connection, health check, node |
 | `db.client.connection.pool.name` | Pool `name` setting, `host:port` by default | operation, connection, health check, node |
 | `db.client.connection.state` | `idle` or `used` | connection count |

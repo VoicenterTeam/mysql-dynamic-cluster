@@ -33,7 +33,8 @@ export interface IQueryMetricOptions {
 }
 
 // How one health check of a node ended. valid and invalid: the status query ran, and the
-// validator passed or said no. error: the check did not get its answer
+// validator passed or said no. error: the check failed. It got no answer, or the package
+// failed after the answer came
 export type HealthCheckResult = 'valid' | 'invalid' | 'error';
 
 // One finished health check of a node

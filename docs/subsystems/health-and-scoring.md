@@ -85,7 +85,7 @@ If any step throws, the `catch` branch
 ([PoolStatus.ts](../../src/pool/PoolStatus.ts)) logs, still records
 `_queryTime` (so a hanging node's slow poll is visible), and calls
 `nextCheckStatus(true)` to schedule a *faster* re-check.
-Last, it emits `pool_check_failed` with the error and the pool id, so the app can read the
+Then it emits `pool_check_failed` with the error and the pool id, so the app can read the
 error's `code` and `errno`; see [events.md](../events.md#a-failed-health-check).
 
 Since 3.2.2 the `catch` also counts failures in a row (`_failedChecks`).
@@ -98,10 +98,12 @@ stayed in rotation.
 
 Every check that ends is recorded as the metric
 `mysql_dynamic_cluster.health_check.duration`, with the result `valid`,
-`invalid` or `error`. The success branch records it as its last step, after
-`nextCheckStatus()`, and the `catch` branch right after it stored
-`_queryTime`. A check that was dropped and a check that did not run record
-nothing. `isValid` and `loadScore` are also published, as the gauges
+`invalid` or `error`. Both branches record it as their last step. The
+success branch does so after `nextCheckStatus()`. The `catch` branch does so
+after the next check is set and `pool_check_failed` is emitted, in a
+`finally`, so a step that throws there still leaves the check counted once.
+Nothing a record does comes before what the check itself does. A check that
+was dropped and a check that did not run record nothing. `isValid` and `loadScore` are also published, as the gauges
 `mysql_dynamic_cluster.node.valid` and
 `mysql_dynamic_cluster.node.load_score`. See
 [metrics.md](./metrics.md#health-check-metric).
