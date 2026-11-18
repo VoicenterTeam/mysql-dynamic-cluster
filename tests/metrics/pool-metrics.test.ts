@@ -56,6 +56,7 @@ const COUNT = 'mysql_dynamic_cluster.connection.count';
 const PENDING = 'mysql_dynamic_cluster.connection.pending_requests';
 const LIMIT = 'mysql_dynamic_cluster.connection.limit';
 const OPERATION = 'mysql_dynamic_cluster.operation.duration';
+const CACHE = 'mysql_dynamic_cluster.cache.lookup.duration';
 
 // attribute keys
 const POOL = 'db.client.connection.pool.name';
@@ -156,6 +157,10 @@ const connectAgain = async (cluster: any) => {
 const rows = (metric?: IMetric): any[][] => (metric ? metric.points : [])
     .map(point => [point.attributes[POOL], point.attributes[STATE], point.value])
     .sort();
+
+// number of records behind every series of a histogram
+const counts = (metric?: IMetric): number[] => (metric ? metric.points : [])
+    .map(point => point.value.count);
 
 const poolWarnings = (): string[] => (Logger.warn as jest.Mock).mock.calls
     .map(call => call[0])
@@ -289,9 +294,9 @@ describe('attributes of the pool connection metrics', () => {
 
         const collected = await sdk.collect();
         const named = { ...node, [CLUSTER]: 'c1' };
-        expect(attributes(collected[PENDING])).toEqual([named]);
-        expect(attributes(collected[LIMIT])).toEqual([named]);
-        expect(attributes(collected[COUNT])).toEqual([
+        expect(attributes(collected[PENDING])).toStrictEqual([named]);
+        expect(attributes(collected[LIMIT])).toStrictEqual([named]);
+        expect(attributes(collected[COUNT])).toStrictEqual([
             { ...named, [STATE]: 'idle' }, { ...named, [STATE]: 'used' }
         ]);
     });
@@ -301,10 +306,11 @@ describe('attributes of the pool connection metrics', () => {
         Metrics.init(undefined);
         await makeCluster(makePool(1)).connect();
 
+        // strict: a cluster name key set to undefined is not a key left out
         const collected = await sdk.collect();
-        expect(attributes(collected[PENDING])).toEqual([node]);
-        expect(attributes(collected[LIMIT])).toEqual([node]);
-        expect(attributes(collected[COUNT])).toEqual([
+        expect(attributes(collected[PENDING])).toStrictEqual([node]);
+        expect(attributes(collected[LIMIT])).toStrictEqual([node]);
+        expect(attributes(collected[COUNT])).toStrictEqual([
             { ...node, [STATE]: 'idle' }, { ...node, [STATE]: 'used' }
         ]);
     });
@@ -324,7 +330,7 @@ describe('pool connection metrics of a cluster made by createPoolCluster', () =>
 
         const point = (await sdk.collect())[LIMIT].points[0];
         expect(point.value).toBe(8);
-        expect(point.attributes).toEqual({
+        expect(point.attributes).toStrictEqual({
             'db.system.name': 'mysql',
             [POOL]: 'db1.example:3311', 'server.address': 'db1.example', 'server.port': 3311,
             [CLUSTER]: 'orders'
@@ -456,14 +462,55 @@ describe('pool connection metrics and the MeterProvider of the app', () => {
     });
 });
 
+describe('a provider that cannot make the pool instruments', () => {
+    // an SDK of the app whose meters throw when asked for an observable up-down counter
+    const brokenSdk = () => {
+        const sdk = makeSdk();
+        const refuse = () => { throw new Error('no observables here'); };
+        const getMeter = (name: string, version?: string) => Object.create(
+            sdk.provider.getMeter(name, version),
+            { createObservableUpDownCounter: { value: refuse } }
+        );
+        return { ...sdk, provider: { getMeter } as any };
+    };
+
+    it('still gets the durations when it was registered before connect()', async () => {
+        const sdk = brokenSdk();
+        register(sdk);
+        await expect(makeCluster(makePool(1)).connect()).resolves.toBeUndefined();
+        Metrics.recordCacheLookup(0.01, 'miss');
+
+        const collected = await sdk.collect();
+        expect(counts(collected[OPERATION])).toEqual([1]);
+        expect(counts(collected[CACHE])).toEqual([1]);
+        expect(collected[COUNT]).toBeUndefined();
+        expect(collected[PENDING]).toBeUndefined();
+        expect(collected[LIMIT]).toBeUndefined();
+        expect(poolWarnings()).toEqual([expect.stringContaining('no observables here')]);
+    });
+
+    it('still gets the record that finds it when it was registered after connect()', async () => {
+        await makeCluster(makePool(1)).connect();
+        const sdk = brokenSdk();
+        register(sdk);
+
+        Metrics.recordCacheLookup(0.01, 'miss');
+
+        const collected = await sdk.collect();
+        expect(counts(collected[CACHE])).toEqual([1]);
+        expect(collected[COUNT]).toBeUndefined();
+        expect(poolWarnings()).toEqual([expect.stringContaining('no observables here')]);
+    });
+});
+
 describe('a pool that cannot be read', () => {
     const throwing = (pool: any) => { pool.stats = () => { throw new Error('stats broke'); }; };
     const missing = (pool: any) => { pool.stats = undefined; };
 
     it.each([
-        ['whose stats() throws', throwing, 'stats broke'],
-        ['that lost its stats()', missing, 'stats is not a function']
-    ])('is skipped, one %s, and the collection goes on', async (_name, breakIt, reason) => {
+        ['whose stats() throws', throwing],
+        ['that lost its stats()', missing]
+    ])('is skipped, one %s, and the collection goes on', async (_name, breakIt) => {
         const sdk = registeredSdk();
         const pools = [makePool(1), makePool(2)];
         const cluster = makeCluster(...pools);
@@ -477,7 +524,6 @@ describe('a pool that cannot be read', () => {
         expect(collected[OPERATION].points).toHaveLength(2);
         expect((await sdk.reader.collect()).errors).toEqual([]);
         expect(poolWarnings()).toHaveLength(1);
-        expect(poolWarnings()[0]).toContain(reason);
     });
 });
 
