@@ -22,8 +22,9 @@ type Cb = (err: any, res?: any) => void;
 type Rows = { Variable_name: string, Value: string }[];
 // How one request for a connection ends. Rows answer the status query, 'slow' answers it
 // with a pass after SLOW ms. 'refused' and 'denied' fail the request at once, 'lost' breaks
-// the connection under the query, and 'hang' hands out a connection that never answers
-type Step = Rows | 'slow' | 'refused' | 'denied' | 'lost' | 'hang';
+// the connection under the query, and 'hang' hands out a connection that never answers.
+// 'held' hands out one that answers when the test says so, through node.held
+type Step = Rows | 'slow' | 'refused' | 'denied' | 'lost' | 'hang' | 'held';
 const SLOW = 1200;
 
 // SHOW GLOBAL STATUS of a node that every default validator accepts. With the default load
@@ -67,6 +68,8 @@ const makeNode = (steps: Step[]) => {
         timeouts: [] as number[],
         // how the next requests end, in order. The last one stays for every request after it
         plan: steps,
+        // the status queries that wait for the test to answer them
+        held: [] as Cb[],
         mysqlPool: {
             on: jest.fn(), end: jest.fn(),
             _allConnections: [], _freeConnections: [], _connectionQueue: [],
@@ -80,6 +83,7 @@ const makeNode = (steps: Step[]) => {
                         node.timeouts.push(options.timeout);
                         if (step === 'lost') return done(errors.lost());
                         if (step === 'slow') return setTimeout(() => done(null, PASS), SLOW);
+                        if (step === 'held') return node.held.push(done);
                         if (step !== 'hang') done(null, step);
                     },
                     release: jest.fn(), destroy: jest.fn()
@@ -400,6 +404,23 @@ describe('health check with a healthCheck block: the first pass after connect()'
         await nextCheck(node);
 
         expect(valid()).toBe(false);
+    });
+
+    it('a pass still out at the disconnect() does not count after the new connect()', async () => {
+        const node = fakeNode([PASS, 'refused', 'refused', 'held', 'refused', PASS]);
+        await start({ healthCheck: block });
+        for (let i = 0; i < 3; i++) await nextCheck(node);
+        await cluster.disconnect();
+        // the check of the new connect() is refused, then the old check gets its pass
+        await connect();
+        node.held[0](null, PASS);
+        await pass(0);
+        expect(valid()).toBe(false);
+
+        // the first pass of the new connect(), not the second of three
+        await nextCheck(node);
+
+        expect(valid()).toBe(true);
     });
 
     it('needs rise passes again once it passed after the new connect()', async () => {
