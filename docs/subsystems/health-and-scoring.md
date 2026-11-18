@@ -262,9 +262,10 @@ before each next check, for as long as its checks get no answer.
 | Another refusal | an errno of the list | `authRetryInterval`, the slow pace goes on |
 | The timeout of the check | `{}` | `authRetryInterval`, the slow pace goes on |
 | Another failure the package made, such as an error the app passed to `failWaiting()` | `{}` | `authRetryInterval`, the slow pace goes on |
+| An error of mysql2 that has no code: `Pool is closed.`, `Queue limit reached.`, `Can't add new command when connection is in closed state` | `{}` | `authRetryInterval`, the slow pace goes on |
 | A connect timeout, from mysql2 or from the socket | `code: 'ETIMEDOUT'`, with or without an `errno` | `authRetryInterval`, the slow pace goes on |
 | A pass, or a validator that said no, also when the check then throws in the package | none, or `{}` when it threw | `interval`, the slow pace is over |
-| Any other error of mysql2, the socket or the server: a refused or a lost connection, 1040, 1226, an errno mysql2 has no name for | a `code`, an `errno` or both | `interval`, the slow pace is over |
+| Any other error of mysql2, the socket or the server: a refused or a lost connection, 1040, 1226, an errno mysql2 has no name for, the query timeout of mysql2 `PROTOCOL_SEQUENCE_TIMEOUT` | a `code`, an `errno` or both | `interval`, the slow pace is over |
 
 - **A timeout is not an answer.** `ETIMEDOUT` is the one code that keeps the
   slow pace. mysql2 ends a login with it after 10 seconds, so with a
@@ -276,6 +277,15 @@ before each next check, for as long as its checks get no answer.
   has another problem now, and such a node is worth asking every `interval`.
 - **A timeout with no refusal before it is followed by `interval`**, as
   before. Only a refusal starts the slow pace.
+- **The refusal has to be one this process saw.** The slow pace is kept in
+  memory, per node, from `connect()` on. An app that starts, or calls
+  `connect()`, while the server already holds its refusals back for longer
+  than `timeout` sees timeouts only. It checks at `interval` until one
+  refusal comes through.
+- **An empty `checkError` keeps the slow pace, whoever made the error.**
+  The rule reads the reduced error, so the three errors of mysql2 in the
+  table that have no code count as no answer, like the timeout of the
+  check.
 - **The state of the node is not touched by this.** A check that timed out
   counts toward `fall` and ends a run of passes like any failed check. Only
   the wait after it differs.
