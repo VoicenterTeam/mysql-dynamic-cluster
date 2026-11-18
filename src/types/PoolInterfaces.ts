@@ -62,6 +62,13 @@ export interface ICheckOutcome {
     checkError?: INodeCheckError
 }
 
+// How a Pool.getConnection() call with a signal ended. The caller hands in an empty object and
+// the pool fills it, so the caller can tell the reason of an abort from an error of the node
+export interface IAbortOutcome {
+    // true when the call was rejected because its signal aborted. Not set in any other case
+    aborted?: boolean
+}
+
 export interface IServiceNodeMap {
     ServiceID: number,
     NodeID: number

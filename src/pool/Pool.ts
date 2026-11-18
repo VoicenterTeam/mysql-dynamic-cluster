@@ -6,7 +6,7 @@ import mysql, { PoolConnection } from "mysql2";
 import Logger from "../utils/Logger";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
-import { ICheckOutcome, IQueryOptions, QueryResult } from "../types/PoolInterfaces";
+import { IAbortOutcome, ICheckOutcome, IQueryOptions, QueryResult } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
 import { IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
@@ -471,15 +471,93 @@ export class Pool {
     /**
      * Take one connection out of the pool and hand it to the caller as it is: no database
      * change, no timeout, no metric. One request to mysql2, which waits when the pool is at
-     * its limit. Rejects with the error object of mysql2
+     * its limit. Rejects with the error object of mysql2.
+     * With a signal the wait ends when the signal aborts: the call rejects with the reason of
+     * the signal, its request leaves the queue of mysql2, and a connection that still arrives
+     * for it is released. No listener stays on the signal once the call settled
+     * @param signal ends the wait when it aborts
+     * @param outcome filled with `aborted: true` when the call was rejected by the abort
      */
-    public getConnection(): Promise<PoolConnection> {
+    public getConnection(
+        signal?: AbortSignal, outcome: IAbortOutcome = {}
+    ): Promise<PoolConnection> {
         return new Promise((resolve, reject) => {
+            if (signal?.aborted) {
+                outcome.aborted = true;
+                return reject(Pool.abortReason(signal));
+            }
             if (!this._pool) return reject(this._notConnected());
-            this._pool.getConnection((error, connection) => {
+            // the pool this request goes to. A later connect() puts another one in its place
+            const mysqlPool = this._pool;
+
+            // whichever comes first settles the call: the answer of mysql2, or the abort
+            let answered = false;
+            let aborted = false;
+            const stopListening = () => signal?.removeEventListener('abort', onAbort);
+            const callback = (error: Error, connection: PoolConnection) => {
+                // the caller is gone: a connection that still arrives goes back to the pool
+                if (aborted) return connection?.release();
+                answered = true;
+                stopListening();
                 return error ? reject(error) : resolve(connection);
-            });
+            };
+            // The signal of the app calls this inside its abort(). Nothing may be thrown there
+            const onAbort = () => {
+                if (answered) return;
+                aborted = true;
+                outcome.aborted = true;
+                try {
+                    stopListening();
+                    Pool._leaveQueue(mysqlPool, callback);
+                } catch (thrown) {
+                    Logger.warn("Pool " + this.name + ": could not take an aborted request out " +
+                        "of the queue, its connection is released when it arrives",
+                        { nodeId: this.id, pool: this.name, error: thrown?.message || thrown });
+                }
+                reject(Pool.abortReason(signal));
+            };
+
+            // before the request: mysql2 can answer at once, and the answer takes it off again
+            signal?.addEventListener('abort', onAbort);
+            try {
+                mysqlPool.getConnection(callback);
+            } catch (thrown) {
+                // a listener of an event of mysql2 threw. The call fails, as it did before
+                answered = true;
+                stopListening();
+                reject(thrown);
+            }
         });
+    }
+
+    /**
+     * What a call is rejected with when its signal aborted: the reason of the signal as it is.
+     * A signal without one, as on a Node that has no signal.reason yet, gives an Error
+     * named AbortError
+     * @param signal the signal that aborted
+     */
+    public static abortReason(signal: AbortSignal): unknown {
+        if (signal.reason !== undefined) return signal.reason;
+        return Object.assign(new Error("The operation was aborted"), { name: 'AbortError' });
+    }
+
+    /**
+     * Take the callback of one waiting request out of the queue of mysql2. The requests around
+     * it keep their place. It does nothing when the callback is not there: the connection of
+     * the request still logs in, or mysql2 queued a wrapper of the callback, as it does while
+     * its pool is traced. It also does nothing when the queue is not the one mysql2 3 keeps
+     * @param mysqlPool the mysql2 pool the request was sent to
+     * @param callback the callback handed to mysql2
+     * @private
+     */
+    private static _leaveQueue(mysqlPool: mysql.Pool, callback: unknown): void {
+        const queue = (mysqlPool as any)._connectionQueue;
+        if (typeof queue?.get !== 'function' || typeof queue.removeOne !== 'function') return;
+        for (let index = 0; index < queue.length; index++) {
+            if (queue.get(index) !== callback) continue;
+            queue.removeOne(index);
+            return;
+        }
     }
 
     /**
