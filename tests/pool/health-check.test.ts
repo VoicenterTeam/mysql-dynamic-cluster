@@ -182,7 +182,7 @@ const upAfterEach = async (block: any, letters: string): Promise<string> => {
 
 beforeEach(() => {
     jest.useFakeTimers();
-    logger.warn.mockClear();
+    Object.values(logger).forEach(log => log.mockClear());
     nodes = {};
     (mysql.createPool as jest.Mock)
         .mockImplementation((options: any) => nodes[options.host].mysqlPool);
@@ -435,6 +435,68 @@ describe('health check with a healthCheck block: the first pass after connect()'
     });
 });
 
+describe('health check with a healthCheck block: the log of a change of state', () => {
+    // every line a node logs about its state, in order: the level and the fields of the
+    // record, never its wording
+    const changes = (): any[] => {
+        const lines: { at: number, line: any[] }[] = [];
+        (['info', 'warn'] as const).forEach(level => {
+            logger[level].mock.calls.forEach(([, meta], index) => {
+                const at = logger[level].mock.invocationCallOrder[index];
+                if (meta && meta.reason) lines.push({ at, line: [level, meta] });
+            });
+        });
+        return lines.sort((a, b) => a.at - b.at).map(({ line }) => line);
+    };
+    const pool = 'node-a:3306';
+    const up1 = ['info', { pool, valid: true, reason: 'first_pass' }];
+    const upRise = ['info', { pool, valid: true, reason: 'rise' }];
+    const downFall = ['warn', { pool, valid: false, reason: 'fall' }];
+    const downNo = ['warn', { pool, valid: false, reason: 'validator' }];
+
+    it.each<[string, object, string, any[]]>([
+        ['down by failed checks and back: one line per change, none for the checks between',
+            {}, 'P R R R P P P', [up1, downFall, upRise]],
+        ['down by a validator and back', {}, 'P N N P P', [up1, downNo, upRise]],
+        ['fall 1 and rise 1',
+            { fall: 1, rise: 1 }, 'P R P R P', [up1, downFall, upRise, downFall, upRise]],
+        ['a node that starts down logs its first pass and no fall', {}, 'R R R P', [up1]],
+        ['a node that stays up logs nothing more', {}, 'P R P R P', [up1]],
+        ['a no that then throws is one line, the one of the validator',
+            { fall: 1 }, 'P X', [up1, downNo]]
+    ])('%s', async (_name, block, letters, wanted) => {
+        await upAfterEach(block, letters);
+
+        expect(changes()).toEqual(wanted);
+    });
+
+    it('a node without the block logs no such line, whatever its state does', async () => {
+        const steps = stepsOf('P R R P N P');
+        const node = fakeNode([...steps]);
+        await start({});
+        for (let i = 1; i < steps.length; i++) await nextCheck(node);
+
+        expect(node.asked).toHaveLength(steps.length);
+        expect(changes()).toEqual([]);
+    });
+
+    it('the debug line of a check says what the check found, not the node state', async () => {
+        const steps = stepsOf('P R R P N');
+        const node = fakeNode([...steps]);
+        const settings = { ...settingsOf({ healthCheck: {} }), logs: { level: 'debug' } };
+        cluster = createPoolCluster(settings);
+        await connect();
+        for (let i = 1; i < steps.length; i++) await nextCheck(node);
+
+        // one line per answered check. The second pass is the one of a node that is down
+        const found = logger.debug.mock.calls.map(([, meta]) => meta)
+            .filter(meta => meta && 'passed' in meta);
+        expect(found).toEqual([
+            { pool, passed: true }, { pool, passed: true }, { pool, passed: false }
+        ]);
+    });
+});
+
 describe('health check with a healthCheck block: the two legacy keys', () => {
     // the one warn of a node: its fields, never its wording
     const ignoredWarnings = () => logger.warn.mock.calls
@@ -672,6 +734,8 @@ describe('health check with a healthCheck block: settings the schema refuses', (
             ['a block that is true', true, ''],
             ['a block that is an array', [], ''],
             ['interval 0', { interval: 0 }, '.interval'],
+            ['an interval below one ms', { interval: 0.5 }, '.interval'],
+            ['an interval of 99 ms', { interval: 99 }, '.interval'],
             ['a negative interval', { interval: -1 }, '.interval'],
             ['an interval that is a string', { interval: '5000' }, '.interval'],
             ['an interval that is NaN', { interval: NaN }, '.interval'],
@@ -679,6 +743,7 @@ describe('health check with a healthCheck block: settings the schema refuses', (
             ['an interval that is null', { interval: null }, '.interval'],
             ['an interval above the longest timer of Node', { interval: 2147483648 }, '.interval'],
             ['timeout 0', { timeout: 0 }, '.timeout'],
+            ['a timeout below one ms', { timeout: 0.5 }, '.timeout'],
             ['a timeout that is a string', { timeout: '1s' }, '.timeout'],
             ['a timeout above the longest timer of Node', { timeout: 2147483648 }, '.timeout'],
             ['fall 0', { fall: 0 }, '.fall'],
@@ -689,6 +754,7 @@ describe('health check with a healthCheck block: settings the schema refuses', (
             ['a rise that is no integer', { rise: 2.5 }, '.rise'],
             ['a rise that is Infinity', { rise: Infinity }, '.rise'],
             ['authRetryInterval 0', { authRetryInterval: 0 }, '.authRetryInterval'],
+            ['an authRetryInterval of 99 ms', { authRetryInterval: 99 }, '.authRetryInterval'],
             ['a passive that is a string', { passive: 'yes' }, '.passive'],
             ['a passive that is a number', { passive: 1 }, '.passive']
         ])('%s is one problem, named by its path', (_name, block, below) => {
@@ -736,8 +802,6 @@ const flipsAt = async (total: number, before: boolean) => {
     await pass(total - 1);
     expect(valid()).toBe(before);
     await pass(1);
-            ['an interval below one ms', { interval: 0.5 }, '.interval'],
-            ['an interval of 99 ms', { interval: 99 }, '.interval'],
     expect(valid()).toBe(!before);
 };
 
@@ -745,7 +809,6 @@ describe('health check with a healthCheck block: the time to leave rotation', ()
     // from the moment the node stops until it is out, at the `fall`th failed check. The node
     // stops right after a check that passed, which is the longest it can take
     it.each<[string, object, Step, number]>([
-            ['a timeout below one ms', { timeout: 0.5 }, '.timeout'],
         // wait 5000, fail, wait 5000, fail
         ['the defaults, connections refused: 10000 ms', { healthCheck: {} }, 'refused', 10000],
         // wait 5000, hang 5000, wait 5000, hang 5000
@@ -756,7 +819,6 @@ describe('health check with a healthCheck block: the time to leave rotation', ()
         ['interval 2000, timeout 1000 and fall 3, checks that hang: 9000 ms',
             { healthCheck: { interval: 2000, timeout: 1000, fall: 3 } }, 'hang', 9000],
         // wait 15000, fail, wait 15000, fail
-            ['an authRetryInterval of 99 ms', { authRetryInterval: 99 }, '.authRetryInterval'],
         ['interval 15000, connections refused: 30000 ms',
             { healthCheck: { interval: 15000 } }, 'refused', 30000],
         // wait 15000, hang 15000, wait 15000, hang 15000

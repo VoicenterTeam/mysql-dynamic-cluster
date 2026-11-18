@@ -129,6 +129,9 @@ export class PoolStatus {
         // of failed checks over a disconnect()
         if (this._healthCheck) {
             this._failedChecks = 0;
+            // for a state that reads clean, no more: the first pass brings the node up
+            // whatever this count is, and the check that next takes it down resets it.
+            // So no test can tell this line is here
             this._passedChecks = 0;
             this._passedSinceStart = false;
         }
@@ -209,12 +212,19 @@ export class PoolStatus {
             // The legacy check sets the node to what the validators said, here. With a
             // healthCheck block a no takes the node down here as well, and a pass counts
             // at the end only, so a check that throws below brings no node up
-            if (!this._healthCheck || !passed) this._isValid = passed;
-            Logger.debug("Is status ok in host " + this._pool.host + "? -> " + passed.toString())
+            // the reason is for the log of a node with the block, which gets here with a no
+            if (!this._healthCheck || !passed) this._setValid(passed, 'validator');
+            // what this check found, which is not always the state of the node
+            Logger.debug("Did the validators accept the status of host " + this._pool.host +
+                "? -> " + passed.toString(), { pool: this._pool.name, passed });
             this._loadScore = this._loadFactor.check(result);
             Logger.debug("Load score by checking status in host " + this._pool.host + " is " + this._loadScore);
             this._failedChecks = 0;
-            if (this._healthCheck) this._isValid = this._upAfter(passed);
+            if (this._healthCheck) {
+                // read before _upAfter() marks the pass
+                const reason = this._passedSinceStart ? 'rise' : 'first_pass';
+                this._setValid(this._upAfter(passed), reason);
+            }
 
             this.nextCheckStatus()
             // the last step: nothing after it can fail and make this check count twice.
@@ -230,7 +240,7 @@ export class PoolStatus {
             Logger.error("Something wrong while checking status in host: " + this._pool.host +
                 ".\n Message: " + PoolStatus._errorText(err));
             this._passedChecks = 0;
-            if (++this._failedChecks >= this._fall) this._isValid = false;
+            if (++this._failedChecks >= this._fall) this._setValid(false, 'fall');
 
             queryTimer.end();
             this._queryTime = queryTimer.get();
@@ -243,6 +253,36 @@ export class PoolStatus {
                 // In a finally, so a step that throws above cannot leave the check uncounted
                 this._recordCheck('error');
             }
+        }
+    }
+
+    /**
+     * Set the state of the node. With a healthCheck block a change of the state is logged,
+     * one line each: a warn when the node goes down, an info when it comes back. A check
+     * that leaves the node as it was logs nothing here, and neither does the legacy check
+     * @param valid the state after this check
+     * @param reason what moved the node: `fall` failed checks in a row, a validator that
+     * said no, the first pass since connect() or `rise` passes in a row
+     * @private
+     */
+    private _setValid(valid: boolean, reason: 'fall' | 'validator' | 'first_pass' | 'rise') {
+        const changed = valid !== this._isValid;
+        this._isValid = valid;
+        if (!changed || !this._healthCheck) return;
+
+        const pool = "Pool " + this._pool.name;
+        const meta = { pool: this._pool.name, valid, reason };
+        if (reason === 'fall') {
+            Logger.warn(pool + " went down: " + this._fall +
+                (this._fall > 1 ? " failed checks in a row" : " failed check"), meta);
+        } else if (reason === 'validator') {
+            Logger.warn(pool + " went down: a validator said no", meta);
+        } else if (reason === 'first_pass') {
+            Logger.info(pool + " is up: its first check since connect() passed", meta);
+        } else {
+            const rise = this._healthCheck.rise;
+            Logger.info(pool + " is back up: " + rise +
+                (rise > 1 ? " checks passed in a row" : " check passed"), meta);
         }
     }
 
