@@ -101,7 +101,7 @@ There is no timer.
 |---|---|---|
 | `mysql_dynamic_cluster.connection.count` | `{connection}` | Open connections of a node. Two points per node, one with `db.client.connection.state` = `idle` and one with `used`. |
 | `mysql_dynamic_cluster.connection.pending_requests` | `{request}` | Requests that wait for a connection of a node. |
-| `mysql_dynamic_cluster.connection.max` | `{connection}` | `connectionLimit` of the node. No point for a node whose limit is `0`, which means no limit. |
+| `mysql_dynamic_cluster.connection.limit` | `{connection}` | `connectionLimit` of the node. No point for a node whose limit is `0`, which means no limit. |
 
 The values are the ones `cluster.getPoolStats()` returns, read from the same
 place, `Pool.stats()`. See [../node-api.md](../node-api.md#getpoolstats) for
@@ -135,10 +135,10 @@ The library leaves a pool it cannot read out of that collection and still
 reports the others. It logs the first failure at `warn` and not the later
 ones, as it does for the records.
 
-The three have the shape of the connection pool metrics of the same
-conventions: up-down counters with these units and attribute keys. As with
-the durations, they keep the package's own names. The convention names its
-metric for the limit `db.client.connection.limit`.
+The three have the shape of `db.client.connection.count`,
+`db.client.connection.pending_requests` and `db.client.connection.limit`
+from the same conventions: up-down counters with these units and attribute
+keys. As with the durations, they keep the package's own names.
 
 #### When they appear
 

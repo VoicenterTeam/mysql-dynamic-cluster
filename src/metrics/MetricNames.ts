@@ -38,8 +38,8 @@ const MetricNames = {
         description: 'Requests waiting for a connection of a node'
     },
     // read at each collection: one point per node that has a limit
-    connectionMax: {
-        name: 'mysql_dynamic_cluster.connection.max',
+    connectionLimit: {
+        name: 'mysql_dynamic_cluster.connection.limit',
         description: 'Most connections a node may have open'
     }
 }

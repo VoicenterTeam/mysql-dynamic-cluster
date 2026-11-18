@@ -448,7 +448,7 @@ at that moment stays counted as `used`.
 The library publishes the same counts as OpenTelemetry metrics from `connect()` until
 `disconnect()`, as `mysql_dynamic_cluster.connection.count`,
 `mysql_dynamic_cluster.connection.pending_requests` and
-`mysql_dynamic_cluster.connection.max`. See
+`mysql_dynamic_cluster.connection.limit`. See
 [subsystems/metrics.md](subsystems/metrics.md#pool-connection-metrics).
 
 ## `failWaiting(nodeId, error)`

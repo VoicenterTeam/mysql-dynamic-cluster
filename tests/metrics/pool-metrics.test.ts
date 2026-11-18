@@ -54,7 +54,7 @@ interface ICollected { [name: string]: IMetric }
 
 const COUNT = 'mysql_dynamic_cluster.connection.count';
 const PENDING = 'mysql_dynamic_cluster.connection.pending_requests';
-const MAX = 'mysql_dynamic_cluster.connection.max';
+const LIMIT = 'mysql_dynamic_cluster.connection.limit';
 const OPERATION = 'mysql_dynamic_cluster.operation.duration';
 
 // attribute keys
@@ -178,7 +178,7 @@ describe('pool connection metrics', () => {
     it.each([
         [COUNT, '{connection}'],
         [PENDING, '{request}'],
-        [MAX, '{connection}']
+        [LIMIT, '{connection}']
     ])('publishes %s in %s as an up-down counter of the package scope', async (name, unit) => {
         const sdk = registeredSdk();
         await makeCluster(makePool(1)).connect();
@@ -224,17 +224,19 @@ describe('pool connection metrics', () => {
         await makeCluster(makePool(1, 5), makePool(2, 12)).connect();
 
         const collected = await sdk.collect();
-        expect(rows(collected[MAX])).toEqual([['node1', undefined, 5], ['node2', undefined, 12]]);
+        expect(rows(collected[LIMIT])).toEqual([
+            ['node1', undefined, 5], ['node2', undefined, 12]
+        ]);
     });
 
-    it('reports no connection.max point for a node with limit 0, but its counts', async () => {
+    it('reports no connection.limit point for a node with limit 0, but its counts', async () => {
         const sdk = registeredSdk();
         const cluster = makeCluster(makePool(1, 0), makePool(2, 7));
         await cluster.connect();
         await cluster.ready;
 
         const collected = await sdk.collect();
-        expect(rows(collected[MAX])).toEqual([['node2', undefined, 7]]);
+        expect(rows(collected[LIMIT])).toEqual([['node2', undefined, 7]]);
         const pools = (metric: IMetric) => rows(metric).map(row => row[0]);
         expect(pools(collected[PENDING])).toEqual(['node1', 'node2']);
         expect(pools(collected[COUNT])).toEqual(['node1', 'node1', 'node2', 'node2']);
@@ -285,7 +287,7 @@ describe('attributes of the pool connection metrics', () => {
         const collected = await sdk.collect();
         const named = { ...node, [CLUSTER]: 'c1' };
         expect(attributes(collected[PENDING])).toEqual([named]);
-        expect(attributes(collected[MAX])).toEqual([named]);
+        expect(attributes(collected[LIMIT])).toEqual([named]);
         expect(attributes(collected[COUNT])).toEqual([
             { ...named, [STATE]: 'idle' }, { ...named, [STATE]: 'used' }
         ]);
@@ -298,7 +300,7 @@ describe('attributes of the pool connection metrics', () => {
 
         const collected = await sdk.collect();
         expect(attributes(collected[PENDING])).toEqual([node]);
-        expect(attributes(collected[MAX])).toEqual([node]);
+        expect(attributes(collected[LIMIT])).toEqual([node]);
         expect(attributes(collected[COUNT])).toEqual([
             { ...node, [STATE]: 'idle' }, { ...node, [STATE]: 'used' }
         ]);
@@ -317,7 +319,7 @@ describe('pool connection metrics of a cluster made by createPoolCluster', () =>
         clusters.push(cluster);
         await cluster.connect();
 
-        const point = (await sdk.collect())[MAX].points[0];
+        const point = (await sdk.collect())[LIMIT].points[0];
         expect(point.value).toBe(8);
         expect(point.attributes).toEqual({
             [POOL]: 'db1.example:3311', 'server.address': 'db1.example', 'server.port': 3311,
@@ -337,7 +339,7 @@ describe('pool connection metrics over connect() and disconnect()', () => {
         const collected = await sdk.collect();
         expect(rows(collected[COUNT])).toEqual([['node1', 'idle', 0], ['node1', 'used', 0]]);
         expect(rows(collected[PENDING])).toEqual([['node1', undefined, 0]]);
-        expect(rows(collected[MAX])).toEqual([['node1', undefined, 5]]);
+        expect(rows(collected[LIMIT])).toEqual([['node1', undefined, 5]]);
     });
 
     it('reports nothing after disconnect(), and reads the pools no more', async () => {
@@ -347,14 +349,14 @@ describe('pool connection metrics over connect() and disconnect()', () => {
         const cluster = makeCluster(pool);
         await cluster.connect();
         const before = Object.keys(await sdk.collect());
-        expect(before).toEqual(expect.arrayContaining([COUNT, PENDING, MAX]));
+        expect(before).toEqual(expect.arrayContaining([COUNT, PENDING, LIMIT]));
         await cluster.disconnect();
         const stats = jest.spyOn(pool, 'stats');
 
         const collected = await sdk.collect();
         expect(collected[COUNT]).toBeUndefined();
         expect(collected[PENDING]).toBeUndefined();
-        expect(collected[MAX]).toBeUndefined();
+        expect(collected[LIMIT]).toBeUndefined();
         expect(stats).not.toHaveBeenCalled();
     });
 
@@ -421,7 +423,7 @@ describe('pool connection metrics and the MeterProvider of the app', () => {
         const collected = await sdk.collect();
         expect(rows(collected[COUNT])).toEqual([['node1', 'idle', 3], ['node1', 'used', 2]]);
         expect(rows(collected[PENDING])).toEqual([['node1', undefined, 4]]);
-        expect(rows(collected[MAX])).toEqual([['node1', undefined, 5]]);
+        expect(rows(collected[LIMIT])).toEqual([['node1', undefined, 5]]);
     });
 
     it('reach a provider registered after connect(), at the next record', async () => {
@@ -467,7 +469,7 @@ describe('a pool that cannot be read', () => {
 
         const collected = await sdk.collect();
         expect(rows(collected[COUNT])).toEqual([['node2', 'idle', 0], ['node2', 'used', 0]]);
-        expect(rows(collected[MAX])).toEqual([['node2', undefined, 5]]);
+        expect(rows(collected[LIMIT])).toEqual([['node2', undefined, 5]]);
         expect(collected[OPERATION].points).toHaveLength(2);
         expect((await sdk.reader.collect()).errors).toEqual([]);
         expect(poolWarnings()).toHaveLength(1);

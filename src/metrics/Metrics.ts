@@ -43,7 +43,7 @@ interface IPoolInstruments {
     meter: Meter,
     connectionCount: ObservableUpDownCounter,
     pendingRequests: ObservableUpDownCounter,
-    connectionMax: ObservableUpDownCounter,
+    connectionLimit: ObservableUpDownCounter,
     callback: (result: BatchObservableResult) => void
 }
 
@@ -316,7 +316,7 @@ class Metrics {
             meter,
             connectionCount: upDownCounter(MetricNames.connectionCount, '{connection}'),
             pendingRequests: upDownCounter(MetricNames.connectionPendingRequests, '{request}'),
-            connectionMax: upDownCounter(MetricNames.connectionMax, '{connection}'),
+            connectionLimit: upDownCounter(MetricNames.connectionLimit, '{connection}'),
             callback: (result) => this._observePools(result, instruments)
         };
         // one callback for the three: a pool is read once per collection, so its counts fit
@@ -326,8 +326,8 @@ class Metrics {
     }
 
     private static _observables(instruments: IPoolInstruments): ObservableUpDownCounter[] {
-        const { connectionCount, pendingRequests, connectionMax } = instruments;
-        return [connectionCount, pendingRequests, connectionMax];
+        const { connectionCount, pendingRequests, connectionLimit } = instruments;
+        return [connectionCount, pendingRequests, connectionLimit];
     }
 
     /**
@@ -364,7 +364,7 @@ class Metrics {
             result.observe(instruments.pendingRequests, pending, attributes);
             // 0 means no limit, which is not a number of connections
             if (pool.connectionLimit) {
-                result.observe(instruments.connectionMax, pool.connectionLimit, attributes);
+                result.observe(instruments.connectionLimit, pool.connectionLimit, attributes);
             }
         }));
     }
