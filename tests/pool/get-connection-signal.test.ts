@@ -275,6 +275,7 @@ describe('Pool.getConnection aborted while its connection logs in', () => {
         controller.abort(reason);
         expect((await stateOf(request)).rejected).toBe(reason);
         expect(logins).toHaveLength(1);
+        expect(Logger.warn).not.toHaveBeenCalled();
     });
 
     it('releases the connection that arrives later and does not hand it out', async () => {
@@ -573,8 +574,8 @@ describe('Pool.getConnection aborted when the queue of mysql2 cannot be searched
         expect(arrived.release).toHaveBeenCalledTimes(1);
     });
 
-    // such a queue is no failure: the pool leaves it alone and says nothing
-    it.each(queues)('leaves the queue as it is, with no warning, when it %s', async (
+    // The pool leaves such a queue alone, and says once that requests stay in it
+    it.each(queues)('leaves the queue as it is and warns with the node when it %s', async (
         _name, queueOf
     ) => {
         const { pool, mysqlPool } = await connected();
@@ -586,7 +587,32 @@ describe('Pool.getConnection aborted when the queue of mysql2 cannot be searched
         controller.abort();
         expect([...(queue ?? [])]).toEqual(queue ? [logins[0]] : []);
         expect(queue?.removeOne ?? jest.fn()).not.toHaveBeenCalled();
-        expect(Logger.warn).not.toHaveBeenCalled();
+        expect(Logger.warn).toHaveBeenCalledTimes(1);
+        expect((Logger.warn as jest.Mock).mock.calls[0][1]).toEqual({ nodeId: 7, pool: 'seven' });
+    });
+
+    it('warns once for a mysql2 pool, not once for every aborted call', async () => {
+        const { pool, mysqlPool } = await connected();
+        mysqlPool._connectionQueue = [];
+        const controllers = [1, 2, 3].map(() => new AbortController());
+        controllers.forEach(({ signal }) => quiet(pool.getConnection(signal)));
+
+        controllers.forEach(controller => controller.abort());
+        expect(Logger.warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('warns again for the mysql2 pool that a later connect() made', async () => {
+        const { pool, mysqlPool } = await connected();
+        mysqlPool._connectionQueue = [];
+        const [first, second] = [new AbortController(), new AbortController()];
+        quiet(pool.getConnection(first.signal));
+        first.abort();
+        pool._pool = { ...mysqlPool, _connectionQueue: [] };
+        quiet(pool.getConnection(second.signal));
+
+        second.abort();
+        expect(Logger.warn).toHaveBeenCalledTimes(2);
+        pool._pool = mysqlPool;
     });
 
     // mysql2 queues a wrapper of the callback when something traces its pool
@@ -605,6 +631,8 @@ describe('Pool.getConnection aborted when the queue of mysql2 cannot be searched
         expect(mysqlPool._connectionQueue).toHaveLength(1);
         mysqlPool._connectionQueue.shift()(null, arrived);
         expect(arrived.release).toHaveBeenCalledTimes(1);
+        // the pool cannot tell this from a login that still runs, so it says nothing
+        expect(Logger.warn).not.toHaveBeenCalled();
     });
 
     it('lets no throw out into abort() when the queue throws, and logs the node', async () => {

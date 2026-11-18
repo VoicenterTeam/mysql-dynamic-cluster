@@ -508,7 +508,7 @@ export class Pool {
                 outcome.aborted = true;
                 try {
                     stopListening();
-                    Pool._leaveQueue(mysqlPool, callback);
+                    this._leaveQueue(mysqlPool, callback);
                 } catch (thrown) {
                     Logger.warn("Pool " + this.name + ": could not take an aborted request out " +
                         "of the queue, its connection is released when it arrives",
@@ -544,18 +544,29 @@ export class Pool {
         });
     }
 
+    // the mysql2 pools whose queue could not be searched, each reported once
+    private readonly _unsearchable = new WeakSet<object>();
+
     /**
      * Take the callback of one waiting request out of the queue of mysql2. The requests around
      * it keep their place. It does nothing when the callback is not there: the connection of
      * the request still logs in, or mysql2 queued a wrapper of the callback, as it does while
-     * its pool is traced. It also does nothing when the queue is not the one mysql2 3 keeps
+     * its pool is traced. A queue that is not the one mysql2 3 keeps is left alone too, and
+     * that is logged once for the mysql2 pool: no aborted request can leave such a queue
      * @param mysqlPool the mysql2 pool the request was sent to
      * @param callback the callback handed to mysql2
      * @private
      */
-    private static _leaveQueue(mysqlPool: mysql.Pool, callback: unknown): void {
+    private _leaveQueue(mysqlPool: mysql.Pool, callback: unknown): void {
         const queue = (mysqlPool as any)._connectionQueue;
-        if (typeof queue?.get !== 'function' || typeof queue.removeOne !== 'function') return;
+        if (typeof queue?.get !== 'function' || typeof queue.removeOne !== 'function') {
+            if (this._unsearchable.has(mysqlPool)) return;
+            this._unsearchable.add(mysqlPool);
+            Logger.warn("Pool " + this.name + ": the queue of this mysql2 cannot be searched. " +
+                "An aborted request stays in it and its connection is released on its turn",
+                { nodeId: this.id, pool: this.name });
+            return;
+        }
         for (let index = 0; index < queue.length; index++) {
             if (queue.get(index) !== callback) continue;
             queue.removeOne(index);
