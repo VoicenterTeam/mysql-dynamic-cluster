@@ -10,7 +10,10 @@ import { Timer } from "../utils/Timer";
 import { Pool } from "./Pool";
 import { Validator } from "./Validator";
 import { LoadFactor } from "./LoadFactor";
-import { ITimerCheckRange, IUserPoolSettings } from "../types/PoolSettingsInterfaces";
+import {
+    IHealthCheck, ITimerCheckRange, IUserPoolSettings
+} from "../types/PoolSettingsInterfaces";
+import { Settings } from "../utils/Settings";
 import { QueryTimer } from "../utils/QueryTimer";
 import { INodeCheckError } from "../types/NodeInterfaces";
 import Metrics from "../metrics/Metrics";
@@ -45,6 +48,13 @@ export class PoolStatus {
     private _loadFactor: LoadFactor;
     // Failed checks in a row. One failure (network blip) doesn't take the pool out of rotation
     private _failedChecks: number = 0;
+    // How many of them take the pool out of rotation
+    private readonly _fall: number;
+    // Passed checks in a row. Only a node with a healthCheck block reads it
+    private _passedChecks: number = 0;
+    // Whether a check passed since the last startTimerCheck(), so since connect(). Read
+    // with a healthCheck block only, as the count above
+    private _passedSinceStart: boolean = false;
     // What the last check failed with, reduced. Not set when the last check got its answer
     private _checkError?: INodeCheckError;
     /**
@@ -57,6 +67,7 @@ export class PoolStatus {
         return this._checkError && { ...this._checkError };
     }
     // Status check timeout: a check slower than the longest check interval counts as failed
+    // With a healthCheck block it is the timeout of the block
     private readonly _checkTimeout: number;
 
     private _timer: Timer;
@@ -68,6 +79,10 @@ export class PoolStatus {
     private readonly timerCheckRange: ITimerCheckRange;
     // Check status multiplier to change next time check depends on error or success
     private readonly timerCheckMultiplier: number;
+    // The healthCheck block of the node. With it the node is checked at a fixed interval,
+    // goes down after `fall` failed checks and comes back after `rise` passed ones, and the
+    // two legacy keys above are not read. Without it the node keeps the legacy check
+    private readonly _healthCheck?: IHealthCheck;
 
     /**
      * @param pool pool of what status to check
@@ -90,6 +105,15 @@ export class PoolStatus {
         this.timerCheckMultiplier = settings.timerCheckMultiplier;
         // queryTimeout 0 means no timeout
         this._checkTimeout = Math.min(settings.queryTimeout || Infinity, this.timerCheckRange.end);
+        // the second failed check in a row takes a node of the legacy check out
+        this._fall = 2;
+        // complete as well: Settings.mixSettings filled in every key the app left out
+        this._healthCheck = settings.healthCheck as IHealthCheck | undefined;
+        if (this._healthCheck) {
+            this._checkTimeout = this._healthCheck.timeout;
+            this._fall = this._healthCheck.fall;
+            this._warnIgnoredKeys(settings);
+        }
         this._timer = new Timer(this.checkStatus.bind(this));
         Logger.debug("Pool status configured");
     }
@@ -100,8 +124,30 @@ export class PoolStatus {
      */
     public startTimerCheck() {
         this.active = true;
+        // With a healthCheck block a connect() starts both runs again, and its first pass
+        // brings the node up by itself, see _upAfter(). The legacy check keeps its count
+        // of failed checks over a disconnect()
+        if (this._healthCheck) {
+            this._failedChecks = 0;
+            this._passedChecks = 0;
+            this._passedSinceStart = false;
+        }
         this._timer.activate();
         Logger.debug("Check status in pool started");
+    }
+
+    /**
+     * Tell the app once that this node does not read the legacy check keys it wrote, on the
+     * host or in the default pool settings. A default of the schema is not something it wrote
+     * @param settings pool settings
+     * @private
+     */
+    private _warnIgnoredKeys(settings: IUserPoolSettings) {
+        const ignored = Settings.ignoredCheckKeys(settings);
+        if (!ignored.length) return;
+        Logger.warn("Pool " + this._pool.name + ": the settings hold a healthCheck block for " +
+            "this node, so " + ignored.join(" and ") + (ignored.length > 1 ? " are" : " is") +
+            " ignored", { pool: this._pool.name, ignored });
     }
 
     private static _logDropped(host: string): void {
@@ -159,15 +205,22 @@ export class PoolStatus {
             queryTimer.end();
             this._queryTime = queryTimer.get();
 
-            this._isValid = this._validator.check(result);
-            Logger.debug("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())
+            const passed = this._validator.check(result);
+            // The legacy check sets the node to what the validators said, here. With a
+            // healthCheck block a no takes the node down here as well, and a pass counts
+            // at the end only, so a check that throws below brings no node up
+            if (!this._healthCheck || !passed) this._isValid = passed;
+            Logger.debug("Is status ok in host " + this._pool.host + "? -> " + passed.toString())
             this._loadScore = this._loadFactor.check(result);
             Logger.debug("Load score by checking status in host " + this._pool.host + " is " + this._loadScore);
             this._failedChecks = 0;
+            if (this._healthCheck) this._isValid = this._upAfter(passed);
 
             this.nextCheckStatus()
-            // the last step: nothing after it can fail and make this check count twice
-            this._recordCheck(this._isValid ? 'valid' : 'invalid');
+            // the last step: nothing after it can fail and make this check count twice.
+            // The result is what this check said: a down node that passed stays down
+            // until the `rise`th pass
+            this._recordCheck(passed ? 'valid' : 'invalid');
         } catch (err) {
             if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host);
             // an error thrown after the answer came is one of the package's own code
@@ -176,7 +229,8 @@ export class PoolStatus {
             Object.assign(outcome, { recorded: true, checkError: { ...this._checkError } });
             Logger.error("Something wrong while checking status in host: " + this._pool.host +
                 ".\n Message: " + PoolStatus._errorText(err));
-            if (++this._failedChecks >= 2) this._isValid = false;
+            this._passedChecks = 0;
+            if (++this._failedChecks >= this._fall) this._isValid = false;
 
             queryTimer.end();
             this._queryTime = queryTimer.get();
@@ -190,6 +244,23 @@ export class PoolStatus {
                 this._recordCheck('error');
             }
         }
+    }
+
+    /**
+     * Whether a node with a healthCheck block is up after a check that got its answer and
+     * ended without an error. A validator that says no takes it down at once. A pass keeps
+     * an up node up, and brings a down one back when it is the `rise`th in a row. The first
+     * pass since connect() is enough by itself, so a start, and a node that was down at the
+     * start, are not slowed
+     * @param passed what the validators said
+     * @private
+     */
+    private _upAfter(passed: boolean): boolean {
+        this._passedChecks = passed ? this._passedChecks + 1 : 0;
+        if (!passed) return false;
+        const first = !this._passedSinceStart;
+        this._passedSinceStart = true;
+        return this._isValid || first || this._passedChecks >= this._healthCheck.rise;
     }
 
     /**
@@ -249,6 +320,8 @@ export class PoolStatus {
      * @private
      */
     private nextCheckStatus(downgrade: boolean = false) {
+        // a healthCheck block: the same wait after every check, whatever it ended with
+        if (this._healthCheck) return this._timer.start(this._healthCheck.interval);
         if (downgrade) {
             this._nextCheckTime /= this.timerCheckMultiplier;
         } else {
