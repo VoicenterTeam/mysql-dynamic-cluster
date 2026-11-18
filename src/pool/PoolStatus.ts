@@ -180,16 +180,22 @@ export class PoolStatus {
 
             queryTimer.end();
             this._queryTime = queryTimer.get();
-            this._recordCheck('error');
 
-            this.nextCheckStatus(true)
-            this._emitCheckFailed(err);
+            try {
+                this.nextCheckStatus(true)
+                this._emitCheckFailed(err);
+            } finally {
+                // the last step here too, after the next check is set and the app was told.
+                // In a finally, so a step that throws above cannot leave the check uncounted
+                this._recordCheck('error');
+            }
         }
     }
 
     /**
      * Record this check as a metric: how long it took and how it ended. Only a check that
-     * is recorded in the status gets here, never one that was dropped or did not run
+     * is recorded in the status gets here, never one that was dropped or did not run.
+     * Both branches call it last, so nothing a record does comes before what the check does
      * @param result how the check ended
      * @private
      */

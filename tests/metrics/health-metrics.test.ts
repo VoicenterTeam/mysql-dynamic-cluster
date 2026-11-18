@@ -40,6 +40,7 @@ import { Pool } from '../../src/pool/Pool';
 import { GaleraCluster } from '../../src/cluster/GaleraCluster';
 import { Settings } from '../../src/utils/Settings';
 import Logger from '../../src/utils/Logger';
+import Events from '../../src/utils/Events';
 
 type Cb = (err: any, res?: any) => void;
 
@@ -393,6 +394,32 @@ describe('mysql_dynamic_cluster.health_check.duration', () => {
             .toStrictEqual({ ...NODE, [RESULT]: 'error', 'error.type': '_OTHER' });
     });
 
+    it('records a failed check once when a pool_check_failed listener throws', async () => {
+        const pool = await connectedPool();
+        const sdk = registeredSdk();
+        fails(pool, coded({ code: 'ECONNRESET' }));
+        const broke = () => { throw new Error('listener broke'); };
+        spies.push(jest.spyOn(Events, 'emit').mockImplementation(broke));
+        await pool.status.checkStatus();
+
+        const health = (await sdk.collect())[HEALTH];
+        expect(health.points.map(point => [point.attributes[RESULT], point.value.count]))
+            .toEqual([['error', 1]]);
+    });
+
+    it('records a failed check once when setting its next check throws', async () => {
+        const pool = await connectedPool();
+        const sdk = registeredSdk();
+        fails(pool, coded({ code: 'ECONNRESET' }));
+        const broke = () => { throw new Error('timer broke'); };
+        spies.push(jest.spyOn(pool.status._timer, 'start').mockImplementationOnce(broke));
+        await expect(pool.status.checkStatus()).rejects.toThrow('timer broke');
+
+        const health = (await sdk.collect())[HEALTH];
+        expect(health.points.map(point => [point.attributes[RESULT], point.value.count]))
+            .toEqual([['error', 1]]);
+    });
+
     it('leaves the check counted as a SHOW operation of the pool too', async () => {
         const pool = await connectedPool();
         const sdk = registeredSdk();
@@ -460,6 +487,48 @@ describe('a health check when the metric cannot be recorded', () => {
         expect(pool.status.isValid).toBe(true);
         expect(pool.status.checkError).toBeUndefined();
         expect(metricWarnings()).toHaveLength(1);
+    });
+
+    it('does all a failed check does when the provider throws', async () => {
+        const pool = await connectedPool();
+        const failure = coded({ code: 'ECONNRESET', errno: -104 });
+        fails(pool, failure);
+        const broken = () => { throw new Error('broken sdk'); };
+        const nextCheck = jest.spyOn(pool.status._timer, 'start');
+        const emitted = jest.spyOn(Events, 'emit');
+        spies.push(nextCheck, emitted);
+        spies.push(jest.spyOn(metrics, 'getMeterProvider').mockImplementation(broken));
+
+        await expect(pool.status.checkStatus()).resolves.toBeUndefined();
+
+        expect(nextCheck).toHaveBeenCalledTimes(1);
+        expect(emitted).toHaveBeenCalledWith('pool_check_failed', failure, pool.id);
+        expect(pool.status.checkError).toEqual({ code: 'ECONNRESET', errno: -104 });
+        expect(pool.status.isValid).toBe(true);
+    });
+
+    it('takes a node out with its second failed check when the provider throws', async () => {
+        const pool = await connectedPool();
+        fails(pool, coded({ code: 'ECONNRESET' }));
+        const broken = () => { throw new Error('broken sdk'); };
+        spies.push(jest.spyOn(metrics, 'getMeterProvider').mockImplementation(broken));
+
+        await pool.status.checkStatus();
+        await expect(pool.status.checkStatus()).resolves.toBeUndefined();
+
+        expect(pool.status.isValid).toBe(false);
+    });
+
+    it('records no more on a provider that one without the histogram replaced', async () => {
+        const first = registeredSdk();
+        const pool = await connectedPool();
+        expect(counts((await first.collect())[HEALTH])).toEqual([1]);
+        register(brokenSdk('createHistogram', HEALTH));
+
+        await pool.status.checkStatus();
+        await pool.status.checkStatus();
+
+        expect(counts((await first.collect())[HEALTH])).toEqual([1]);
     });
 
     it('keeps the other metrics when the provider cannot make the histogram', async () => {
