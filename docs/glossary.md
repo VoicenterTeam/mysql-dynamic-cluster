@@ -26,6 +26,18 @@ A single backing node, wrapped as one `mysql2.Pool` instance plus its health sta
 
 A boolean health check applied to a pool's most recent `SHOW GLOBAL STATUS` snapshot (or to a few synthetic keys like `available_connection_count`, `query_time`, `active`). A pool is considered usable only when every configured validator passes; the comparison is done by `key`/`operator`/`value` in [src/pool/Validator.ts:29](../src/pool/Validator.ts#L29). Defaults at [src/configs/schema.ts](../src/configs/schema.ts) require `wsrep_ready = ON`, `wsrep_local_state_comment = Synced`, and `Threads_running < 50`.
 
+### Health check
+
+One `SHOW GLOBAL STATUS` query that a pool sends to its node on a timer, read by the validators and the load factors. A check passes when the query ran and every validator said yes. It fails when it got no answer. A node is valid, or up, while queries may be routed to it. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md).
+
+### Legacy check and `healthCheck` block
+
+The two ways a node is checked. A node without a `healthCheck` block in its settings keeps the legacy check: the wait between two checks grows and shrinks inside `timerCheckRange`. A node with the block is checked every `interval` ms. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#two-modes).
+
+### `fall` and `rise`
+
+Keys of the `healthCheck` block. `fall` is how many checks have to fail in a row before a node goes down, `rise` how many have to pass in a row before a node that is down comes back. One check that fails resets the run of passes, and one that passes resets the run of failures.
+
 ### Load factor
 
 A `{ key, multiplier }` pair telling the cluster how to weight one status variable when ranking healthy pools. Each load factor reads its `key` from the latest `SHOW GLOBAL STATUS` result and contributes `value * multiplier` to the pool's load score; see [src/pool/LoadFactor.ts:25](../src/pool/LoadFactor.ts#L25). Defaults at [src/configs/schema.ts](../src/configs/schema.ts) weight `Connections` by 2 and `wsrep_local_recv_queue_avg` by 10.

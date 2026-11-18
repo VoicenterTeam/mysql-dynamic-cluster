@@ -64,11 +64,12 @@ tests/
     check-error-paths.test.ts    # Every way a check of a real Pool fails, and what checkError holds after each
     reconnect-checks.test.ts     # A pool connected, disconnected and connected again is checked again
     health-check-legacy.test.ts  # Health check as 4.6.0 runs it: waits, timeout, down and up, time to leave rotation
+    health-check.test.ts         # Health check with a healthCheck block: interval, timeout, fall, rise, settings, timing
     node-api.test.ts             # Pool.getConnection, failWaiting and stats over a mocked mysql2 pool
     get-connection-signal.test.ts # Pool.getConnection with a signal over a mocked mysql2 pool: queue, login, listener, reason
   toolchain/
     compiler.test.ts             # The compiler parses the syntax zod 4 needs; every import resolves through exports maps
-    declarations.test.ts         # The built declarations export the node API types, checked by compiling an app
+    declarations.test.ts         # The built declarations export the node API types and type the healthCheck block, checked by compiling an app
   utils/
     logger.test.ts               # Logger: levels, console default, app-supplied logger
     logger-injection.test.ts     # A logger passed to createPoolCluster

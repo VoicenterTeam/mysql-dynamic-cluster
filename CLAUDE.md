@@ -32,7 +32,7 @@ There is **no** `lint`, `typecheck`, or `test:load` script, and no linter is ins
 | You're touching… | Read first |
 | --- | --- |
 | `GaleraCluster.query` / routing | [docs/subsystems/cluster.md](docs/subsystems/cluster.md) |
-| Pool health checks / scoring | [docs/subsystems/health-and-scoring.md](docs/subsystems/health-and-scoring.md) |
+| Pool health checks / scoring, the `healthCheck` block | [docs/subsystems/health-and-scoring.md](docs/subsystems/health-and-scoring.md), which has both check modes |
 | Redis caching | [docs/subsystems/redis-cache.md](docs/subsystems/redis-cache.md) |
 | `getConnection` / `ready` / `firstReady` / `failWaiting` / `getPoolStats` / `nodes` / `checkError` | [docs/node-api.md](docs/node-api.md) |
 | Config / settings | [docs/configuration.md](docs/configuration.md) |

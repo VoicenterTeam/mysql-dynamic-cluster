@@ -125,6 +125,13 @@ after one failed check, and the second failed check in a row takes it out.
 `mysql_dynamic_cluster.node.valid` shows that state, see
 [Node gauges](#node-gauges).
 
+For a node with a `healthCheck` block the two differ in one more case. A
+node that is down and passes a check records `valid` for that check, and
+stays down until it passed `rise` checks in a row. Until then
+`mysql_dynamic_cluster.node.valid` is `0` while the last record says
+`valid`. See
+[health-and-scoring.md](./health-and-scoring.md#the-rules-of-a-healthcheck-block).
+
 Two kinds of check record nothing:
 
 - A check that was still running when its pool was stopped, by
@@ -217,7 +224,9 @@ registered pool. They are the `isValid` and `loadScore` that
 | `mysql_dynamic_cluster.node.load_score` | Load score of the node from its last answered health check. Lower is better. |
 
 - A node turns `0` when a validator says no, or with the second failed
-  check in a row. It turns `1` again with the next check that passes.
+  check in a row. It turns `1` again with the next check that passes. A node
+  with a `healthCheck` block turns `0` at the `fall`th failed check in a row
+  and `1` again at the `rise`th pass in a row.
 - A node that was never checked reports `0` and a load score of `100000`.
   That is the score a status starts with, and it puts an unchecked node
   last. Both points are reported as the status holds them, so a node that
@@ -254,7 +263,8 @@ to look.
   metric. Every health check is a query through `Pool.query` and so a record.
   That makes it the next health check of any node at the latest, and no
   query of the app is needed. The time between two checks of a node is
-  within `timerCheckRange`, 5 to 15 seconds by default.
+  within `timerCheckRange`, 5 to 15 seconds by default, or
+  `healthCheck.interval` for a node with a `healthCheck` block.
 - When the app replaces a provider, the same record takes the callback off
   the old one. From then on the pools are not read for it.
 

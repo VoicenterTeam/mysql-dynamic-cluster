@@ -91,7 +91,8 @@ other payload.
   `code: 'ECONNREFUSED'`. A host that does not answer has `code: 'ETIMEDOUT'` with the default
   timeouts, made by the connect timeout of mysql2. With `queryTimeout` or
   `timerCheckRange.end` below that 10 second connect timeout, the timer of the check ends it
-  first, with `Status check timeout` and no `code`. So a timed out check has a `code` in the
+  first, with `Status check timeout` and no `code`. A node with a `healthCheck` block has
+  `healthCheck.timeout` as that timer, 5 seconds with the defaults of the block. So a timed out check has a `code` in the
   first case and none in the second. Go by `code`:
   network errors do not always carry an `errno` or a message. A host name that resolves to
   several addresses, such as `localhost`, gives an `AggregateError` with the `code` and an empty
@@ -121,6 +122,7 @@ What to know:
 
 - It fires for every failed check, not only the first. A failing pool is checked again every
   `timerCheckRange.start` ms at the fastest, so expect one event per check until it recovers.
+  A node with a `healthCheck` block is checked every `healthCheck.interval` ms, failing or not.
 - It fires for the first check inside `connect()` too, so subscribe before calling `connect()`.
 - It fires when the check ends with an error: the status query was rejected, or the check
   timed out. A check that runs into its own timer gives an `Error` with the message
@@ -132,6 +134,7 @@ What to know:
   not `Synced`. There is no error then.
 - One failed check does not take the pool out of rotation, the second in a row does (see
   [health-and-scoring.md](./subsystems/health-and-scoring.md)). The event fires for both.
+  With a `healthCheck` block the count is `fall`, and the event fires for every one of them.
 - A listener that throws does not stop the health checks. The next check is set before the
   listeners run, and the thrown error is logged. Other listeners of the same event that were
   added after the one that threw do not run for that check. The other events have no such

@@ -53,6 +53,9 @@ One entry per host of the settings, in the order of the settings. It works befor
 
 - `name` is the `name` of the host, or `host:port` when it has none.
 - `isValid` is the result of the last health check. It is `false` before the first check.
+  For a node with a `healthCheck` block it is the state the checks left the node in: down
+  after `fall` failed checks in a row, back after `rise` passed ones. See
+  [health-and-scoring.md](./subsystems/health-and-scoring.md#two-modes).
   `disconnect()` does not clear it, so it can still be `true` for a node of a cluster that
   was disconnected.
 - `loadScore` is the load the last health check computed. Lower is better. It is `100000`
@@ -472,7 +475,8 @@ still created, its first check fails, and that check sets `checkError`.
 - So a node that is **not valid and has no `checkError`** is a node the server answered for,
   and a validator said no. For example the node is not `Synced`. The only other case is a
   node whose first check has not ended yet.
-- One failed check does not take a valid node out, the second in a row does. So a node can
+- One failed check does not take a valid node out, the second in a row does, or the
+  `fall`th for a node with a `healthCheck` block. So a node can
   be valid and have a `checkError` for one check interval.
 - `disconnect()` does not clear it, as it does not clear `isValid`. After `disconnect()`,
   `nodes()` still shows the error of the last check. A later `connect()` keeps it until its
@@ -482,7 +486,8 @@ still created, its first check fails, and that check sets `checkError`.
 
 On `nodes()` it is the error of the last check, not of this moment. A node is checked every
 `timerCheckRange.start` to `timerCheckRange.end` ms, 5 to 15 seconds with the defaults, so
-the value can be up to one check interval old, plus the time the check itself takes.
+the value can be up to one check interval old, plus the time the check itself takes. A node
+with a `healthCheck` block is checked every `healthCheck.interval` ms.
 
 On a result of `ready` or `firstReady` it is the error of the health check of that connect,
 and of no other check. It does not change later. For the state of a node now, read
@@ -513,7 +518,7 @@ and of no other check. It does not change later. For the state of a node now, re
 
 | What ran out | `checkError` | Made by |
 | --- | --- | --- |
-| The timer of the check itself, `min(queryTimeout, timerCheckRange.end)`, 15 s with the defaults. It ends a check that waits for a free connection, for the change of database or for the answer to the status query. It also ends a check that waits for a new connection when that timer is shorter than 10 s. | `{}` | the package |
+| The timer of the check itself, `min(queryTimeout, timerCheckRange.end)`, 15 s with the defaults, or `healthCheck.timeout` for a node with a `healthCheck` block. It ends a check that waits for a free connection, for the change of database or for the answer to the status query. It also ends a check that waits for a new connection when that timer is shorter than 10 s. | `{}` | the package |
 | The connect timeout of mysql2, 10 s. A new connection got no greeting, or no answer to its login. It ends the check when the timer of the check is longer than 10 s, as with the defaults. | `{ code: 'ETIMEDOUT' }`, with no `errno` | mysql2 |
 | A connect timeout of the operating system. | `{ code: 'ETIMEDOUT', errno: -110 }`. The number depends on the platform. | the socket |
 | A timeout of the server, or of a proxy in between, that closes the connection while the check uses it. | `{ code: 'PROTOCOL_CONNECTION_LOST' }` | mysql2 |

@@ -1,7 +1,7 @@
 # Subsystem: Health and Scoring
 
 Each `Pool` carries a companion `PoolStatus` instance that decides, on a
-self-adjusting timer, whether the underlying MySQL node is still
+timer, whether the underlying MySQL node is still
 routable and how heavily loaded it is. The check is a single
 `SHOW GLOBAL STATUS` query fed through two small evaluators —
 `Validator` (boolean: is this pool still eligible?) and `LoadFactor`
@@ -21,6 +21,147 @@ for how `PoolStatus` is wired into a `Pool` and
 [cluster.md](cluster.md) for how `_getActivePools` consumes
 `isValid` and `loadScore`.
 
+## Two modes
+
+A node is checked in one of two ways. Its settings decide which, once, when
+the cluster is created.
+
+| | Legacy check | Check with a `healthCheck` block |
+| --- | --- | --- |
+| Which node | A node whose settings hold no `healthCheck` block. That is every node of an app that does not set the block | A node whose settings hold the block, from `defaultPoolSettings` or from its host. An empty block is enough. Not in 4.6.0 or earlier |
+| Wait before the next check | Longer after an answered check, shorter after a failed one, inside `timerCheckRange`. See [Adaptive timer](#adaptive-timer) | `healthCheck.interval`, the same after every check |
+| Timeout of one check | `min(queryTimeout, timerCheckRange.end)` | `healthCheck.timeout` |
+| Down | At the second failed check in a row, or with one check a validator says no to | At the `fall`th failed check in a row, or with one check a validator says no to |
+| Back | With one check that passes | With `rise` passes in a row, or with the first pass since `connect()` |
+| Over `disconnect()` and a new `connect()` | The count of failed checks and the wait are kept | Both runs start again |
+| A check that throws after its answer came | The node is already set to what the validators said | A failed check. A pass it held does not count, a no does |
+| `timerCheckRange` and `timerCheckMultiplier` | Used | Ignored. One `warn` per node when the app wrote one of them |
+
+The check itself is the same in both: one `SHOW GLOBAL STATUS` through
+`Pool.query`, the validators, the load factors, `checkError`, the
+`pool_check_failed` event and the metrics. Only the rule that moves `isValid`
+and the wait before the next check differ. `PoolStatus` keeps the block as
+`_healthCheck` and asks for it in two places, `checkStatus()` and
+`nextCheckStatus()`.
+
+The settings are in [../configuration.md](../configuration.md#healthcheck).
+The legacy check is pinned by
+[tests/pool/health-check-legacy.test.ts](../../tests/pool/health-check-legacy.test.ts),
+the check with the block by
+[tests/pool/health-check.test.ts](../../tests/pool/health-check.test.ts).
+The sections below describe the legacy check unless they say otherwise.
+
+## The rules of a `healthCheck` block
+
+Next to `isValid` three values make the state of a node:
+
+| Field | Meaning |
+| --- | --- |
+| `_failedChecks` | Failed checks in a row. The legacy check counts them too |
+| `_passedChecks` | Passed checks in a row |
+| `_passedSinceStart` | Whether a check passed since the last `startTimerCheck()`, which `Pool.connect()` calls |
+
+`startTimerCheck()` sets all three back, so every `connect()` starts with no
+run. It leaves `isValid` as it is.
+
+A check ends in one of three ways:
+
+1. **It passed.** The status query ran and every validator said yes. The run
+   of failures is reset and the run of passes grows by one. A node that is up
+   stays up. A node that is down comes back when this is the `rise`th pass in
+   a row, or the first pass since `connect()`.
+2. **A validator said no.** The status query ran. The node goes down at
+   once, whatever `fall` is, and both runs are reset.
+3. **It failed.** It got no answer: no connection, a refused login, a lost
+   connection, the timeout of the check, or an error the package made. The
+   run of passes is reset and the run of failures grows by one. At `fall` in
+   a row the node goes down. Every kind of failure counts the same.
+
+After each of the three the next check is set `interval` ms later.
+
+More on these rules:
+
+- **Only a check brings a node back.** No timer and no query of the app
+  sets `isValid`.
+- **The first pass since `connect()` is enough by itself.** The first check
+  that passes after `startTimerCheck()` brings the node up, whenever it
+  comes: as the check of `connect()`, or after any number of checks that
+  failed or that a validator said no to. From then on the node needs `rise` passes
+  each time it went down. A `disconnect()` and a new `connect()` start this
+  again. So `connect()`, `ready` and `firstReady` end as they do with the
+  legacy check: one passing check is a node that is ready, and a node that
+  was down when the app started is not slowed.
+- **A pass of a node that is still down** sets the load score, clears
+  `checkError` and is recorded as a `valid` check, while `isValid` stays
+  `false`. The result of a check says what that one check found. The state
+  of the node is `isValid`, and the gauge `mysql_dynamic_cluster.node.valid`.
+- **The interval starts when a check ends.** A check that hangs until its
+  timeout is followed by the next one `timeout + interval` ms after it
+  started, so two checks of a node never overlap.
+- **The passes of a node that is up do not count later.** The check that
+  takes a node down resets the run of passes, so the node always needs the
+  full `rise` after it.
+- **A failed check from before a `disconnect()` does not count after the new
+  `connect()`.** `isValid` is kept over the two calls, as with the legacy
+  check, so a node that was up stays up until `fall` checks of the new
+  connect failed in a row. The legacy check keeps its count instead: one
+  failed check before the `disconnect()` and one after take the node down.
+- **A check that throws after its answer came is a failed check.** The
+  answer was read, and then the package failed, for one in the load factors.
+  Such a check has an empty `checkError`. It counts toward `fall`. A pass
+  the validators gave it is dropped: it brings no node up, adds nothing to a
+  run of passes and is not the first pass since `connect()`. A no the
+  validators gave it holds: the node goes down at once. The legacy check
+  sets the node to what the validators said before the rest of the check
+  runs, so there such a check can leave a node valid.
+
+### Time to leave rotation and to come back
+
+Measured with a fake clock in
+[tests/pool/health-check.test.ts](../../tests/pool/health-check.test.ts) and
+[tests/pool/health-check-legacy.test.ts](../../tests/pool/health-check-legacy.test.ts),
+in ms. A node leaves rotation when `isValid` turns `false`. The first two
+rows are the longest it can take: the node stops right after a check that
+passed. In the last two rows the node returns right after a check that
+failed, or while a check hangs.
+
+| | Legacy, default settings | Legacy, range 15000 to 60000, multiplier 0.1, `queryTimeout` 15000 | `healthCheck: {}` |
+| --- | --- | --- | --- |
+| Out, the node refuses connections | 26538 | 75000 | 10000 |
+| Out, the checks of the node hang | 56538 | 105000 | 20000 |
+| Back, the node answers again | 5000 | 60000 | 10000 |
+| Back, a check was hanging as the node returned | 20000 | 75000 | 15000 |
+
+- With the block a node is out after `fall` times `interval`, plus `fall`
+  times `timeout` when its checks hang. It is back after `rise` times
+  `interval`, plus one `timeout` when a check was hanging.
+- The legacy defaults wait 15000 after a pass, then 11538 after the first
+  failure. A check that hangs adds its 15000 each time.
+- The legacy `Back` numbers are the wait the failures left the node with,
+  then one pass. With the default settings that is 5000 once the node failed
+  five checks in a row, and more before that: 11538 after the first failure.
+  With the multiplier 0.1 of the second column one failed check sets the
+  wait to the end of the range, 60000.
+- With `rise: 2` a node comes back later than with the legacy defaults, 10000
+  against 5000, because one answer is not enough. `rise: 1` gives 5000.
+- More values of the block, measured the same way. Out: 5000 with `fall: 1`.
+  9000 with `interval: 2000`, `timeout: 1000`, `fall: 3` and checks that
+  hang. 30000 and 60000 with `interval: 15000`. 5001 when the node stops 1 ms
+  before its check is due. Back: 5000 with `rise: 1`, 6000 with
+  `interval: 2000` and `rise: 3`.
+- The legacy values next to the block change none of these numbers.
+
+### Where the pattern comes from
+
+A fixed interval, a count of failed checks in a row before a server is down
+and a count of passed ones before it is back is how HAProxy checks its
+servers, with
+[`inter`](https://docs.haproxy.org/3.2/configuration.html#5.2-inter),
+[`fall`](https://docs.haproxy.org/3.2/configuration.html#5.2-fall) and
+[`rise`](https://docs.haproxy.org/3.2/configuration.html#5.2-rise). There
+too the interval is the timeout of a check unless one is set. HAProxy
+defaults to 2000 ms, 3 and 2, the block to 5000 ms, 2 and 2.
+
 ## `PoolStatus` state
 
 [src/pool/PoolStatus.ts](../../src/pool/PoolStatus.ts).
@@ -31,7 +172,7 @@ The public surface that `GaleraCluster` and `Pool` read from:
 | --- | --- | --- | --- |
 | `active` | `boolean` (mutable) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Set to `true` by `startTimerCheck()`, which `Pool.connect()` calls (see [pool.md](pool.md)), and to `false` by `Pool.disconnect()`. The first thing `checkStatus()` does is `if (!this.active) return`, so the poll is a no-op until `Pool.connect()` runs. |
 | `availableConnectionCount` | `number` (getter) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Returns `Pool.availableConnectionCount`: `connectionLimit` minus connections in use, read from mysql2's own lists (see [pool.md](pool.md)). |
-| `isValid` | `boolean` (getter over `_isValid`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Set by `Validator.check`. Initially `false` (the field default, re-asserted in the constructor) — a pool that has never been polled is not yet routable. |
+| `isValid` | `boolean` (getter over `_isValid`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Set by a check: from `Validator.check` in the legacy check, by [the rules of the block](#the-rules-of-a-healthcheck-block) for a node that has one. Initially `false` (the field default, re-asserted in the constructor) — a pool that has never been polled is not yet routable. |
 | `queryTime` | `number` (getter over `_queryTime`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Wall-clock duration in seconds of the most recent `SHOW GLOBAL STATUS`, measured via `QueryTimer`. Set after both the success and the error branches of `checkStatus`. |
 | `loadScore` | `number` (getter over `_loadScore`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Sum from `LoadFactor.check`. **Initial value is `100000`** (set in the constructor at [PoolStatus.ts](../../src/pool/PoolStatus.ts), overriding the field's `= 0`). A pool that has never been polled sorts last in `_getActivePools` — see [cluster.md](cluster.md). |
 | `checkError` | `INodeCheckError \| undefined` (getter over `_checkError`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Since 4.6.0. What the last check failed with, reduced to `code`, `errno` and `sqlState`. `undefined` before the first check and after a check whose query ran. A new object on every read. See [The error of the last check](#the-error-of-the-last-check). |
@@ -54,6 +195,15 @@ Private members worth knowing about:
   [PoolStatus.ts](../../src/pool/PoolStatus.ts). Default `1.3` from the
   schema
   ([src/configs/schema.ts](../../src/configs/schema.ts)).
+- `_healthCheck?: IHealthCheck`:
+  [PoolStatus.ts](../../src/pool/PoolStatus.ts). The `healthCheck` block
+  of the node with every key, as `Settings.mixSettings` filled it. Not set
+  for a node of the legacy check. See [Two modes](#two-modes).
+- `_fall: number`: failed checks in a row that take the node down: `2` in
+  the legacy check, `healthCheck.fall` with the block.
+- `_passedChecks: number`, `_passedSinceStart: boolean`: the run of passes
+  and the first pass since `connect()`. Only a node with the block reads
+  them.
 - `_validator: Validator`, `_loadFactor: LoadFactor`, `_timer: Timer` —
   constructed once and reused for the lifetime of the pool
   ([PoolStatus.ts](../../src/pool/PoolStatus.ts)).
@@ -75,11 +225,15 @@ Async, idempotent against the `active` flag. Sequence on every tick:
    layer, or every pool would see the same cached snapshot.
 4. End the timer and store it as `_queryTime` so the
    `query_time` custom validator key (below) can read it.
-5. `this._isValid = this._validator.check(result)`
+5. `passed = this._validator.check(result)`. The legacy check sets
+   `_isValid` to it here. A node with a `healthCheck` block is set here only
+   when the validators said no. Its pass counts after step 6, in
+   `_upAfter(passed)`, so a check that throws in between brings no node up
    ([PoolStatus.ts](../../src/pool/PoolStatus.ts)).
 6. `this._loadScore = this._loadFactor.check(result)`
    ([PoolStatus.ts](../../src/pool/PoolStatus.ts)).
-7. `this.nextCheckStatus()` — schedule the next tick on success.
+7. `this.nextCheckStatus()` — schedule the next tick on success. With a
+   `healthCheck` block the wait is `interval`, here and in the `catch`.
 
 If any step throws, the `catch` branch
 ([PoolStatus.ts](../../src/pool/PoolStatus.ts)) logs, still records
@@ -94,11 +248,15 @@ failure (network blip, proxy restart, DNS) keeps the last `isValid` so one
 bad poll doesn't take the node out of rotation. A passing check resets the
 counter and assigns `_isValid` from the validator again. Before 3.2.2 a
 failed check never touched `_isValid`, so a node whose checks all failed
-stayed in rotation.
+stayed in rotation. With a `healthCheck` block the count that takes the node
+down is `fall`, kept as `_fall`, and a failed check also resets the run of
+passes.
 
 Every check that ends is recorded as the metric
 `mysql_dynamic_cluster.health_check.duration`, with the result `valid`,
-`invalid` or `error`. Both branches record it as their last step. The
+`invalid` or `error`. `valid` and `invalid` are what the validators said in
+this check, also for a node with a `healthCheck` block that passed and is
+still down. Both branches record it as their last step. The
 success branch does so after `nextCheckStatus()`. The `catch` branch does so
 after the next check is set and `pool_check_failed` is emitted, in a
 `finally`, so a step that throws there still leaves the check counted once.
@@ -119,6 +277,11 @@ query against that timer, so it also covers waiting for a free connection
 (mysql2's `getConnection` queue has no timer) and a hung server. A check
 slower than that counts as failed. The same value is also passed as the
 query's own timeout, so a hung connection is destroyed.
+
+For a node with a `healthCheck` block the timeout is `healthCheck.timeout`,
+which is its `interval` when left out: 5 s with the defaults of the block.
+`queryTimeout` and `timerCheckRange` have no part in it. The timer, the race
+and the timeout passed to the query work the same.
 
 A missing status key no longer throws: `Validator.check` logs the key by
 name and that validator fails, so the pool is marked invalid (see
@@ -180,6 +343,10 @@ check with `ETIMEDOUT` when the timer of the check is longer than that.
 
 [src/pool/PoolStatus.ts](../../src/pool/PoolStatus.ts).
 
+This is the wait of the legacy check. For a node with a `healthCheck` block
+`nextCheckStatus` starts the timer with `healthCheck.interval` and returns
+before any of the arithmetic below. `_nextCheckTime` is not touched then.
+
 ```text
 nextCheckStatus(downgrade = false):
     if downgrade:  _nextCheckTime /= timerCheckMultiplier   // poll faster after error
@@ -231,7 +398,11 @@ at `debug`.
 
 `disconnect()` does not reset `isValid`, the failure count or `checkError`.
 They keep their last values until the first check of the next `connect()`
-ends.
+ends. For a node with a `healthCheck` block `isValid` and `checkError` are
+kept the same way. Its two runs and the mark of the first pass are not:
+`startTimerCheck()` sets them back, so the first pass of the new `connect()`
+brings such a node up by itself, and a failed check from before the
+`disconnect()` no longer counts.
 
 ## `Validator`
 
@@ -307,7 +478,8 @@ The schema defaults exercise both modes
 
 A pool that returns `wsrep_ready=OFF`, `wsrep_local_state_comment` not
 exactly `Synced`, or `Threads_running >= 50` is removed from
-rotation until the next successful poll.
+rotation until the next successful poll, or until `rise` successful polls
+in a row for a node with a `healthCheck` block.
 
 ## `LoadFactor`
 

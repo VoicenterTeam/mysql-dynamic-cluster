@@ -41,6 +41,7 @@ Base configuration applied to every host in `hosts`.
 | `loadFactors` | array | see below |
 | `timerCheckRange` | `{ start, end }` (ms), either half may be left out | `{ start: 5000, end: 15000 }` |
 | `timerCheckMultiplier` | `number` | `1.3` |
+| `healthCheck` | object | not set: the node keeps the legacy check, see [below](#healthcheck) |
 | `queryTimeout` | `number` (ms) | `120000` |
 | `slowQueryTime` | `number` (s) | `1` |
 | `redisFactor` | `number` | `1` |
@@ -109,6 +110,105 @@ defaultPoolSettings: {
 
 `flags` on a host replaces the default ones for that node, it is not added to them: `flags: []` on a host on a newer server gives that node mysql2's defaults again. This differs from `validators` and `loadFactors`, which are added.
 
+### `healthCheck`
+
+Not in 4.6.0 or earlier. A node that has this block is checked by new rules: a fixed wait between two checks, down after `fall` failed checks in a row, back after `rise` passed ones. A node without it keeps the legacy check, which is every node of an app that does not set the block. The rules of both are in [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#two-modes).
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `interval` | `number` (ms) | `5000` | The wait between two checks of a node, counted from the end of the check before. It is the same after a passed and after a failed check |
+| `timeout` | `number` (ms) | the `interval` of the node | The limit of one check, the wait for a connection included |
+| `fall` | integer, 1 or more | `2` | Failed checks in a row before a node goes down |
+| `rise` | integer, 1 or more | `2` | Passed checks in a row before a node that is down comes back |
+
+An empty block is enough to switch a node, and gives it the defaults:
+
+```js
+defaultPoolSettings: {
+    healthCheck: {}
+}
+```
+
+What to know:
+
+- **The block switches the node, not single keys.** There is no default block. With no `healthCheck` in `defaultPoolSettings` and none on a host, that host keeps the legacy check.
+- **`timerCheckRange` and `timerCheckMultiplier` are ignored for a node that has the block.** When the app wrote one of them for such a node, on the host or in `defaultPoolSettings`, the node logs one `warn` when the cluster is created. The line has the meta `pool`, the name of the pool, and `ignored`, the keys. A default the schema filled in is not something the app wrote and logs nothing.
+- **`queryTimeout` has no part in the check of such a node.** Its check ends at `healthCheck.timeout`. The legacy check ends at `min(queryTimeout, timerCheckRange.end)`.
+- **`timeout` may be longer than `interval`.** The interval is counted from the end of a check, so two checks of a node never run at the same time. A check that waits for a new connection also ends with the connect timeout of mysql2, 10 seconds, when `timeout` is longer than that.
+- **A node that was down needs `rise` passes, the first pass after `connect()` only one.** So a start is not slowed, and neither is a node that was down when the app started. Set `rise: 1` to bring every node back with one pass, as the legacy check does.
+- **A validator that says no takes the node down with one check**, whatever `fall` is. `fall` counts the checks that got no answer.
+
+#### On `defaultPoolSettings` and on a host
+
+The block may be set in `defaultPoolSettings`, on a host, or both. It is mixed key by key: a host takes each key it left out from the block of `defaultPoolSettings`, and each key left out in both places gets its default.
+
+```js
+defaultPoolSettings: {
+    healthCheck: { interval: 2000, fall: 3 }
+},
+hosts: [
+    { host: 'db1.example' },                              // interval 2000, timeout 2000, fall 3, rise 2
+    { host: 'db2.example', healthCheck: { rise: 1 } },    // interval 2000, timeout 2000, fall 3, rise 1
+    { host: 'db3.example', healthCheck: { interval: 10000 } } // interval 10000, timeout 10000, fall 3, rise 2
+]
+```
+
+- A `timeout` nobody wrote is the `interval` of that node, as for `db3.example` above. A `timeout` written in `defaultPoolSettings` reaches every host that does not write its own, whatever its `interval`.
+- A block on one host alone switches that host alone. The other hosts keep the legacy check.
+- A block in `defaultPoolSettings` switches every host. A host cannot go back to the legacy check then. To run both kinds in one cluster, leave the block out of `defaultPoolSettings` and set it on the hosts that should have it.
+- `healthCheck: undefined`, and a key of the block set to `undefined`, count as left out.
+- After `createPoolCluster`, each host in `config.current.hosts` holds its block with every key. The block in `config.current.defaultPoolSettings` stays as the app wrote it.
+
+#### Validation
+
+The block is strict like every other object of the settings, and every problem is named by its path, such as `defaultPoolSettings.healthCheck.fall` or `hosts[0].healthCheck.interval`:
+
+- A key the block does not have is an error.
+- `interval` and `timeout` are numbers above 0 and at most 2147483647, the longest wait a timer of Node takes. A fraction is allowed.
+- `fall` and `rise` are integers, 1 or more.
+- Anything but an object is an error for the block itself, `null` included.
+
+#### Moving from `timerCheckRange` and `timerCheckMultiplier`
+
+The legacy check waits longer after each answered check and shorter after each failed one, between the two ends of `timerCheckRange`. An app that wanted few checks set a long range, and paid for it when a node died. Take this app:
+
+```js
+defaultPoolSettings: {
+    timerCheckRange: { start: 15000, end: 60000 },
+    timerCheckMultiplier: 0.1,
+    queryTimeout: 15000
+}
+```
+
+With these values a node that passes is checked every 15 s, and one that fails every 60 s. One check may take 15 s, and the second failed check in a row takes the node down. The same app with the block:
+
+```js
+defaultPoolSettings: {
+    queryTimeout: 15000,
+    healthCheck: {}
+}
+```
+
+| | before | after |
+|---|---|---|
+| Wait after a passed check | 15 s | 5 s |
+| Wait after a failed check | 60 s | 5 s |
+| Limit of one check | 15 s | 5 s |
+| A node that refuses connections is out after, at most | 75 s | 10 s |
+| A node whose checks hang is out after, at most | 105 s | 20 s |
+| A node that answers again is back after, at most | 60 s | 10 s |
+| The same when a check was hanging as the node returned | 75 s | 15 s |
+
+Every number is measured, see [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#time-to-leave-rotation-and-to-come-back).
+
+What changes for the app:
+
+1. **Remove `timerCheckRange` and `timerCheckMultiplier`.** They are ignored next to the block, and each node logs one `warn` while they are there.
+2. **A node is checked more often.** Each check is one `SHOW GLOBAL STATUS` on a connection of the pool. With the defaults that is one every 5 s per node, where the legacy defaults settle at one every 15 s. Set `interval` to keep the old pace: `healthCheck: { interval: 15000 }` checks every 15 s and takes a dead node out after 30 s, or after 60 s when its checks hang.
+3. **The check no longer follows `queryTimeout`.** Set `timeout` when a healthy node can take longer than `interval` to answer the status query.
+4. **A node that was down comes back after two passes, not one.** Set `rise: 1` to keep the old rule.
+5. **`pool_check_failed` comes every `interval` while a node fails**, not at the pace of the legacy range.
+
 ## `escapeNamedValues`
 
 Added in 4.3.0. It decides what `cluster.query(sql, values)` does with an object of values.
@@ -162,7 +262,7 @@ One entry per Galera node. `host` is required. Every key of `defaultPoolSettings
 | `id` | `number` | assigned by the cluster when left out or `0`. A `0` stays `0` only on the first host without an id of its own, and only when no host has another id. When it is replaced, the cluster logs a `warn` with the host, the port and the id the node got |
 | `name` | `string` | `host:port` when left out |
 | `redisExpire` | `number` (s) | cache TTL for queries served by this node |
-| any `defaultPoolSettings` key | as above | overrides the default for this node |
+| any `defaultPoolSettings` key | as above | overrides the default for this node. `healthCheck` is mixed key by key, see [above](#on-defaultpoolsettings-and-on-a-host) |
 
 ## `serviceMetrics`
 
@@ -210,7 +310,7 @@ The values are lowercase. `LOGLEVEL` is exported from the package for them. Wher
 
 1. **Take the live objects off.** `redisInstant` and `logger` are removed from a copy of the object. The caller's object is not changed.
 2. **Validate and fill defaults.** `parseSettings` runs the zod schema. Keys you left out get their default, also inside nested objects: `redis: { enabled: true }` keeps every other `redis` default. An array you pass replaces the default array.
-3. **Mix every host with the default pool settings.** Each host becomes the default pool settings with its own keys on top, merged in `Settings._mix`. A host that omits `port`, or sets it to `undefined`, inherits it. Arrays are concatenated in this step: `validators` on a host are added to the default ones, not swapped for them. `flags` is the exception, a host's value replaces the default one.
+3. **Mix every host with the default pool settings.** Each host becomes the default pool settings with its own keys on top, merged in `Settings._mix`. A host that omits `port`, or sets it to `undefined`, inherits it. Arrays are concatenated in this step: `validators` on a host are added to the default ones, not swapped for them. `flags` is the exception, a host's value replaces the default one. A `healthCheck` block is mixed key by key and then filled with its defaults, and only for a host that has one after the mix: this step is the one that fills them, not the schema.
 4. **Store.** The result is loaded into the `config` singleton ([src/configs/index.ts](../src/configs/index.ts)). The rest of the library reads `config.current`, a plain typed object.
 
 Before `createPoolCluster` runs, `config.current` holds the defaults. A second `createPoolCluster` call in one process replaces the settings of the first and logs a warning to the first cluster's logger.
