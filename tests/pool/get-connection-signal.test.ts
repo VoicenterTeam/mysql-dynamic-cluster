@@ -318,6 +318,23 @@ describe('Pool.getConnection aborted while its connection logs in', () => {
         logins[0](new Error('Access denied'));
         levels.forEach(level => expect(level).not.toHaveBeenCalled());
     });
+
+    // mysql2 calls back from its own tick, where a throw is an uncaught exception. release()
+    // runs the release listeners of the app
+    it('lets no throw out into mysql2 when the release throws, and logs the node', async () => {
+        const { pool, mysqlPool } = await connected();
+        const logins = loggingIn(mysqlPool);
+        const controller = new AbortController();
+        quiet(pool.getConnection(controller.signal));
+        controller.abort();
+        const arrived = connection();
+        arrived.release.mockImplementation(() => { throw new Error('release listener threw'); });
+
+        expect(() => logins[0](null, arrived)).not.toThrow();
+        expect(arrived.release).toHaveBeenCalledTimes(1);
+        const [, fields] = (Logger.warn as jest.Mock).mock.calls[0];
+        expect(fields).toEqual({ nodeId: 7, pool: 'seven', error: 'release listener threw' });
+    });
 });
 
 describe('Pool.getConnection whose signal aborts after the call settled', () => {

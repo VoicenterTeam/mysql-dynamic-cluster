@@ -495,8 +495,9 @@ export class Pool {
             let aborted = false;
             const stopListening = () => signal?.removeEventListener('abort', onAbort);
             const callback = (error: Error, connection: PoolConnection) => {
-                // the caller is gone: a connection that still arrives goes back to the pool
-                if (aborted) return connection?.release();
+                // the caller is gone: a connection that still arrives goes back to the pool,
+                // and the error of a login that failed is dropped
+                if (aborted) return this._releaseLate(connection);
                 answered = true;
                 stopListening();
                 return error ? reject(error) : resolve(connection);
@@ -542,6 +543,24 @@ export class Pool {
         return Object.assign(new Error("The operation was aborted"), {
             name: 'AbortError', code: 'ABORT_ERR'
         });
+    }
+
+    /**
+     * Release a connection that arrived for a request its signal already ended. This runs in
+     * a callback of mysql2, where a throw would be an uncaught exception, and release() runs
+     * the release listeners of the app. mysql2 puts the connection back into the pool before
+     * it calls them, so the connection is in the pool also when one of them threw
+     * @param connection the connection that arrived, or nothing when its login failed
+     * @private
+     */
+    private _releaseLate(connection?: PoolConnection): void {
+        try {
+            connection?.release();
+        } catch (thrown) {
+            Logger.warn("Pool " + this.name + ": the release of a connection that arrived " +
+                "for an aborted request threw",
+                { nodeId: this.id, pool: this.name, error: thrown?.message || thrown });
+        }
     }
 
     // the mysql2 pools whose queue could not be searched, each reported once

@@ -379,6 +379,26 @@ describe('getConnection with a signal against a real mysql2 pool', () => {
         expect(server.logins()).toBe(1);
     });
 
+    // Events is one emitter for every cluster of this file, so the listener throws once only
+    it('survives a release listener that throws when an aborted call gives back', async () => {
+        const server = await listen();
+        const cluster = await connectCluster(server.port);
+        const controller = new AbortController();
+        let armed = true;
+        const thrown = new Promise<void>(resolve => cluster.on('release', () => {
+            if (!armed) return;
+            armed = false;
+            resolve();
+            throw new Error('release listener threw');
+        }));
+        quiet(cluster.getConnection({ signal: controller.signal }));
+        controller.abort();
+
+        await thrown;
+        expect(cluster.getPoolStats()[0]).toMatchObject({ used: 0, idle: 1, pending: 0 });
+        expect(threadOf(await cluster.getConnection())).toBe(1);
+    });
+
     it('queues nothing for a signal that is already aborted', async () => {
         const { cluster, stats } = await fullPool();
         const reason = new Error('too late');
