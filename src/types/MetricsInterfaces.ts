@@ -30,6 +30,19 @@ export interface IQueryMetricOptions {
     error?: any
 }
 
+// State of an open connection, the value of the db.client.connection.state attribute
+export type ConnectionState = 'idle' | 'used';
+
+// What the connection metrics read of a pool at each collection. Pool has all of it
+export interface IPoolMetricSource {
+    name: string,
+    host: string,
+    port: number,
+    // 0 means no limit
+    connectionLimit: number,
+    stats(): { used: number, idle: number, pending: number }
+}
+
 export interface IServiceMetricsSettings {
     database?: string,
     table?: string

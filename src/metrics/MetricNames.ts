@@ -26,6 +26,21 @@ const MetricNames = {
     cacheLookupDuration: {
         name: 'mysql_dynamic_cluster.cache.lookup.duration',
         description: 'Duration of Redis cache lookups'
+    },
+    // read at each collection: one point per node and connection state
+    connectionCount: {
+        name: 'mysql_dynamic_cluster.connection.count',
+        description: 'Open connections of a node, by state'
+    },
+    // read at each collection: one point per node
+    connectionPendingRequests: {
+        name: 'mysql_dynamic_cluster.connection.pending_requests',
+        description: 'Requests waiting for a connection of a node'
+    },
+    // read at each collection: one point per node that has a limit
+    connectionMax: {
+        name: 'mysql_dynamic_cluster.connection.max',
+        description: 'Most connections a node may have open'
     }
 }
 
@@ -38,6 +53,7 @@ export const MetricAttributes = {
     serverAddress: 'server.address',
     serverPort: 'server.port',
     poolName: 'db.client.connection.pool.name',
+    connectionState: 'db.client.connection.state',
     clusterName: 'mysql_dynamic_cluster.cluster.name',
     serviceName: 'mysql_dynamic_cluster.service.name',
     resultSource: 'mysql_dynamic_cluster.result.source',

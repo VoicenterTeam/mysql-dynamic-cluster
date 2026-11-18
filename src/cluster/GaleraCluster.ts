@@ -130,6 +130,8 @@ export class GaleraCluster {
      * Connect all cluster pools what created from host information in config
      */
     public async connect(): Promise<void> {
+        // the connection metrics of the pools are reported from here until disconnect()
+        Metrics.registerPools(this._pools);
         // the first call resolves the promise `ready` already handed out, a later call a new one
         if (!this._resolveReady) this._newReady();
         const resolveReady = this._resolveReady;
@@ -299,6 +301,7 @@ export class GaleraCluster {
     public async disconnect() {
         Logger.debug("disconnecting all pools");
         this.connected = false;
+        Metrics.unregisterPools(this._pools);
         this._clusterHashing?.stop();
         Redis.disconnect();
         this._pools.forEach((pool) => {

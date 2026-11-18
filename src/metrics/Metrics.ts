@@ -2,12 +2,22 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { metrics, Attributes, Histogram, MeterProvider } from '@opentelemetry/api';
+import {
+    metrics,
+    Attributes,
+    BatchObservableResult,
+    Histogram,
+    Meter,
+    MeterProvider,
+    ObservableUpDownCounter
+} from '@opentelemetry/api';
 import MetricNames, { MetricAttributes, SCOPE_NAME } from "./MetricNames";
 import Logger from "../utils/Logger";
 import {
     CacheLookupResult,
+    ConnectionState,
     IOperationMetricOptions,
+    IPoolMetricSource,
     IQueryMetricOptions
 } from "../types/MetricsInterfaces";
 
@@ -27,6 +37,16 @@ interface IInstruments {
     cacheLookupDuration: Histogram
 }
 
+// The connection metrics of the pools, and the callback that reports them. Kept together so
+// the callback can be taken off the same meter and instruments it was added to
+interface IPoolInstruments {
+    meter: Meter,
+    connectionCount: ObservableUpDownCounter,
+    pendingRequests: ObservableUpDownCounter,
+    connectionMax: ObservableUpDownCounter,
+    callback: (result: BatchObservableResult) => void
+}
+
 /**
  * Metrics through the OpenTelemetry API. The package never starts an SDK or an exporter:
  * until the host app registers a MeterProvider every call here is a no-op
@@ -35,6 +55,9 @@ class Metrics {
     private clusterName: string;
     private _provider: MeterProvider;
     private _instruments: IInstruments;
+    private _poolInstruments: IPoolInstruments;
+    // pools of the connected clusters. A set, so a second connect() adds no pool twice
+    private readonly _pools: Set<IPoolMetricSource> = new Set();
     private _failureLogged: boolean = false;
 
     /**
@@ -86,6 +109,31 @@ class Metrics {
             if (this.clusterName) attributes[MetricAttributes.clusterName] = this.clusterName;
 
             this._getInstruments().cacheLookupDuration.record(seconds, attributes);
+        });
+    }
+
+    /**
+     * Report the connection metrics of these pools at every collection, until they are
+     * unregistered. A pool that is registered already is not added again
+     * @param pools pools of a cluster that connects
+     */
+    public registerPools(pools: IPoolMetricSource[]) {
+        this._safely(() => {
+            Metrics._mustBeList(pools, 'registerPools');
+            pools.forEach(pool => this._pools.add(pool));
+            // the instruments are created here when the app registered its provider by now
+            this._getInstruments();
+        });
+    }
+
+    /**
+     * Stop reporting the connection metrics of these pools
+     * @param pools pools of a cluster that disconnects
+     */
+    public unregisterPools(pools: IPoolMetricSource[]) {
+        this._safely(() => {
+            Metrics._mustBeList(pools, 'unregisterPools');
+            pools.forEach(pool => this._pools.delete(pool));
         });
     }
 
@@ -236,8 +284,89 @@ class Metrics {
             queryDuration: histogram(MetricNames.queryDuration),
             cacheLookupDuration: histogram(MetricNames.cacheLookupDuration)
         };
+        // after the histograms, and on its own: a provider that fails here still gets the
+        // durations
+        this._safely(() => this._movePoolInstruments(meter));
 
         return this._instruments;
+    }
+
+    /**
+     * Create the connection metrics on the meter of the new provider and report the pools
+     * there. The callback is taken off the provider before first, so the pools are not read
+     * for a provider the app replaced
+     * @private
+     */
+    private _movePoolInstruments(meter: Meter) {
+        const old = this._poolInstruments;
+        this._poolInstruments = undefined;
+        if (old) {
+            this._safely(() => {
+                old.meter.removeBatchObservableCallback(old.callback, Metrics._observables(old));
+            });
+        }
+
+        const upDownCounter = (metric: { name: string, description: string }, unit: string) => {
+            return meter.createObservableUpDownCounter(metric.name, {
+                description: metric.description,
+                unit
+            });
+        };
+        const instruments: IPoolInstruments = {
+            meter,
+            connectionCount: upDownCounter(MetricNames.connectionCount, '{connection}'),
+            pendingRequests: upDownCounter(MetricNames.connectionPendingRequests, '{request}'),
+            connectionMax: upDownCounter(MetricNames.connectionMax, '{connection}'),
+            callback: (result) => this._observePools(result, instruments)
+        };
+        // one callback for the three: a pool is read once per collection, so its counts fit
+        // together
+        meter.addBatchObservableCallback(instruments.callback, Metrics._observables(instruments));
+        this._poolInstruments = instruments;
+    }
+
+    private static _observables(instruments: IPoolInstruments): ObservableUpDownCounter[] {
+        const { connectionCount, pendingRequests, connectionMax } = instruments;
+        return [connectionCount, pendingRequests, connectionMax];
+    }
+
+    /**
+     * Throw when the pools handed to a method are not a list. The caller runs inside
+     * _safely, so the cluster that passed them is not failed, and the log names the argument
+     * @private
+     */
+    private static _mustBeList(pools: unknown, method: string) {
+        if (!Array.isArray(pools)) throw new TypeError(method + ": pools must be an array");
+    }
+
+    /**
+     * Report every registered pool. The SDK calls it at each collection. A pool that cannot be
+     * read is left out, and the others are still reported: what is thrown here would cost the
+     * collection every pool
+     * @private
+     */
+    private _observePools(result: BatchObservableResult, instruments: IPoolInstruments) {
+        this._pools.forEach(pool => this._safely(() => {
+            const attributes: Attributes = {
+                [MetricAttributes.poolName]: pool.name,
+                [MetricAttributes.serverAddress]: pool.host,
+                [MetricAttributes.serverPort]: pool.port
+            };
+            if (this.clusterName) attributes[MetricAttributes.clusterName] = this.clusterName;
+            const state = (value: ConnectionState): Attributes => {
+                return { ...attributes, [MetricAttributes.connectionState]: value };
+            };
+
+            // read before the first observe, so a pool that throws reports nothing at all
+            const { used, idle, pending } = pool.stats();
+            result.observe(instruments.connectionCount, idle, state('idle'));
+            result.observe(instruments.connectionCount, used, state('used'));
+            result.observe(instruments.pendingRequests, pending, attributes);
+            // 0 means no limit, which is not a number of connections
+            if (pool.connectionLimit) {
+                result.observe(instruments.connectionMax, pool.connectionLimit, attributes);
+            }
+        }));
     }
 
     /**
