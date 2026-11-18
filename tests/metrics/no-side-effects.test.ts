@@ -19,11 +19,38 @@ const before = count();
 const lib = require('./index.ts');
 `;
 
-const run = (script: string) => spawnSync(process.execPath, ['-e', loadPackage + script], {
-    cwd: root,
-    encoding: 'utf8',
-    timeout: 30000
-});
+// Goes in front of loadPackage. Counts every timer started from then on, also one that is
+// unref'd: such a timer does not keep the process alive and is not among the active resources.
+// process.getActiveResourcesInfo is in every Node version that runs this jest
+const watchTimers = `
+const startedTimers = [];
+for (const name of ['setTimeout', 'setInterval']) {
+    const original = global[name];
+    const watched = function (...args) {
+        startedTimers.push(name);
+        return original.apply(this, args);
+    };
+    global[name] = watched;
+    require('timers')[name] = watched;
+}
+const activeTimers = () => process.getActiveResourcesInfo().filter(name => name === 'Timeout');
+const timers = () => ({ started: startedTimers.slice(), active: activeTimers() });
+`;
+
+// Hands Metrics a pool, as a cluster does on connect()
+const registerPool = `
+const stats = () => ({ used: 0, idle: 0, pending: 0 });
+const pool = { name: 'node1', host: 'db1.example', port: 3306, connectionLimit: 1, stats };
+require('./src/metrics/Metrics.ts').default.registerPools([pool]);
+`;
+
+const run = (script: string, before: string = '') => {
+    return spawnSync(process.execPath, ['-e', before + loadPackage + script], {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 30000
+    });
+};
 
 describe('requiring the package', () => {
     it('adds no process listeners and loads neither @pm2/io, a log transport nor an OpenTelemetry SDK', () => {
@@ -49,6 +76,28 @@ describe('requiring the package', () => {
         expect(out.transports).toEqual([]);
         expect(out.sdk).toEqual([]);
         expect(out.api).toBe(true);
+    });
+
+    it('starts no timer, when it loads and when pools are registered', () => {
+        const res = run(`
+            const atLoad = timers();
+            ${registerPool}
+            console.log(JSON.stringify({ atLoad, registered: timers() }));
+            process.exit(0);
+        `, watchTimers);
+
+        const out = JSON.parse(res.stdout);
+        expect(out.atLoad).toEqual({ started: [], active: [] });
+        expect(out.registered).toEqual({ started: [], active: [] });
+    });
+
+    it('lets the process end on its own, with pools registered and no process.exit', () => {
+        const res = run(registerPool + `console.log('registered');`);
+
+        expect(res.stdout).toContain('registered');
+        // a timer that is still running leaves the child to the timeout, which ends it by signal
+        expect(res.signal).toBeNull();
+        expect(res.status).toBe(0);
     });
 
     it('leaves Node crashing on an unhandled rejection', () => {
