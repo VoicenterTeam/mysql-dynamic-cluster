@@ -18,8 +18,9 @@ type Cb = (err: any, res?: any) => void;
 type Rows = { Variable_name: string, Value: string }[];
 // How one request for a connection ends. Rows answer the status query. 'refused' and
 // 'denied' fail the request at once, 'lost' breaks the connection under the query, and
-// 'hang' hands out a connection that never answers
-type Step = Rows | 'refused' | 'denied' | 'lost' | 'hang';
+// 'hang' hands out a connection that never answers. 'held' hands one out that answers
+// when the test calls answerHeld()
+type Step = Rows | 'refused' | 'denied' | 'lost' | 'hang' | 'held';
 
 // SHOW GLOBAL STATUS of a node that every default validator accepts. With the default load
 // factors its score is 2 * connections + 10 * 0.5
@@ -54,6 +55,8 @@ const makeNode = (steps: Step[]) => {
         timeouts: [] as number[],
         // how the next requests end, in order. The last one stays for every request after it
         plan: steps,
+        // answers the query of a 'held' request, with the rows of a node that is up
+        answerHeld: undefined as () => void,
         mysqlPool: {
             on: jest.fn(), end: jest.fn(),
             _allConnections: [], _freeConnections: [], _connectionQueue: [],
@@ -67,7 +70,8 @@ const makeNode = (steps: Step[]) => {
                         const isCheck = options.sql === 'SHOW GLOBAL STATUS;';
                         if (isCheck) node.timeouts.push(options.timeout);
                         if (step === 'lost') return done(errors.lost());
-                        if (step !== 'hang') done(null, step);
+                        if (step === 'held') node.answerHeld = () => done(null, PASS);
+                        else if (step !== 'hang') done(null, step);
                     },
                     release: jest.fn(), destroy: jest.fn()
                 });
@@ -98,12 +102,16 @@ const settingsOf = (pool: object, hosts: object[] = [{ host: 'node-a' }]): any =
     logger
 });
 
+// connect() rejects when the first check fails. ready tells when that check is over
+const connect = async () => {
+    cluster.connect().catch((): void => undefined);
+    await cluster.ready;
+};
+
 // A cluster that connected: every node had its first check
 const start = async (pool: object, hosts?: object[]) => {
     cluster = createPoolCluster(settingsOf(pool, hosts));
-    // connect() rejects when the first check fails. ready tells when that check is over
-    cluster.connect().catch((): void => undefined);
-    await cluster.ready;
+    await connect();
 };
 
 // run the fake clock up to the next request for a connection of this node
@@ -294,6 +302,8 @@ describe('legacy health check: when a node goes down and comes back', () => {
     });
 
     it.each<[string, Step[], boolean]>([
+        ['one failed first check leaves a node out that never passed',
+            ['refused'], false],
         ['a pass between two failures resets the count',
             [PASS, 'refused', PASS, 'refused'], true],
         ['two failures in a row after that pass take the node out',
@@ -313,6 +323,30 @@ describe('legacy health check: when a node goes down and comes back', () => {
 
         expect(node.asked).toHaveLength(steps.length);
         expect(valid()).toBe(wanted);
+    });
+
+    // A QUIRK OF 4.6.0, PINNED AS IT IS AND NOT A WISH. A check that is answered and
+    // accepted by the validators, and then throws while the load score is worked out, is a
+    // failed check that leaves the node valid, also a node that was out. It is the one way
+    // to see the count of failed checks right after a validator said no: that count is 0
+    // again, so this failure is the first and the node stays valid
+    describe('a check that is accepted and then throws', () => {
+        // the load factor cannot turn this value into a number
+        const unreadable = { valueOf: () => { throw new Error('no number'); } } as any;
+        const THROWS = up().map(row => {
+            return row.Variable_name === 'Connections' ? { ...row, Value: unreadable } : row;
+        });
+
+        it.each<[string, Step[]]>([
+            ['after a validator said no', [PASS, NO, THROWS]],
+            ['after a failed check and then a validator that said no',
+                [PASS, 'refused', NO, THROWS]]
+        ])('%s leaves the node valid', async (_name, steps) => {
+            await afterChecks(steps);
+
+            expect(info().checkError).toEqual({});
+            expect(valid()).toBe(true);
+        });
     });
 
     it('a failed check keeps the load score, an answered one sets it, valid or not', async () => {
@@ -389,7 +423,9 @@ describe('legacy health check: no passive health', () => {
         describe.each<[string, Step, Call]>([
             ['a query that finds the connection refused', 'refused', 'query'],
             ['a query that loses its connection', 'lost', 'query'],
-            ['a getConnection() that is refused', 'refused', 'getConnection']
+            ['a query whose login is refused', 'denied', 'query'],
+            ['a getConnection() that is refused', 'refused', 'getConnection'],
+            ['a getConnection() whose login is refused', 'denied', 'getConnection']
         ])('%s', (_what, how, call) => {
             it('leaves the node valid and its next check where it was', async () => {
                 const node = await dying(pool, how);
@@ -425,6 +461,75 @@ describe('legacy health check: no passive health', () => {
     });
 });
 
+describe('legacy health check: a query of the app that succeeds', () => {
+    it('does not bring back a node that went out while the query ran', async () => {
+        const node = fakeNode([PASS, 'held', 'refused', 'refused', 'hang']);
+        await start(DEFAULTS);
+        const answer = cluster.query('SELECT 1');
+        // let the query take its connection, then let two checks fail
+        await pass(0);
+        expect(node.asked).toHaveLength(2);
+        await nextCheck(node);
+        await nextCheck(node);
+        expect(valid()).toBe(false);
+
+        node.answerHeld();
+
+        await expect(answer).resolves.toEqual(PASS);
+        expect(valid()).toBe(false);
+    });
+});
+
+describe('legacy health check: what a node keeps over disconnect() and connect()', () => {
+    // with the default settings: their range does not hide a wait that starts over
+    const reconnect = async () => {
+        await cluster.disconnect();
+        await connect();
+    };
+
+    it.each<[string, Step, number[]]>([
+        // 10000 * 1.3 = 13000 at the first connect, 16900 held at 15000 at the second
+        ['a run of passes', PASS, [5000, 15000]],
+        // 10000 / 1.3 = 7692.31 at the first connect, 5917.16 at the second
+        ['a run of failures', 'refused', [5000, 5917]]
+    ])('the wait goes on where it was, %s', async (_name, step, wanted) => {
+        const node = fakeNode([step]);
+        await start(DEFAULTS);
+        await pass(5000);
+        await reconnect();
+
+        await pass(wanted[1]);
+
+        // the check of each connect(), then one more. The timer of the first connect is gone
+        expect(waits(node)).toEqual(wanted);
+    });
+
+    it('a failed check from before still counts: the next one takes the node out', async () => {
+        const node = fakeNode([PASS, 'refused']);
+        await start(DEFAULTS);
+        await nextCheck(node);
+        expect(valid()).toBe(true);
+
+        await reconnect();
+
+        expect(node.asked).toHaveLength(3);
+        expect(valid()).toBe(false);
+    });
+
+    it('a valid node stays valid over the disconnect and after one failed check', async () => {
+        const node = fakeNode([PASS, 'refused']);
+        await start(DEFAULTS);
+        await cluster.disconnect();
+        expect(valid()).toBe(true);
+
+        await connect();
+
+        // the check of the second connect() failed, and it is the first failure
+        expect(node.asked).toHaveLength(2);
+        expect(valid()).toBe(true);
+    });
+});
+
 describe('legacy health check: a host with check settings of its own', () => {
     // node-b sets the end of its range and its multiplier. The start of its range and its
     // queryTimeout are the default ones
@@ -455,6 +560,26 @@ describe('legacy health check: a host with check settings of its own', () => {
         // min(120000, 30000) for node-b, min(120000, 15000) for node-a
         expect(b.timeouts).toEqual([30000]);
         expect(a.timeouts).toEqual([15000]);
+    });
+});
+
+describe('legacy health check: the log', () => {
+    // config warns when createPoolCluster runs again in one process, as it does in this file
+    const warnings = (): string[] => logger.warn.mock.calls.map(([text]) => String(text))
+        .filter(text => !text.startsWith('createPoolCluster was called again'));
+
+    it.each<[string, object]>([
+        ['the default settings', DEFAULTS],
+        ['the settings of a consumer', CONSUMER]
+    ])('%s: no warn when the cluster is built or while checks run', async (_name, pool) => {
+        logger.warn.mockClear();
+        const steps: Step[] = [PASS, PASS, 'refused', 'refused', PASS, NO, PASS];
+        const node = fakeNode([...steps]);
+        await start(pool);
+        for (let i = 1; i < steps.length; i++) await nextCheck(node);
+
+        expect(node.asked).toHaveLength(steps.length);
+        expect(warnings()).toEqual([]);
     });
 });
 
