@@ -159,7 +159,7 @@ One entry per Galera node. `host` is required. Every key of `defaultPoolSettings
 | key | type | notes |
 |---|---|---|
 | `host` | `string` | required, not empty |
-| `id` | `number` | assigned by the cluster when left out or `0` |
+| `id` | `number` | assigned by the cluster when left out or `0`. A `0` stays `0` only when no host has another id. When it is replaced, the cluster logs a `warn` with the host and the id the node got |
 | `name` | `string` | `host:port` when left out |
 | `redisExpire` | `number` (s) | cache TTL for queries served by this node |
 | any `defaultPoolSettings` key | as above | overrides the default for this node |
