@@ -123,7 +123,8 @@ What to know:
 - It fires for every failed check, not only the first. A failing pool is checked again every
   `timerCheckRange.start` ms at the fastest, so expect one event per check until it recovers.
   A node with a `healthCheck` block is checked every `healthCheck.interval` ms, failing or not,
-  and `healthCheck.authRetryInterval` ms after a check the server refused the login of.
+  and `healthCheck.authRetryInterval` ms after a check the server refused the login of, and
+  after the checks that follow it without an answer.
 - It fires for the first check inside `connect()` too, so subscribe before calling `connect()`.
 - It fires when the check ends with an error: the status query was rejected, or the check
   timed out. A check that runs into its own timer gives an `Error` with the message

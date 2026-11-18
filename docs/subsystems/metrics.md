@@ -267,7 +267,8 @@ to look.
   within `timerCheckRange`, 5 to 15 seconds by default, or
   `healthCheck.interval` for a node with a `healthCheck` block. After a
   check the server refused the login of, such a node waits
-  `healthCheck.authRetryInterval`, one minute by default.
+  `healthCheck.authRetryInterval`, one minute with an empty block, until a
+  check is answered.
 - When the app replaces a provider, the same record takes the callback off
   the old one. From then on the pools are not read for it.
 

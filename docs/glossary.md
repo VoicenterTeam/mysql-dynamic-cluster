@@ -40,7 +40,7 @@ Keys of the `healthCheck` block. `fall` is how many checks have to fail in a row
 
 ### Refusal and `authRetryInterval`
 
-A check of a node with a `healthCheck` block that the server answered by refusing the login or the account: a wrong password, a locked account, a blocked host. It is told by the `errno` of the error, from a fixed list. Such a check takes the node down at once, whatever `fall` is, and the next check waits `authRetryInterval`, a key of the block, in place of `interval`. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#a-login-or-account-refusal).
+A check of a node with a `healthCheck` block that the server answered by refusing the login or the account: a wrong password, a locked account, a blocked host. It is told by the `errno` of the error, from a fixed list. Such a check takes the node down at once, whatever `fall` is, and the next check waits `authRetryInterval`, a key of the block, in place of `interval`. That slow pace holds until a check is answered and is no refusal. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#a-login-or-account-refusal).
 
 ### Load factor
 

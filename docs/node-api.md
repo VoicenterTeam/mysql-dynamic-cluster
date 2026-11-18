@@ -494,7 +494,8 @@ On `nodes()` it is the error of the last check, not of this moment. A node is ch
 the value can be up to one check interval old, plus the time the check itself takes. A node
 with a `healthCheck` block is checked every `healthCheck.interval` ms. After a check the
 server refused the login of, its next check is `healthCheck.authRetryInterval` ms away, one
-minute by default, so a refusal on `nodes()` can be that old.
+minute with an empty block, so a refusal on `nodes()` can be that old. The same holds for
+the checks after it that got no answer.
 
 On a result of `ready` or `firstReady` it is the error of the health check of that connect,
 and of no other check. It does not change later. For the state of a node now, read
@@ -567,8 +568,8 @@ A refused login is `ER_ACCESS_DENIED_ERROR` with `errno` 1045 and `sqlState` `'2
 
 The health check of a node with a `healthCheck` block reads `checkError` too, and draws its
 own line. It takes a wider list of `errno` values as a refusal of the login or the account,
-1045 and 1049 among them and 1040 not, and treats the node apart for those: down with one
-check, and a slower next check. The list is in
+1045 and 1049 among them and 1040 and 1226 not, and treats the node apart for those: down
+with one check, and a slower pace of the checks after it. The list is in
 [A login or account refusal](subsystems/health-and-scoring.md#a-login-or-account-refusal).
 The tables above are about what a code means to an app, and do not change with it.
 

@@ -120,7 +120,7 @@ Not in 4.6.0 or earlier. A node that has this block is checked by new rules: a f
 | `timeout` | `number` (ms), 1 or more | the `interval` of the node | The limit of one check, the wait for a connection included |
 | `fall` | integer, 1 or more | `2` | Failed checks in a row before a node goes down |
 | `rise` | integer, 1 or more | `2` | Passed checks in a row before a node that is down comes back |
-| `authRetryInterval` | `number` (ms), 100 or more | `60000` | The wait before the next check after a check whose login or account the server refused. Such a check also takes the node down at once |
+| `authRetryInterval` | `number` (ms), 100 or more | the longer of `60000` and the `interval` of the node | The wait before the next check after a check whose login or account the server refused, and after the checks that follow it without an answer. A refused check also takes the node down at once |
 
 An empty block is enough to switch a node, and gives it the defaults:
 
@@ -138,9 +138,10 @@ What to know:
 - **`timeout` may be longer than `interval`.** The interval is counted from the end of a check, so two checks of the timer do not run at the same time. A check that waits for a new connection also ends with the connect timeout of mysql2, 10 seconds, when `timeout` is longer than that.
 - **A node that was down needs `rise` passes, the first pass after `connect()` only one.** So a start is not slowed, and neither is a node that was down when the app started. Set `rise: 1` to bring every node back with one pass, as the legacy check does.
 - **A validator that says no takes the node down with one check**, whatever `fall` is. `fall` counts the checks that got no answer.
-- **A refused login takes the node down with one check too, and the next check waits `authRetryInterval`.** A wrong password, a locked account or a blocked host does not pass by asking again, and each login can count against the account at the server. With the default a node that refuses the login is asked once a minute, 60 times an hour, where `interval` alone would ask 720 times. The check after that is `interval` away again, so only the check right after a refusal is slowed. Which errors count as a refusal, and why, is in [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#a-login-or-account-refusal).
-- **`authRetryInterval` is used as it is written.** It may be shorter than `interval`. An app with an `interval` above 60000 sets it as well, or a node that refuses the login is checked more often than one that answers.
-- **A change of state is logged.** A node that goes down logs one `warn`, a node that comes back one `info`, each with the meta `pool`, `valid` and `reason`. The reason is `fall`, `refusal` or `validator` for a node that went down, `first_pass` or `rise` for one that came up. The line of a `refusal` also has the `errno` the server refused with. A node of the legacy check logs neither.
+- **A refused login takes the node down with one check too, and the next check waits `authRetryInterval`.** A wrong password, a locked account or a blocked host does not pass by asking again, and each login can count against the account at the server. With the defaults a node that refuses the login is asked once a minute, 60 times an hour, where `interval` alone would ask 720 times. The slow pace holds while the checks after the refusal get no answer, as when the server holds its refusal back for longer than `timeout`. It ends with the first check that is answered and is no refusal: a pass, a validator that says no, or a clear error such as a refused connection. Which errors count as a refusal, and why, is in [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#a-login-or-account-refusal).
+- **Left out, `authRetryInterval` is the longer of 60000 and the `interval` of that node.** So a node that refuses the login is not asked more often than one that answers. The default is worked out per host, after the block of `defaultPoolSettings` was mixed in: a host with an `interval` of its own gets a default of its own.
+- **A written `authRetryInterval` is used as it is written**, also when it is shorter than `interval`. The floor of 100 ms allows ten logins a second at a node that refuses, 36000 in an hour. Where the server locks an account after a number of wrong passwords, such a value spends that number within a second. Keep it at a minute or more unless the server has no such policy.
+- **A change of state is logged.** A node that goes down logs one `warn`, a node that comes back one `info`, each with the meta `pool`, `valid` and `reason`. The reason is `fall`, `refusal` or `validator` for a node that went down, `first_pass` or `rise` for one that came up. The line of a `refusal` also has the `errno` the server refused with and `retryIn`, the ms until the next check. A node of the legacy check logs neither.
 
 #### On `defaultPoolSettings` and on a host
 
@@ -157,7 +158,7 @@ hosts: [
 ]
 ```
 
-`authRetryInterval` is 60000 on all three, as nobody wrote it.
+`authRetryInterval` is 60000 on all three: nobody wrote it, and each `interval` is shorter than that. With `interval: 300000` on a host it would be 300000 there.
 
 - A `timeout` nobody wrote is the `interval` of that node, as for `db3.example` above. A `timeout` written in `defaultPoolSettings` reaches every host that does not write its own, whatever its `interval`.
 - A block on one host alone switches that host alone. The other hosts keep the legacy check.

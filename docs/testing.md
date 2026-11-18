@@ -35,7 +35,7 @@ tests/
     first-ready.test.ts          # cluster.firstReady: first pass, none pass, never rejects, one promise per connect()
     check-error.test.ts          # checkError over fake pools: nodes(), the results of ready and firstReady
     check-error-loopback.test.ts # checkError with the real mysql2 on loopback: refused login, timeouts, reconnect
-    health-check-refusal-loopback.test.ts # A healthCheck node whose login the real mysql2 sees refused on loopback: down at once, the next login after authRetryInterval
+    health-check-refusal-loopback.test.ts # A healthCheck node whose login the real mysql2 sees refused on loopback: down at once, the next login after authRetryInterval, a refusal held back past the timeout
     query.test.ts                # GaleraCluster.query() shapes: no values, scalar, array, named, timeout (stale)
   configs/
     settings.test.ts             # Settings schema: defaults, strict validation, mixSettings, no env reading
@@ -65,7 +65,7 @@ tests/
     check-error-paths.test.ts    # Every way a check of a real Pool fails, and what checkError holds after each
     reconnect-checks.test.ts     # A pool connected, disconnected and connected again is checked again
     health-check-legacy.test.ts  # Health check as 4.6.0 runs it: waits, timeout, down and up, time to leave rotation
-    health-check.test.ts         # Health check with a healthCheck block: interval, timeout, fall, rise, refused logins and authRetryInterval, settings, timing
+    health-check.test.ts         # Health check with a healthCheck block: interval, timeout, fall, rise, refused logins, authRetryInterval and its slow pace, settings, timing
     node-api.test.ts             # Pool.getConnection, failWaiting and stats over a mocked mysql2 pool
     get-connection-signal.test.ts # Pool.getConnection with a signal over a mocked mysql2 pool: queue, login, listener, reason
   toolchain/
