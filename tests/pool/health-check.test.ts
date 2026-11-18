@@ -494,6 +494,10 @@ describe('health check with a healthCheck block: the log of a change of state', 
         expect(found).toEqual([
             { pool, passed: true }, { pool, passed: true }, { pool, passed: false }
         ]);
+        // and no line in the words of the legacy check, which tell of the node
+        const legacyLines = logger.debug.mock.calls
+            .filter(([text]) => String(text).startsWith('Is status ok'));
+        expect(legacyLines).toEqual([]);
     });
 });
 

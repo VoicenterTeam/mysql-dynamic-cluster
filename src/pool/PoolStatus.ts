@@ -214,9 +214,14 @@ export class PoolStatus {
             // at the end only, so a check that throws below brings no node up
             // the reason is for the log of a node with the block, which gets here with a no
             if (!this._healthCheck || !passed) this._setValid(passed, 'validator');
-            // what this check found, which is not always the state of the node
-            Logger.debug("Did the validators accept the status of host " + this._pool.host +
-                "? -> " + passed.toString(), { pool: this._pool.name, passed });
+            if (this._healthCheck) {
+                // what this check found, which is not always the state of the node
+                Logger.debug("Did the validators accept the status of host " + this._pool.host +
+                    "? -> " + passed.toString(), { pool: this._pool.name, passed });
+            } else {
+                // the line of 4.6.0, as it was: there the state is what the validators said
+                Logger.debug("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())
+            }
             this._loadScore = this._loadFactor.check(result);
             Logger.debug("Load score by checking status in host " + this._pool.host + " is " + this._loadScore);
             this._failedChecks = 0;

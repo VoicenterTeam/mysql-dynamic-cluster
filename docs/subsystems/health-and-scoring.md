@@ -235,10 +235,11 @@ Async, idempotent against the `active` flag. Sequence on every tick:
    layer, or every pool would see the same cached snapshot.
 4. End the timer and store it as `_queryTime` so the
    `query_time` custom validator key (below) can read it.
-5. `passed = this._validator.check(result)`, logged at `debug` with the
-   meta `pool` and `passed`: what this check found, which for a node with a
-   `healthCheck` block is not always the state of the node. The legacy check
-   sets `_isValid` to it here. A node with a `healthCheck` block is set here only
+5. `passed = this._validator.check(result)`. The legacy check sets
+   `_isValid` to it here and logs its `debug` line `Is status ok in host`,
+   as before. A node with a `healthCheck` block logs another `debug` line,
+   with the meta `pool` and `passed`: what this check found, which is not
+   always the state of that node. A node with a `healthCheck` block is set here only
    when the validators said no. Its pass counts after step 6, in
    `_upAfter(passed)`, so a check that throws in between brings no node up
    ([PoolStatus.ts](../../src/pool/PoolStatus.ts)).

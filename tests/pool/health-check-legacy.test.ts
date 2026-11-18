@@ -590,6 +590,23 @@ describe('legacy health check: the log', () => {
         expect(node.asked).toHaveLength(steps.length);
         expect(warnings()).toEqual([]);
     });
+
+    // The one debug line an answered check logs about the node, word for word as 4.6.0
+    // logs it: one argument, so no meta
+    it('the debug line of an answered check is the one of 4.6.0, with no meta', async () => {
+        logger.debug.mockClear();
+        const node = fakeNode([PASS, NO]);
+        cluster = createPoolCluster({ ...settingsOf(DEFAULTS), logs: { level: 'debug' } });
+        await connect();
+        await nextCheck(node);
+
+        const lines = logger.debug.mock.calls
+            .filter(([text]) => /status ok|validators accept/.test(String(text)));
+        expect(lines).toEqual([
+            ['Is status ok in host node-a? -> true'],
+            ['Is status ok in host node-a? -> false']
+        ]);
+    });
 });
 
 describe('legacy health check: the settings', () => {
