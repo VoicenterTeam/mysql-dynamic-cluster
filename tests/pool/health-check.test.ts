@@ -168,6 +168,8 @@ const info = (index: number = 0) => cluster.nodes()[index];
 const valid = (index: number = 0): boolean => info(index).isValid;
 // the time between each request for a connection and the one before it
 const waits = (node: FakeNode): number[] => node.asked.slice(1).map((at, i) => at - node.asked[i]);
+// the time of each request for a connection, counted from the first one
+const askedAt = (node: FakeNode): number[] => node.asked.map(at => at - node.asked[0]);
 
 // The values a consumer runs its legacy check with. A node with a healthCheck block
 // has to ignore them
@@ -254,17 +256,39 @@ afterEach(async () => {
 });
 
 describe('health check with a healthCheck block: the wait before the next check', () => {
-    // What each check ends with, and the wait until the next check, in ms: always the
-    // interval, whatever the check ended with and whatever the legacy keys say
+    // What each check ends with, and the wait until the next check, in ms: the interval,
+    // whatever the legacy keys say, and authRetryInterval after a check the server refused
     type Run = [Step, number][];
+    const each = (letters: string, waitList: number[]): Run => {
+        return stepsOf(letters).map((step, index): [Step, number] => [step, waitList[index]]);
+    };
     const all = (letters: string, wait: number): Run => {
         return stepsOf(letters).map((step): [Step, number] => [step, wait]);
     };
     it.each<[string, object, Run]>([
         ['an empty block, a run of passes', { healthCheck: {} }, all('P P P P', 5000)],
         ['an empty block, a run of failures', { healthCheck: {} }, all('R R R R R', 5000)],
-        ['an empty block, a node that fails and comes back',
-            { healthCheck: {} }, all('P R D L N P P', 5000)],
+        ['an empty block, a node that fails and comes back: only the refused login waits 60000',
+            { healthCheck: {} },
+            each('P R D L N P P', [5000, 5000, 60000, 5000, 5000, 5000, 5000])],
+        ['an empty block, logins refused from the check of connect() on',
+            { healthCheck: {} }, all('D D D', 60000)],
+        ['an empty block: the passes after a refusal wait the interval again',
+            { healthCheck: {} }, each('P D P P', [5000, 60000, 5000, 5000])],
+        ['an empty block, a refusal at each of the three places',
+            { healthCheck: {} }, each('P D C Q P', [5000, 60000, 60000, 60000, 5000])],
+        ['authRetryInterval 20000',
+            { healthCheck: { authRetryInterval: 20000 } },
+            each('P D C Q P', [5000, 20000, 20000, 20000, 5000])],
+        ['an authRetryInterval below the interval is used as it is written',
+            { healthCheck: { interval: 10000, authRetryInterval: 2000 } },
+            each('P D D P', [10000, 2000, 2000, 10000])],
+        ['authRetryInterval 20000, failures that are no refusal wait the interval',
+            { healthCheck: { authRetryInterval: 20000 } }, all('P T R L T H', 5000).slice(0, 5)],
+        // without the block: 15000 after a pass, 60000 after a failure
+        ['authRetryInterval 30000 next to the legacy values of a consumer',
+            { ...CONSUMER, healthCheck: { authRetryInterval: 30000 } },
+            each('P D R P', [5000, 30000, 5000, 5000])],
         ['interval 2000', { healthCheck: { interval: 2000 } }, all('P R R N P', 2000)],
         // without the block: 15000 after a pass, 60000 after a failure
         ['an empty block next to the legacy values of a consumer',
@@ -398,6 +422,25 @@ describe('health check with a healthCheck block: a login or account refusal', ()
 
             expect([valid(), info().checkError]).toEqual([false, { code, errno, sqlState }]);
         });
+
+        // the check of connect() at 0, the refused one at 5000, the next one `wait` ms
+        // later and not 1 ms sooner
+        describe.each<[string, object, number]>([
+            ['the default authRetryInterval of 60000', {}, 60000],
+            ['authRetryInterval 20000', { authRetryInterval: 20000 }, 20000]
+        ])('with %s', (_block, block, wait) => {
+            it.each(PLACES)(`%s makes the next check wait ${wait} ms`, async (_place, at) => {
+                const refusal = serverError(at, packet(errno, code, sqlState));
+                const node = fakeNode([PASS, refusal, PASS]);
+                await start({ healthCheck: block });
+
+                await pass(5000 + wait - 1);
+                const before = node.asked.length;
+                await pass(1);
+
+                expect([before, waits(node)]).toEqual([2, [5000, wait]]);
+            });
+        });
     });
 
     it('reaches the check as fatal from a change of user only', async () => {
@@ -456,6 +499,15 @@ describe('health check with a healthCheck block: a login or account refusal', ()
 
             expect(valid()).toBe(false);
         });
+
+        it('makes the next check wait the interval, not authRetryInterval', async () => {
+            const node = fakeNode([PASS, step, step, PASS]);
+            await start({ healthCheck: { authRetryInterval: 20000 } });
+
+            await pass(15000);
+
+            expect(waits(node)).toEqual([5000, 5000, 5000]);
+        });
     });
 
     it('an error the app passed to failWaiting() is none, whatever its errno', async () => {
@@ -468,6 +520,9 @@ describe('health check with a healthCheck block: a login or account refusal', ()
 
         // the check failed with an error the package was handed: nothing of the server
         expect([valid(), info().checkError]).toEqual([true, {}]);
+        // and the next check comes after the interval
+        await pass(5000);
+        expect(waits(node)).toEqual([5000, 5000]);
     });
 
     it.each<[string, object, string, string]>([
@@ -520,6 +575,30 @@ describe('health check with a healthCheck block: a login or account refusal', ()
         await nextCheck(a);
 
         expect([afterOne, [valid(0), valid(1)]]).toEqual([[true, false], [false, false]]);
+    });
+
+    it('in one cluster the host without the block keeps its own waits after one', async () => {
+        const hosts = [{ host: 'node-a' }, { host: 'node-b', healthCheck: {} }];
+        const a = fakeNode([PASS, 'denied'], 'node-a');
+        const b = fakeNode([PASS, 'denied'], 'node-b');
+        await start({}, hosts);
+
+        await pass(65000);
+
+        // node-a: 10000 * 1.3, then divided by 1.3 after each refused login, held at 5000
+        expect(waits(a)).toEqual([13000, 10000, 7692, 5917, 5000, 5000, 5000, 5000, 5000]);
+        expect(waits(b)).toEqual([5000, 60000]);
+    });
+
+    it('a node without the block waits as before after one on an open connection', async () => {
+        const refusal = serverError('changeUser', denied);
+        const node = fakeNode([PASS, PASS, refusal, refusal, PASS]);
+        await start(CONSUMER);
+
+        await pass(150000);
+
+        // the legacy values of a consumer: 15000 after a pass, 60000 after a failure
+        expect(waits(node)).toEqual([15000, 15000, 60000, 60000]);
     });
 });
 
@@ -618,6 +697,21 @@ describe('health check with a healthCheck block: the first pass after connect()'
         await pass(0);
 
         expect([valid(), info().checkError]).toEqual([true, undefined]);
+        // and the next check comes one interval after the check of the new connect()
+        await pass(5000);
+        expect(askedAt(node)).toEqual([0, 5000, 5000, 10000]);
+    });
+
+    it('a new connect() after a refusal checks at once, and waits when refused', async () => {
+        const node = await reconnected('P D', 'D P');
+        // the check of connect() at 0, the refused one at 5000, the new connect() right then
+        expect(askedAt(node)).toEqual([0, 5000, 5000]);
+
+        await pass(59999);
+        const before = node.asked.length;
+        await pass(1);
+
+        expect([before, askedAt(node)]).toEqual([3, [0, 5000, 5000, 65000]]);
     });
 
     it('a failed check from before the disconnect() does not count after it', async () => {
@@ -932,6 +1026,18 @@ describe('health check with a healthCheck block: the settings', () => {
         expect(config.current.defaultPoolSettings.healthCheck.interval).toBe(2000);
     });
 
+    it('a host overrides the authRetryInterval of the default block', async () => {
+        const a = fakeNode([PASS, 'denied', PASS], 'node-a');
+        const b = fakeNode([PASS, 'denied', PASS], 'node-b');
+        const onHost = { healthCheck: { authRetryInterval: 7000 } };
+        await start({ healthCheck: { authRetryInterval: 30000 } }, twoHosts(onHost));
+
+        await pass(35000);
+
+        expect(waits(a)).toEqual([5000, 30000]);
+        expect(waits(b)).toEqual([5000, 7000, 5000, 5000, 5000, 5000]);
+    });
+
     it('the overrides of a host reach its checks, and only its own', async () => {
         const a = fakeNode([PASS, PASS, PASS, 'refused'], 'node-a');
         const b = fakeNode([PASS, 'refused'], 'node-b');
@@ -995,6 +1101,10 @@ describe('health check with a healthCheck block: settings the schema refuses', (
             ['a rise that is Infinity', { rise: Infinity }, '.rise'],
             ['authRetryInterval 0', { authRetryInterval: 0 }, '.authRetryInterval'],
             ['an authRetryInterval of 99 ms', { authRetryInterval: 99 }, '.authRetryInterval'],
+            ['an authRetryInterval that is a string',
+                { authRetryInterval: '60000' }, '.authRetryInterval'],
+            ['an authRetryInterval above the longest timer of Node',
+                { authRetryInterval: 2147483648 }, '.authRetryInterval'],
             ['a passive that is a string', { passive: 'yes' }, '.passive'],
             ['a passive that is a number', { passive: 1 }, '.passive']
         ])('%s is one problem, named by its path', (_name, block, below) => {
@@ -1012,7 +1122,9 @@ describe('health check with a healthCheck block: settings the schema refuses', (
                 { interval: 100, timeout: 1, authRetryInterval: 100 }],
             ['an interval with a fraction', { interval: 100.5 }],
             ['fall 1 and rise 1', { fall: 1, rise: 1 }],
-            ['a timeout above the interval', { interval: 1000, timeout: 30000 }]
+            ['a timeout above the interval', { interval: 1000, timeout: 30000 }],
+            ['the longest timer of Node as authRetryInterval', { authRetryInterval: 2147483647 }],
+            ['an authRetryInterval below the interval', { interval: 9000, authRetryInterval: 100 }]
         ])('%s is accepted', (_name, block) => {
             expect(errorLines(settingsWith(block))).toEqual([]);
         });
@@ -1064,6 +1176,9 @@ describe('health check with a healthCheck block: the time to leave rotation', ()
         // wait 15000, hang 15000, wait 15000, hang 15000
         ['interval 15000, checks that hang: 60000 ms',
             { healthCheck: { interval: 15000 } }, 'hang', 60000],
+        // wait 5000, refused: one check is enough, whatever fall is
+        ['the defaults, logins refused: 5000 ms', { healthCheck: {} }, 'denied', 5000],
+        ['fall 3, logins refused: 5000 ms', { healthCheck: { fall: 3 } }, 'denied', 5000],
         // the legacy values next to the block change nothing. Without the block: 75000
         ['the defaults next to the legacy values of a consumer, connections refused: 10000 ms',
             { ...CONSUMER, healthCheck: {} }, 'refused', 10000],
@@ -1113,6 +1228,22 @@ describe('health check with a healthCheck block: the time a node takes to come b
         await flipsAt(total, false);
     });
 
+    // The same for a node a refused login took down. The login is put right just after a
+    // refused check, so the node waits out authRetryInterval before its first pass
+    it.each<[string, object, number]>([
+        // wait 60000, pass, wait 5000, pass
+        ['the defaults: 65000 ms', {}, 65000],
+        // wait 60000, pass
+        ['rise 1: 60000 ms', { rise: 1 }, 60000],
+        // wait 20000, pass, then twice: wait 2000, pass
+        ['authRetryInterval 20000, interval 2000 and rise 3: 24000 ms',
+            { authRetryInterval: 20000, interval: 2000, rise: 3 }, 24000]
+    ])('after a refused login, %s', async (_name, block, total) => {
+        await returning({ healthCheck: block }, 'P D');
+
+        await flipsAt(total, false);
+    });
+
     it('the defaults, a node that returns while a check hangs: 15000 ms', async () => {
         // down by two checks that hung. The third one just started and hangs too
         await returning({ healthCheck: {} }, 'P H H H');
@@ -1138,6 +1269,53 @@ describe('health check with a healthCheck block: the time a node takes to come b
         await returning(pool, downBy);
 
         await flipsAt(total, false);
+    });
+});
+
+describe('health check with a healthCheck block: the logins of refused checks in an hour', () => {
+    const HOUR = 3600000;
+    // A node that passed the check of connect() and from then on ends every check as `step`
+    // says. The times of its checks in the hour after the first of them, counted from it.
+    // Every such check is one login at the server: the pool holds no connection to use again
+    const hourAfterFirst = async (pool: object, step: Step): Promise<number[]> => {
+        const node = fakeNode([PASS, step]);
+        await start(pool);
+        await nextCheck(node);
+        const first = Date.now();
+        await pass(HOUR);
+        return node.asked.filter(at => at > first).map(at => at - first);
+    };
+    // `count` times, one every `ms`
+    const every = (ms: number, count: number, from: number = 0): number[] => {
+        return Array.from({ length: count }, (_, index) => from + (index + 1) * ms);
+    };
+
+    it.each<[string, object, number[]]>([
+        ['an empty block: 60, one a minute', { healthCheck: {} }, every(60000, 60)],
+        ['authRetryInterval 5000: 720',
+            { healthCheck: { authRetryInterval: 5000 } }, every(5000, 720)],
+        ['authRetryInterval 300000: 12',
+            { healthCheck: { authRetryInterval: 300000 } }, every(300000, 12)],
+        ['interval 1000 and the default authRetryInterval: 60',
+            { healthCheck: { interval: 1000 } }, every(60000, 60)],
+        ['an empty block next to the legacy values of a consumer: 60',
+            { ...CONSUMER, healthCheck: {} }, every(60000, 60)],
+        // the wait is 10000, 7692 and 5917, and then stays at the start of the range
+        ['the legacy defaults: 718',
+            {}, [10000, 17692, 23609, ...every(5000, 715, 23609)]],
+        // the wait after a failed check is the end of the range
+        ['the legacy values of a consumer: 60', CONSUMER, every(60000, 60)]
+    ])('a login refused with 1045, %s', async (_name, pool, wanted) => {
+        const times = await hourAfterFirst(pool, 'denied');
+
+        expect(times).toEqual(wanted);
+    });
+
+    // what a refused login cost before the list: a failure like this one, at the interval
+    it('too many connections, an empty block: 720, one every interval', async () => {
+        const times = await hourAfterFirst({ healthCheck: {} }, serverError('login', tooMany));
+
+        expect(times).toEqual(every(5000, 720));
     });
 });
 

@@ -48,6 +48,7 @@ export class PoolStatus {
     private _loadFactor: LoadFactor;
     // Failed checks in a row. One failure (network blip) doesn't take the pool out of rotation
     // With a healthCheck block a refused login is the exception: it takes the pool out at once
+    // and slows the next check down
     private _failedChecks: number = 0;
     // How many of them take the pool out of rotation
     private readonly _fall: number;
@@ -248,8 +249,10 @@ export class PoolStatus {
             this._passedChecks = 0;
             this._failedChecks++;
             // With a healthCheck block a refused login takes the node down with this one
-            // check, whatever `fall` is. Any other failure counts toward `fall`
-            if (this._refused()) {
+            // check, whatever `fall` is, and the next check waits authRetryInterval. Any
+            // other failure counts toward `fall`
+            const refused = this._refused();
+            if (refused) {
                 this._setValid(false, 'refusal');
             } else if (this._failedChecks >= this._fall) {
                 this._setValid(false, 'fall');
@@ -259,7 +262,7 @@ export class PoolStatus {
             this._queryTime = queryTimer.get();
 
             try {
-                this.nextCheckStatus(true)
+                this.nextCheckStatus(true, refused)
                 this._emitCheckFailed(err);
             } finally {
                 // the last step here too, after the next check is set and the app was told.
@@ -397,11 +400,18 @@ export class PoolStatus {
     /**
      * Start timer for next pool check status
      * @param downgrade downgrade time for next check pool status?
+     * @param refused whether the server refused the login of this check. Only a node with
+     * a healthCheck block is ever refused in this sense, see _refused()
      * @private
      */
-    private nextCheckStatus(downgrade: boolean = false) {
-        // a healthCheck block: the same wait after every check, whatever it ended with
-        if (this._healthCheck) return this._timer.start(this._healthCheck.interval);
+    private nextCheckStatus(downgrade: boolean = false, refused: boolean = false) {
+        // A healthCheck block: the same wait after every check, but for one the server
+        // refused. Each new login can count against the account there, so that one waits
+        // authRetryInterval, as it is written: it may be shorter than the interval
+        if (this._healthCheck) {
+            const { interval, authRetryInterval } = this._healthCheck;
+            return this._timer.start(refused ? authRetryInterval : interval);
+        }
         if (downgrade) {
             this._nextCheckTime /= this.timerCheckMultiplier;
         } else {

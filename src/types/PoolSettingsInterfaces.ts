@@ -15,7 +15,7 @@ export interface IHealthCheckSettings {
     fall?: number,
     // Passed checks in a row before a node that is down comes back. An integer, 1 or more
     rise?: number,
-    // Time in ms. Validated and kept. No rule of the check reads it yet
+    // Time in ms before the next check after one whose login or account the server refused
     authRetryInterval?: number,
     // Validated and kept. No rule of the check reads it yet
     passive?: boolean

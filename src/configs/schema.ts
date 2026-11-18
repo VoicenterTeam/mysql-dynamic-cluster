@@ -49,8 +49,10 @@ const healthCheck = z.strictObject({
     timeout: limitMs,
     fall: checkCount,
     rise: checkCount,
-    // the last two are validated and kept. No rule of the check reads them yet
+    // time in ms before the next check after one the server refused the login of. It may be
+    // shorter than the interval
     authRetryInterval: waitMs,
+    // validated and kept. No rule of the check reads it yet
     passive: z.boolean()
 }).partial();
 
