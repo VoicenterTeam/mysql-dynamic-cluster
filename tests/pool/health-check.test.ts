@@ -23,8 +23,16 @@ type Rows = { Variable_name: string, Value: string }[];
 // How one request for a connection ends. Rows answer the status query, 'slow' answers it
 // with a pass after SLOW ms. 'refused' and 'denied' fail the request at once, 'lost' breaks
 // the connection under the query, and 'hang' hands out a connection that never answers.
-// 'held' hands out one that answers when the test says so, through node.held
-type Step = Rows | 'slow' | 'refused' | 'denied' | 'lost' | 'hang' | 'held';
+// 'held' hands out one that answers when the test says so, through node.held.
+// A ServerError is an error packet of the server, at the place its `at` names
+type Step = Rows | 'slow' | 'refused' | 'denied' | 'lost' | 'hang' | 'held' | ServerError;
+// Where a check can get an error packet: at the login of a new connection, at the change of
+// user it sends on an open one, or as the answer to its status query
+type Where = 'login' | 'changeUser' | 'query';
+type ServerError = { at: Where, error: () => any };
+const isServerError = (step: Step): step is ServerError => {
+    return typeof step === 'object' && !Array.isArray(step);
+};
 const SLOW = 1200;
 
 // SHOW GLOBAL STATUS of a node that every default validator accepts. With the default load
@@ -60,6 +68,14 @@ const errors = {
         { code: 'PROTOCOL_CONNECTION_LOST', fatal: true })
 };
 
+// An error packet as mysql2 hands it out: the errno and the SQL state of the server, and the
+// name mysql2 has for that errno as the code. Never fatal as it comes from the parser
+const packet = (errno: number, code: string, sqlState: string = 'HY000') => {
+    return () => Object.assign(new Error('error ' + errno + ' of the server'),
+        { code, errno, sqlState, sqlMessage: 'error ' + errno + ' of the server' });
+};
+const serverError = (at: Where, error: () => any): ServerError => ({ at, error });
+
 const makeNode = (steps: Step[]) => {
     const node = {
         // the fake time of every request for a connection
@@ -77,10 +93,17 @@ const makeNode = (steps: Step[]) => {
                 node.asked.push(Date.now());
                 const step = node.plan.length > 1 ? node.plan.shift() : node.plan[0];
                 if (step === 'refused' || step === 'denied') return cb(errors[step]());
+                const answer = isServerError(step) ? step : undefined;
+                if (answer?.at === 'login') return cb(answer.error());
                 cb(null, {
-                    changeUser: (_options: any, done: Cb) => done(null),
+                    // mysql2 marks every error of a change of user as fatal, whatever it is
+                    changeUser: (_options: any, done: Cb) => {
+                        if (answer?.at !== 'changeUser') return done(null);
+                        done(Object.assign(answer.error(), { fatal: true }));
+                    },
                     query: (options: any, done: Cb) => {
                         node.timeouts.push(options.timeout);
+                        if (answer) return done(answer.error());
                         if (step === 'lost') return done(errors.lost());
                         if (step === 'slow') return setTimeout(() => done(null, PASS), SLOW);
                         if (step === 'held') return node.held.push(done);
