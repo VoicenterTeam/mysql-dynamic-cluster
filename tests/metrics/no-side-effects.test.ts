@@ -91,6 +91,18 @@ describe('requiring the package', () => {
         expect(out.registered).toEqual({ started: [], active: [] });
     });
 
+    it('starts no timer when a health check is recorded', () => {
+        const res = run(`
+            ${registerPool}
+            const check = { poolName: 'node1', host: 'db1.example', port: 3306, result: 'valid' };
+            require('./src/metrics/Metrics.ts').default.recordHealthCheck(0.01, check);
+            console.log(JSON.stringify(timers()));
+            process.exit(0);
+        `, watchTimers);
+
+        expect(JSON.parse(res.stdout)).toEqual({ started: [], active: [] });
+    });
+
     it('lets the process end on its own, with pools registered and no process.exit', () => {
         const res = run(registerPool + `console.log('registered');`);
 
