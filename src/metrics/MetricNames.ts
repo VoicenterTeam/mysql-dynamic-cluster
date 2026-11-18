@@ -41,6 +41,21 @@ const MetricNames = {
     connectionLimit: {
         name: 'mysql_dynamic_cluster.connection.limit',
         description: 'Most connections a node may have open'
+    },
+    // one record per finished health check of a node
+    healthCheckDuration: {
+        name: 'mysql_dynamic_cluster.health_check.duration',
+        description: 'Duration of the health checks of a node'
+    },
+    // read at each collection: one point per node, 1 or 0
+    nodeValid: {
+        name: 'mysql_dynamic_cluster.node.valid',
+        description: 'Whether a node is valid: 1 when queries may go to it, 0 when not'
+    },
+    // read at each collection: one point per node
+    nodeLoadScore: {
+        name: 'mysql_dynamic_cluster.node.load_score',
+        description: 'Load score of a node from its last answered health check, lower is better'
     }
 }
 
@@ -57,7 +72,8 @@ export const MetricAttributes = {
     clusterName: 'mysql_dynamic_cluster.cluster.name',
     serviceName: 'mysql_dynamic_cluster.service.name',
     resultSource: 'mysql_dynamic_cluster.result.source',
-    cacheResult: 'mysql_dynamic_cluster.cache.result'
+    cacheResult: 'mysql_dynamic_cluster.cache.result',
+    healthCheckResult: 'mysql_dynamic_cluster.health_check.result'
 }
 
 export default MetricNames;

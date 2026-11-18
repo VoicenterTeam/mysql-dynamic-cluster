@@ -13,6 +13,8 @@ import { LoadFactor } from "./LoadFactor";
 import { ITimerCheckRange, IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
 import { INodeCheckError } from "../types/NodeInterfaces";
+import Metrics from "../metrics/Metrics";
+import { HealthCheckResult } from "../types/MetricsInterfaces";
 
 export class PoolStatus {
     public active: boolean;
@@ -164,6 +166,8 @@ export class PoolStatus {
             this._failedChecks = 0;
 
             this.nextCheckStatus()
+            // the last step: nothing after it can fail and make this check count twice
+            this._recordCheck(this._isValid ? 'valid' : 'invalid');
         } catch (err) {
             if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host);
             // an error thrown after the answer came is one of the package's own code
@@ -176,10 +180,27 @@ export class PoolStatus {
 
             queryTimer.end();
             this._queryTime = queryTimer.get();
+            this._recordCheck('error');
 
             this.nextCheckStatus(true)
             this._emitCheckFailed(err);
         }
+    }
+
+    /**
+     * Record this check as a metric: how long it took and how it ended. Only a check that
+     * is recorded in the status gets here, never one that was dropped or did not run
+     * @param result how the check ended
+     * @private
+     */
+    private _recordCheck(result: HealthCheckResult) {
+        Metrics.recordHealthCheck(this._queryTime, {
+            poolName: this._pool.name,
+            host: this._pool.host,
+            port: this._pool.port,
+            result,
+            checkError: this._checkError
+        });
     }
 
     /**

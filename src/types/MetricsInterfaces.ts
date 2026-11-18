@@ -2,6 +2,8 @@
  * Created by Bohdan on Sep, 2021
  */
 
+import { INodeCheckError } from "./NodeInterfaces";
+
 // Where the result of a cluster query came from
 export type QueryResultSource = 'pool' | 'cache' | 'stale_cache';
 
@@ -30,17 +32,35 @@ export interface IQueryMetricOptions {
     error?: any
 }
 
+// How one health check of a node ended. valid and invalid: the status query ran, and the
+// validator passed or said no. error: the check did not get its answer
+export type HealthCheckResult = 'valid' | 'invalid' | 'error';
+
+// One finished health check of a node
+export interface IHealthCheckMetricOptions {
+    poolName: string,
+    host: string,
+    port: number,
+    result: HealthCheckResult,
+    // what a check with the result error failed with, as PoolStatus reduced it. A code or an
+    // errno is there only when it came from mysql2, the socket or the server
+    checkError?: INodeCheckError
+}
+
 // State of an open connection, the value of the db.client.connection.state attribute
 export type ConnectionState = 'idle' | 'used';
 
-// What the connection metrics read of a pool at each collection. Pool has all of it
+// What the connection metrics and the node gauges read of a pool at each collection. Pool
+// has all of it
 export interface IPoolMetricSource {
     name: string,
     host: string,
     port: number,
     // 0 means no limit
     connectionLimit: number,
-    stats(): { used: number, idle: number, pending: number }
+    stats(): { used: number, idle: number, pending: number },
+    // read by the node gauges
+    status: { isValid: boolean, loadScore: number }
 }
 
 export interface IServiceMetricsSettings {

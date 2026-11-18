@@ -9,6 +9,7 @@ import {
     Histogram,
     Meter,
     MeterProvider,
+    ObservableGauge,
     ObservableUpDownCounter
 } from '@opentelemetry/api';
 import MetricNames, { MetricAttributes, SCOPE_NAME } from "./MetricNames";
@@ -16,6 +17,7 @@ import Logger from "../utils/Logger";
 import {
     CacheLookupResult,
     ConnectionState,
+    IHealthCheckMetricOptions,
     IOperationMetricOptions,
     IPoolMetricSource,
     IQueryMetricOptions
@@ -47,6 +49,15 @@ interface IPoolInstruments {
     callback: (result: BatchObservableResult) => void
 }
 
+// The gauges of the nodes, and the callback that reports them. Apart from the connection
+// metrics, so a provider or a pool that fails for one of the two still reports the other
+interface INodeInstruments {
+    meter: Meter,
+    valid: ObservableGauge,
+    loadScore: ObservableGauge,
+    callback: (result: BatchObservableResult) => void
+}
+
 /**
  * Metrics through the OpenTelemetry API. The package never starts an SDK or an exporter:
  * until the host app registers a MeterProvider every call here is a no-op
@@ -56,6 +67,9 @@ class Metrics {
     private _provider: MeterProvider;
     private _instruments: IInstruments;
     private _poolInstruments: IPoolInstruments;
+    // not set when the provider could not make it
+    private _healthCheckDuration: Histogram;
+    private _nodeInstruments: INodeInstruments;
     // pools of the connected clusters. A set, so a second connect() adds no pool twice
     private readonly _pools: Set<IPoolMetricSource> = new Set();
     private _failureLogged: boolean = false;
@@ -109,6 +123,27 @@ class Metrics {
             if (this.clusterName) attributes[MetricAttributes.clusterName] = this.clusterName;
 
             this._getInstruments().cacheLookupDuration.record(seconds, attributes);
+        });
+    }
+
+    /**
+     * Record one finished health check of a node
+     * @param seconds how long the check took, the wait for a connection included
+     * @param options pool, result and error of the check
+     */
+    public recordHealthCheck(seconds: number, options: IHealthCheckMetricOptions) {
+        this._safely(() => {
+            const attributes = this._nodeAttributes(options.poolName, options.host, options.port);
+            attributes[MetricAttributes.healthCheckResult] = options.result;
+            if (options.result === 'error') {
+                const { code, errno } = options.checkError || {};
+                // the reduced error has a code only when mysql2, the socket or the server made it
+                attributes[MetricAttributes.errorType] = code || '_OTHER';
+                if (errno !== undefined) attributes[MetricAttributes.dbStatusCode] = String(errno);
+            }
+
+            this._getInstruments();
+            if (this._healthCheckDuration) this._healthCheckDuration.record(seconds, attributes);
         });
     }
 
@@ -287,6 +322,12 @@ class Metrics {
         // after the histograms, and on its own: a provider that fails here still gets the
         // durations
         this._safely(() => this._movePoolInstruments(meter));
+        // each of the two on its own as well: what fails here costs no metric made above
+        this._healthCheckDuration = undefined;
+        this._safely(() => {
+            this._healthCheckDuration = histogram(MetricNames.healthCheckDuration);
+        });
+        this._safely(() => this._moveNodeInstruments(meter));
 
         return this._instruments;
     }
@@ -328,6 +369,68 @@ class Metrics {
     private static _observables(instruments: IPoolInstruments): ObservableUpDownCounter[] {
         const { connectionCount, pendingRequests, connectionLimit } = instruments;
         return [connectionCount, pendingRequests, connectionLimit];
+    }
+
+    /**
+     * Create the node gauges on the meter of the new provider and report the pools there,
+     * as _movePoolInstruments does for the connection metrics
+     * @private
+     */
+    private _moveNodeInstruments(meter: Meter) {
+        const old = this._nodeInstruments;
+        this._nodeInstruments = undefined;
+        if (old) {
+            this._safely(() => {
+                old.meter.removeBatchObservableCallback(old.callback, [old.valid, old.loadScore]);
+            });
+        }
+
+        // no unit: a state and a score, not an amount of anything
+        const gauge = (metric: { name: string, description: string }) => {
+            return meter.createObservableGauge(metric.name, { description: metric.description });
+        };
+        const instruments: INodeInstruments = {
+            meter,
+            valid: gauge(MetricNames.nodeValid),
+            loadScore: gauge(MetricNames.nodeLoadScore),
+            callback: (result) => this._observeNodes(result, instruments)
+        };
+        meter.addBatchObservableCallback(
+            instruments.callback, [instruments.valid, instruments.loadScore]
+        );
+        this._nodeInstruments = instruments;
+    }
+
+    /**
+     * Report the state of every registered pool as its status holds it. The SDK calls it at
+     * each collection. A pool that cannot be read is left out, and the others are still
+     * reported
+     * @private
+     */
+    private _observeNodes(result: BatchObservableResult, instruments: INodeInstruments) {
+        this._pools.forEach(pool => this._safely(() => {
+            const attributes = this._nodeAttributes(pool.name, pool.host, pool.port);
+            // read before the first observe, so a pool that throws reports nothing at all
+            const { isValid, loadScore } = pool.status;
+            result.observe(instruments.valid, isValid ? 1 : 0, attributes);
+            result.observe(instruments.loadScore, loadScore, attributes);
+        }));
+    }
+
+    /**
+     * Attributes that name a node, on the health-check metric and the node gauges
+     * @private
+     */
+    private _nodeAttributes(poolName: string, host: string, port: number): Attributes {
+        const attributes: Attributes = {
+            [MetricAttributes.dbSystem]: 'mysql',
+            [MetricAttributes.poolName]: poolName,
+            [MetricAttributes.serverAddress]: host,
+            [MetricAttributes.serverPort]: port
+        };
+        if (this.clusterName) attributes[MetricAttributes.clusterName] = this.clusterName;
+
+        return attributes;
     }
 
     /**
