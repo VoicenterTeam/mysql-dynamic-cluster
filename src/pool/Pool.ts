@@ -538,7 +538,10 @@ export class Pool {
      */
     public static abortReason(signal: AbortSignal): unknown {
         if (signal.reason !== undefined) return signal.reason;
-        return Object.assign(new Error("The operation was aborted"), { name: 'AbortError' });
+        // the name, the code and the message of the AbortError of Node itself
+        return Object.assign(new Error("The operation was aborted"), {
+            name: 'AbortError', code: 'ABORT_ERR'
+        });
     }
 
     /**

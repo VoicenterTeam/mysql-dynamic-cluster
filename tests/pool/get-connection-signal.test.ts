@@ -477,6 +477,19 @@ describe('the reason Pool.getConnection rejects with', () => {
         expect(rejected.name).toBe('AbortError');
     });
 
+    // the three marks the AbortError of Node itself has
+    it('gives that Error the name, the code and the message Node uses', async () => {
+        const { pool } = await connected();
+        const signal = oldSignal();
+        const request = quiet(pool.getConnection(signal));
+
+        signal.abort();
+        const { name, code, message } = (await stateOf(request)).rejected;
+        expect({ name, code, message }).toEqual({
+            name: 'AbortError', code: 'ABORT_ERR', message: 'The operation was aborted'
+        });
+    });
+
     it('is an Error named AbortError for an aborted signal that has no reason', async () => {
         const { pool, mysqlPool } = await connected();
         const signal = oldSignal();
