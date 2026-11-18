@@ -246,6 +246,9 @@ export class Pool {
      */
     public async query<T extends QueryResult>(sql: string, queryOptions?: IQueryOptions): Promise<T | T[]> {
         return new Promise(async (resolve, reject) => {
+            // The status query of a health check is no query of the app: what it fails with
+            // is counted by the check, never by passive health. Read before the copy below
+            const real = !PoolStatus.isCheckQuery(queryOptions);
             queryOptions = {
                 timeout: this._queryTimeout,
                 database: this._database,
@@ -273,6 +276,10 @@ export class Pool {
                 settled = true;
                 queryTimer.end();
                 Metrics.recordOperation(queryTimer.get(), { ...poolMetricOption, error });
+                // Before the caller hears of it, so a retry of the cluster and every call
+                // after it see the node as it is now. Without a connection the error came
+                // instead of one
+                if (real) this._status.realFailure(error, !conn);
                 Pool._handBack(conn, error);
                 reject(error);
             }
@@ -341,11 +348,15 @@ export class Pool {
                 settled = true;
                 queryTimer.end();
                 Metrics.recordOperation(queryTimer.get(), { ...poolMetricOption, error });
+                // passive health, as in query()
+                this._status.realFailure(error, !conn);
                 // a broken connection can't roll back; destroying it makes the server discard the transaction
                 if (rollback && !Pool._isBroken(error)) {
                     conn.query({ sql: 'ROLLBACK', timeout: queryOptions.timeout }, (errorR) => {
                         if (errorR) {
                             Logger.error("Rollback failed in pool by host " + this.host + ": " + errorR.message);
+                            // the connection may have been lost under the rollback
+                            this._status.realFailure(errorR, false);
                             conn.destroy();
                         } else {
                             conn.release();
@@ -495,6 +506,9 @@ export class Pool {
             let aborted = false;
             const stopListening = () => signal?.removeEventListener('abort', onAbort);
             const callback = (error: Error, connection: PoolConnection) => {
+                // Passive health hears of a connection that could not be opened, also when
+                // the caller is gone by now. The abort itself is never told to it
+                if (error) this._status.realFailure(error, true);
                 // the caller is gone: a connection that still arrives goes back to the pool,
                 // and the error of a login that failed is dropped
                 if (aborted) return this._releaseLate(connection);

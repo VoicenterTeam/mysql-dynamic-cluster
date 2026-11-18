@@ -2,7 +2,7 @@
  * Created by Bohdan on Sep, 2021
  */
 
-import { GlobalStatusResult, ICheckOutcome } from "../types/PoolInterfaces";
+import { GlobalStatusResult, ICheckOutcome, IQueryOptions } from "../types/PoolInterfaces";
 import Logger from "../utils/Logger";
 import Events from "../utils/Events";
 import { Utils } from "../utils/Utils";
@@ -61,6 +61,18 @@ export class PoolStatus {
     // check since got an answer that is no refusal. Only a node with a healthCheck block
     // ever has it set. See _unanswered()
     private _slowRetry: boolean = false;
+    // The run of the check that is out. No check is out when it is not the current run
+    private _checkOut?: number;
+    // How many checks have to start before passive health may start one again: the one it
+    // started and the next one of the timer. So it starts one check at most between two
+    // checks of the timer, however many queries of the app fail
+    private _holdOff: number = 0;
+    // Whether a query of the app lost its connection since the last check that got its
+    // answer. The next check that fails takes the node down, whatever `fall` is
+    private _lostConnection: boolean = false;
+    // The code of the last connection error of the app that passive health acted on, for
+    // the log
+    private _passiveCode?: string;
     // What the last check failed with, reduced. Not set when the last check got its answer
     private _checkError?: INodeCheckError;
     /**
@@ -87,7 +99,9 @@ export class PoolStatus {
     private readonly timerCheckMultiplier: number;
     // The healthCheck block of the node. With it the node is checked at a fixed interval,
     // goes down after `fall` failed checks and comes back after `rise` passed ones, and the
-    // two legacy keys above are not read. Without it the node keeps the legacy check
+    // two legacy keys above are not read. Its `passive` lets the connection failures of the
+    // queries of the app count too, see realFailure(). Without it the node keeps the legacy
+    // check
     private readonly _healthCheck?: IHealthCheck;
 
     /**
@@ -142,6 +156,9 @@ export class PoolStatus {
             this._passedSinceStart = false;
             // a refusal from before does not slow the checks of this connect() down
             this._slowRetry = false;
+            // and what passive health kept of the life before
+            this._holdOff = 0;
+            this._lostConnection = false;
         }
         this._timer.activate();
         Logger.debug("Check status in pool started");
@@ -189,6 +206,9 @@ export class PoolStatus {
         let asking = false;
         try {
             if (!this.active) return;
+            // for passive health: a check is out, and one more check started
+            this._checkOut = run;
+            if (this._holdOff > 0) this._holdOff--;
 
             Logger.debug("checking pool status in host: " + this._pool.host);
             queryTimer.start();
@@ -199,7 +219,7 @@ export class PoolStatus {
             try {
                 asking = true;
                 result = await Promise.race([
-                    this._pool.query(`SHOW GLOBAL STATUS;`, { redis: false, timeout: this._checkTimeout }),
+                    this._pool.query(`SHOW GLOBAL STATUS;`, this._checkOptions()),
                     new Promise<never>((_, reject) => {
                         checkTimer = setTimeout(() => reject(new Error("Status check timeout")), this._checkTimeout);
                     })
@@ -235,6 +255,8 @@ export class PoolStatus {
             this._loadScore = this._loadFactor.check(result);
             Logger.debug("Load score by checking status in host " + this._pool.host + " is " + this._loadScore);
             this._failedChecks = 0;
+            // the node answered: a connection the app lost before says nothing any more
+            this._lostConnection = false;
             if (this._healthCheck) {
                 // read before _upAfter() marks the pass
                 const reason = this._passedSinceStart ? 'rise' : 'first_pass';
@@ -258,12 +280,15 @@ export class PoolStatus {
             this._failedChecks++;
             // With a healthCheck block a refused login takes the node down with this one
             // check, whatever `fall` is, and the next check waits authRetryInterval. Any
-            // other failure counts toward `fall`
+            // other failure counts toward `fall`. One failed check is enough as well when
+            // a query of the app lost its connection since the last check ended
             const refused = this._refused();
             if (refused) {
                 this._setValid(false, 'refusal');
             } else if (this._failedChecks >= this._fall) {
                 this._setValid(false, 'fall');
+            } else if (this._lostConnection) {
+                this._setValid(false, 'passive_lost');
             }
             // The slow pace starts with a refusal and holds over the failed checks after
             // it that got no answer: a server can hold its refusal back for longer than a
@@ -291,11 +316,13 @@ export class PoolStatus {
      * @param valid the state after this check
      * @param reason what moved the node: `fall` failed checks in a row, a login or account
      * the server refused, a validator that said no, the first pass since connect() or
-     * `rise` passes in a row
+     * `rise` passes in a row. From passive health: a connection the app could not open, or
+     * one it lost and a failed check after it
      * @private
      */
     private _setValid(
         valid: boolean, reason: 'fall' | 'refusal' | 'validator' | 'first_pass' | 'rise'
+            | 'passive_connect' | 'passive_lost'
     ) {
         const changed = valid !== this._isValid;
         this._isValid = valid;
@@ -315,6 +342,13 @@ export class PoolStatus {
             });
         } else if (reason === 'validator') {
             Logger.warn(pool + " went down: a validator said no", meta);
+        } else if (reason === 'passive_connect') {
+            // the code says which connection error it was. Its message stays out
+            Logger.warn(pool + " went down: the app could not open a connection to it",
+                { ...meta, code: this._passiveCode });
+        } else if (reason === 'passive_lost') {
+            Logger.warn(pool + " went down: the app lost a connection to it and the check " +
+                "after that failed", { ...meta, code: this._passiveCode });
         } else if (reason === 'first_pass') {
             Logger.info(pool + " is up: its first check since connect() passed", meta);
         } else {
@@ -343,6 +377,122 @@ export class PoolStatus {
      */
     private _refused(): boolean {
         return !!this._healthCheck && PoolStatus._refusals.has(this._checkError.errno);
+    }
+
+    // The options objects of the status queries of every node. Pool.query() tells a query
+    // of a check from a query of the app by them
+    private static readonly _checkQueries = new WeakSet<object>();
+
+    /**
+     * The options of the status query of one check: no cache, and the timeout of the check.
+     * A new object each time, kept so that isCheckQuery() knows it
+     * @private
+     */
+    private _checkOptions(): IQueryOptions {
+        const options = { redis: false, timeout: this._checkTimeout };
+        PoolStatus._checkQueries.add(options);
+        return options;
+    }
+
+    /**
+     * Whether these query options are the ones a health check made for its status query.
+     * Told by the object itself, never by what it holds: an app that sends the same sql
+     * with the same options sends a query of its own
+     * @param queryOptions the options Pool.query() was called with
+     */
+    public static isCheckQuery(queryOptions?: IQueryOptions): boolean {
+        // a WeakSet knows objects only
+        return Object(queryOptions) === queryOptions
+            && PoolStatus._checkQueries.has(queryOptions);
+    }
+
+    // The codes of a connection that could not be opened: nothing listens on the port, no
+    // answer within the connect timeout of mysql2, no route to the host or to its network,
+    // and a host name that does not resolve
+    private static readonly _connectCodes: ReadonlySet<string> = new Set([
+        'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND'
+    ]);
+    // The codes of a connection that was lost: closed by the server as mysql2 reports it,
+    // reset, and written to after the other side closed it
+    private static readonly _lostCodes: ReadonlySet<string> = new Set([
+        'PROTOCOL_CONNECTION_LOST', 'ECONNRESET', 'EPIPE'
+    ]);
+
+    /**
+     * What a failed query or getConnection() of the app says about the node, if anything.
+     * Only an error of the network does: `fatal` is true, the code is one of the two
+     * lists, the error has no errno of a server, and neither the package nor the app made
+     * it. Never by `fatal` alone: mysql2 marks a refused change of user, a TLS or
+     * auth plugin error and a protocol error as fatal too, and none of them says the node
+     * is gone. The place decides between the two kinds
+     * @param error what the call was rejected with
+     * @param opening true when the error came instead of a connection, false when it came
+     * on a connection the pool had handed out
+     * @returns 'connect' for a code of the first list while a connection was being opened.
+     * 'lost' for a code of either list on a connection that was handed out, and for a code
+     * of the second list while one was being opened. Otherwise undefined
+     * @private
+     */
+    private static _connectionFailure(
+        error: any, opening: boolean
+    ): 'connect' | 'lost' | undefined {
+        try {
+            if (Object(error) !== error || PoolStatus._ownErrors.has(error)) return undefined;
+            // read all three before any is used, as _reduce() does
+            const { fatal, code, errno } = error;
+            if (fatal !== true) return undefined;
+            // Node gives an error of a socket a negative errno. A positive one is a server's
+            if (Number.isInteger(errno) && errno > 0) return undefined;
+            const connect = PoolStatus._connectCodes.has(code);
+            if (opening && connect) return 'connect';
+            return connect || PoolStatus._lostCodes.has(code) ? 'lost' : undefined;
+        } catch (unreadable) {
+            return undefined;
+        }
+    }
+
+    /**
+     * Passive health. Pool tells here every query, transaction and getConnection() of the
+     * app that failed, never the query of a check. It does something for a node with a
+     * healthCheck block whose `passive` is true, while the pool is connected and the node is
+     * up, and only for an error _connectionFailure() knows:
+     * - a connection that could not be opened takes the node down at once. It comes back
+     *   as after any check that took it down: by `rise` passes, or its first pass since
+     *   connect()
+     * - a connection that was lost leaves the node up. The next check that fails takes it
+     *   down, whatever `fall` is, and a check that gets its answer ends that
+     * Both start a check at once, in place of the one the timer was waiting for, unless a
+     * check is out or passive health started one since the last check of the timer.
+     * It never brings a node up, sets no checkError and emits no event.
+     * It starts no check during the slow pace of a refused login either: a node the server
+     * refused is down, and stays down until a check got its answer, which ends that pace
+     * @param error what the call was rejected with, as mysql2 handed it out
+     * @param opening true when the error came instead of a connection
+     */
+    public realFailure(error: unknown, opening: boolean): void {
+        const block = this._healthCheck;
+        if (!block || !block.passive || !this.active || !this._isValid) return;
+        const kind = PoolStatus._connectionFailure(error, opening);
+        if (!kind) return;
+
+        const code: string = (error as any).code;
+        this._passiveCode = code;
+        if (kind === 'connect') {
+            // the passes before this do not count toward `rise`
+            this._passedChecks = 0;
+            this._setValid(false, 'passive_connect');
+        } else {
+            this._lostConnection = true;
+        }
+
+        if (this._checkOut === this._checkRun || this._holdOff > 0) return;
+        // the check this starts, and the next one of the timer
+        this._holdOff = 2;
+        Logger.debug("Pool " + this._pool.name + ": the app " +
+            (kind === 'connect' ? "could not open a connection" : "lost a connection") +
+            ", the next check starts now", { pool: this._pool.name, passive: kind, code });
+        // In place of the pending check. It does nothing once stopTimerCheck() ran
+        this._timer.start(0);
     }
 
     /**
@@ -437,6 +587,8 @@ export class PoolStatus {
      * @private
      */
     private nextCheckStatus(downgrade: boolean = false, slow: boolean = false) {
+        // the check that sets its next one is over
+        this._checkOut = undefined;
         // A healthCheck block: the same wait after every check, but while the slow pace of
         // a refusal holds. Each new login can count against the account at the server, so
         // those checks wait authRetryInterval, as it is written: it may be shorter than

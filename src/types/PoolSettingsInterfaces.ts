@@ -18,7 +18,9 @@ export interface IHealthCheckSettings {
     // Time in ms before the next check after one whose login or account the server refused.
     // Left out: the longer of 60000 and `interval`
     authRetryInterval?: number,
-    // Validated and kept. No rule of the check reads it yet
+    // Passive health: a query or getConnection() of the app that cannot open a connection
+    // takes the node down at once, and one that loses its connection starts a check at once.
+    // Left out: true
     passive?: boolean
 }
 

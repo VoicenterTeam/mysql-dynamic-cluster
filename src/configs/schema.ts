@@ -52,7 +52,7 @@ const healthCheck = z.strictObject({
     // time in ms before the next check after one the server refused the login of. It may be
     // shorter than the interval. Left out, it is the longer of 60000 and the interval
     authRetryInterval: waitMs,
-    // validated and kept. No rule of the check reads it yet
+    // whether the connection failures of the queries of the app move the node too
     passive: z.boolean()
 }).partial();
 
