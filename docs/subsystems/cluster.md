@@ -55,6 +55,10 @@ Note: `ClusterHashing` is constructed unconditionally — the
 
 `connect` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
 
+`connect` first hands its pools to `Metrics.registerPools`, which reports
+their connection counts from then on, see
+[metrics.md](./metrics.md#pool-connection-metrics).
+
 `connect` returns a `Promise<void>` that wraps a `forEach` loop firing
 `pool.connect()` on every pool in parallel. The **first** pool to resolve
 wins the race:
@@ -109,11 +113,12 @@ See [../node-api.md](../node-api.md#firstready).
 Tears the cluster down in this order:
 
 1. `this.connected = false`.
-2. `this._clusterHashing?.stop()` halts the hashing refresh timer.
-3. `Redis.disconnect()` closes the shared Redis client.
-4. `pool.disconnect()` on every pool (synchronously kicked off via
+2. `Metrics.unregisterPools` ends the pool connection metrics of its pools.
+3. `this._clusterHashing?.stop()` halts the hashing refresh timer.
+4. `Redis.disconnect()` closes the shared Redis client.
+5. `pool.disconnect()` on every pool (synchronously kicked off via
    `forEach`).
-5. Emits `'disconnected'`.
+6. Emits `'disconnected'`.
 
 The method is `async` but does not await pool disconnects.
 

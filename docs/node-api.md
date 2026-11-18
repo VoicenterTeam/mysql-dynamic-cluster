@@ -158,7 +158,8 @@ The cluster does nothing to the connection before it hands it over, and nothing 
   This connection is on whatever database its last user left it on. Send `USE`, or put the
   database in front of the table name.
 - No metric. Nothing you run on it shows in `mysql_dynamic_cluster.query.duration` or
-  `mysql_dynamic_cluster.operation.duration`.
+  `mysql_dynamic_cluster.operation.duration`. The connection itself counts as `used` in
+  `mysql_dynamic_cluster.connection.count` while you hold it.
 - No reset, neither on the way out nor on the way back.
 
 The events `acquire`, `connection` and `release` fire for it as they do for the cluster's own
@@ -443,6 +444,12 @@ is before `connect()`. `limit` is set from the start.
 After `disconnect()` the closed mysql2 pool still exists. `getPoolStats()` keeps the counts
 that pool had when it was closed, and they do not go back to `0`. A connection the app held
 at that moment stays counted as `used`.
+
+The library publishes the same counts as OpenTelemetry metrics from `connect()` until
+`disconnect()`, as `mysql_dynamic_cluster.connection.count`,
+`mysql_dynamic_cluster.connection.pending_requests` and
+`mysql_dynamic_cluster.connection.max`. See
+[subsystems/metrics.md](subsystems/metrics.md#pool-connection-metrics).
 
 ## `failWaiting(nodeId, error)`
 

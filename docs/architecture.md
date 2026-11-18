@@ -113,11 +113,13 @@ Each call walks the following steps:
 
 `disconnect()` in
 [src/cluster/GaleraCluster.ts](../src/cluster/GaleraCluster.ts)
-performs three actions in order:
+performs four actions in order:
 
-1. Stops the cluster-hashing refresh timer.
-2. Calls `Redis.disconnect()` to close the shared client.
-3. Iterates over every pool and calls `pool.disconnect()`, which in
+1. Calls `Metrics.unregisterPools`, which ends the pool connection metrics
+   of its pools.
+2. Stops the cluster-hashing refresh timer.
+3. Calls `Redis.disconnect()` to close the shared client.
+4. Iterates over every pool and calls `pool.disconnect()`, which in
    turn calls the underlying `mysql2` `pool.end`.
    It finishes by emitting the `disconnected` cluster event.
 

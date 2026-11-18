@@ -41,6 +41,7 @@ tests/
   metrics/
     no-side-effects.test.ts      # Requiring the package has no side effects
     otel-metrics.test.ts         # OpenTelemetry metrics recorded by the cluster
+    pool-metrics.test.ts         # Pool connection metrics read at collection: values, attributes, connect and disconnect
   pool/
     flags.test.ts                # The flags pool setting reaches mysql2's createPool
     auto-flags.test.ts           # Flags picked from the server greeting: the rule, the pool, the log lines

@@ -60,7 +60,11 @@ A string prepended to every Redis key the library writes, configured by `redis.k
 
 ### Histogram
 
-An instrument that records a distribution of samples: a count, a sum and bucket counts. Every metric of the library is a histogram of durations in seconds, recorded through `Metrics.recordOperation`, `Metrics.recordQuery` and `Metrics.recordCacheLookup`; see [src/metrics/Metrics.ts](../src/metrics/Metrics.ts). Its count replaces the separate counters and meters the pm2 metrics had.
+An instrument that records a distribution of samples: a count, a sum and bucket counts. The three duration metrics of the library are histograms in seconds, recorded through `Metrics.recordOperation`, `Metrics.recordQuery` and `Metrics.recordCacheLookup`; see [src/metrics/Metrics.ts](../src/metrics/Metrics.ts). Its count replaces the separate counters and meters the pm2 metrics had.
+
+### Observable up-down counter
+
+An instrument for a value that goes up and down and is read, not recorded. The SDK calls a callback at each collection and the callback reports the value as it is then. The three pool connection metrics of the library are of this kind and read `Pool.stats()`; see [subsystems/metrics.md](subsystems/metrics.md#pool-connection-metrics).
 
 ### Attribute
 

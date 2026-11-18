@@ -282,7 +282,8 @@ not move. `GaleraCluster` calls them for the node API of
 - `stats()` returns `{ used, idle, pending }` from mysql2's own lists:
   `_allConnections.length - _freeConnections.length`,
   `_freeConnections.length` and `_connectionQueue.length`. All zeros before
-  the mysql2 pool exists.
+  the mysql2 pool exists. The pool connection metrics read it at each
+  collection, see [metrics.md](./metrics.md#pool-connection-metrics).
 
 Added in 4.6.0, after them, for `checkError` and `firstReady` of the node
 API:
