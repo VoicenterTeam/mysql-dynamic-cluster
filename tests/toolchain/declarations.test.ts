@@ -71,7 +71,7 @@ type Cluster = ReturnType<typeof createPoolCluster>;
 declare const cluster: Cluster;
 
 export const interfaces: [
-    Same<IGetConnectionOptions, { exclude?: number[] }>,
+    Same<IGetConnectionOptions, { exclude?: number[]; signal?: AbortSignal }>,
     Same<IClusterConnection, { connection: PoolConnection; nodeId: number }>,
     Same<INodeInfo, {
         id: number; name: string; host: string; port: number; isValid: boolean; loadScore: number;
@@ -98,6 +98,13 @@ export const members: [
 ] = [true, true, true, true, true, true];
 
 export const calls = [cluster.getConnection(), cluster.getConnection({ exclude: [1] })];
+
+// the signal of a controller, and one that is already aborted
+const controller = new AbortController();
+export const cancellable = [
+    cluster.getConnection({ signal: controller.signal }),
+    cluster.getConnection({ exclude: [1], signal: AbortSignal.abort() })
+];
 
 // what an app does with the new members, with strict on
 export async function refusedLogins(): Promise<number[]> {
@@ -134,6 +141,35 @@ describe('the declarations of the built package', () => {
             ignoreDeprecations: '6.0'
         });
         expect(errors).toEqual([]);
+    });
+
+    // AbortSignal is then the type of @types/node alone, as in an app that never loads the
+    // types of a browser
+    it('compile in an app that has no dom lib', () => {
+        const errors = compileApp(declarations, app, {
+            lib: ['lib.es2020.d.ts'], skipLibCheck: false
+        });
+        expect(errors).toEqual([]);
+    });
+
+    // the control: with that lib option a type of the browser is not there
+    it('have no dom type to lean on in that app', () => {
+        const errors = compileApp(declarations, app + 'export declare const page: Document;\n', {
+            lib: ['lib.es2020.d.ts']
+        });
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatch(/Document/);
+    });
+
+    it.each([
+        ['a string', "'abort'"],
+        ['a controller', 'new AbortController()'],
+        ['null', 'null']
+    ])('refuse a signal that is %s', (_name, value) => {
+        const call = 'export const wrong = cluster.getConnection({ signal: ' + value + ' });\n';
+        const errors = compileApp(declarations, app + call);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatch(/^2\d\d\d .*AbortSignal/);
     });
 
     it('make ready read-only', () => {

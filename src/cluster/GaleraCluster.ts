@@ -581,7 +581,8 @@ export class GaleraCluster {
      * excluded. One node and one request to its pool, with no retry. The caller owns the
      * connection: the cluster sets no timeout on it, does not change its database, does not
      * reset it and records no metric for it. See docs/node-api.md
-     * @param options exclude: ids of the nodes to leave out
+     * @param options exclude: ids of the nodes to leave out. signal: ends the wait for the
+     * connection when it aborts, the call then rejects with the reason of the signal as it is
      */
     public async getConnection(options?: IGetConnectionOptions): Promise<IClusterConnection> {
         const exclude = options?.exclude;
@@ -589,6 +590,13 @@ export class GaleraCluster {
         if (exclude !== undefined && !isIds) {
             throw new TypeError("getConnection: options.exclude must be an array of numbers");
         }
+        // null stands for no signal, as undefined does
+        const signal = options?.signal ?? undefined;
+        if (signal !== undefined && !GaleraCluster._isAbortSignal(signal)) {
+            throw new TypeError("getConnection: options.signal must be an AbortSignal");
+        }
+        // before a node is looked for: an aborted call asks none, also when none is left
+        if (signal?.aborted) throw Pool.abortReason(signal);
 
         const pool = this._validPools(exclude ?? [])[0];
         if (!pool) {
@@ -597,9 +605,13 @@ export class GaleraCluster {
             });
         }
 
+        // the pool sets `aborted` on it when the abort ended the call, not an error of the node
+        const outcome: AbortOutcome = {};
         try {
-            return { connection: await pool.getConnection(), nodeId: pool.id };
+            return { connection: await pool.getConnection(signal, outcome), nodeId: pool.id };
         } catch (error) {
+            // the reason of the signal belongs to the app. It goes back as it is
+            if (outcome.aborted) throw error;
             // the error of mysql2 itself, so the caller sees its code. Only the node is added
             try {
                 error.nodeId = pool.id;
@@ -608,6 +620,18 @@ export class GaleraCluster {
             }
             throw error;
         }
+    }
+
+    /**
+     * An AbortSignal, told by what the package uses of it and not by its class: a signal of a
+     * polyfill, or of another realm such as a vm context, is one too
+     * @private
+     */
+    private static _isAbortSignal(value: unknown): value is AbortSignal {
+        const signal = value as AbortSignal;
+        return typeof signal?.aborted === 'boolean'
+            && typeof signal.addEventListener === 'function'
+            && typeof signal.removeEventListener === 'function';
     }
 
     /**
@@ -654,3 +678,5 @@ export class GaleraCluster {
 // The object Pool.connect() fills for its caller: how the health check of that connect ended.
 // Named here, below the class, so the import lines above keep their line numbers
 type CheckOutcome = Parameters<Pool['connect']>[0];
+// The object Pool.getConnection() fills for its caller: whether an abort ended the call
+type AbortOutcome = Parameters<Pool['getConnection']>[1];

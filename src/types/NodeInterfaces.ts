@@ -3,7 +3,9 @@ import type { PoolConnection } from 'mysql2';
 // Options of GaleraCluster.getConnection
 export interface IGetConnectionOptions {
     // ids of the nodes to leave out, as nodes() reports them
-    exclude?: number[]
+    exclude?: number[],
+    // ends the wait for the connection when it aborts. The call then rejects with its reason
+    signal?: AbortSignal
 }
 
 // A connection handed out by GaleraCluster.getConnection. The caller owns it

@@ -42,6 +42,33 @@ describe('the node API of a cluster that has not connected yet', () => {
         expect(failure.code).toBe('MDC_NO_NODE_AVAILABLE');
     });
 
+    it('getConnection() rejects with the reason of an aborted signal, as it is', async () => {
+        const reason = new Error('too late');
+        const signal = AbortSignal.abort(reason);
+
+        expect(await makeCluster([{ id: 1 }]).getConnection({ signal }).catch((e: any) => e))
+            .toBe(reason);
+        expect(reason).not.toHaveProperty('code');
+    });
+
+    it('getConnection() rejects with a TypeError for a signal that is not one', async () => {
+        const failure = await makeCluster([{ id: 1 }]).getConnection({ signal: 'abort' })
+            .catch((e: any) => e);
+
+        expect(failure).toBeInstanceOf(TypeError);
+        expect(failure.message).toBe('getConnection: options.signal must be an AbortSignal');
+    });
+
+    it('getConnection() with a signal still says that no node is valid yet', async () => {
+        const { signal } = new AbortController();
+        const added = jest.spyOn(signal, 'addEventListener');
+
+        await expect(makeCluster([{ id: 1 }]).getConnection({ signal })).rejects.toMatchObject({
+            code: 'MDC_NO_NODE_AVAILABLE'
+        });
+        expect(added).not.toHaveBeenCalled();
+    });
+
     it('ready is a promise, the same one on every read', () => {
         const cluster = makeCluster([{ id: 1 }]);
 
