@@ -601,17 +601,15 @@ describe('legacy health check: the settings', () => {
         expect(config.current.hosts.map(host => 'healthCheck' in host)).toEqual([false, false]);
     });
 
-    // TODAY'S FACT, AND THE ONE TEST HERE THAT STEP 2 OF THE REDESIGN IS EXPECTED TO CHANGE.
-    // 4.6.0 knows no healthCheck block, so its strict schema refuses the key. Step 2 adds
-    // the block to the schema: this test then turns into one that accepts it
-    it.each<[string, object, string]>([
-        ['defaultPoolSettings', settingsOf({ healthCheck: {} }), 'defaultPoolSettings'],
-        ['a host', settingsOf({}, [{ host: 'node-a', healthCheck: {} }]), 'hosts[0]']
-    ])('a healthCheck key in %s is refused by the strict schema', (_where, settings, at) => {
-        const lines = errorLines(settings);
+    // Not in 4.6.0 or earlier, whose strict schema refused the key. The schema takes a
+    // healthCheck block, and a node that has one leaves the legacy check. What it does
+    // then is pinned in health-check.test.ts
+    it.each<[string, object]>([
+        ['defaultPoolSettings', settingsOf({ healthCheck: {} })],
+        ['a host', settingsOf({}, [{ host: 'node-a', healthCheck: {} }])]
+    ])('a healthCheck key in %s is accepted, and its node has the block', (_where, settings) => {
+        expect(errorLines(settings)).toEqual([]);
 
-        expect(lines[0]).toBe('Invalid mysql-dynamic-cluster settings:');
-        expect(lines).toContain('✖ Unrecognized key: "healthCheck"');
-        expect(lines).toContain(`  → at ${at}`);
+        expect('healthCheck' in config.current.hosts[0]).toBe(true);
     });
 });

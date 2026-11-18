@@ -116,6 +116,28 @@ export async function refusedLogins(): Promise<number[]> {
 }
 `;
 
+// The healthCheck block as an app reaches it, through the settings type the package exports
+const healthCheckApp = app + `
+import type { IUserSettings } from './index';
+
+type Block = NonNullable<IUserSettings['defaultPoolSettings']['healthCheck']>;
+type HostBlock = NonNullable<IUserSettings['hosts'][number]['healthCheck']>;
+
+export const blocks: [
+    Same<Block, {
+        interval?: number; timeout?: number; fall?: number; rise?: number;
+        authRetryInterval?: number; passive?: boolean
+    }>,
+    Same<HostBlock, Block>
+] = [true, true];
+
+export const settings: IUserSettings = {
+    clusterName: 'c',
+    hosts: [{ host: 'a' }, { host: 'b', healthCheck: { rise: 1 } }],
+    defaultPoolSettings: { user: 'u', password: 'p', database: 'd', healthCheck: {} }
+};
+`;
+
 describe('the declarations of the built package', () => {
     let declarations: Map<string, string>;
     beforeAll(() => { declarations = buildDeclarations(); });
@@ -130,6 +152,26 @@ describe('the declarations of the built package', () => {
 
     it('compile in an app that reads the optional fields exactly', () => {
         expect(compileApp(declarations, app, { exactOptionalPropertyTypes: true })).toEqual([]);
+    });
+
+    it('type the healthCheck block of the default pool settings and of a host', () => {
+        expect(compileApp(declarations, healthCheckApp)).toEqual([]);
+    });
+
+    it('type the healthCheck block for an app that reads the optional fields exactly', () => {
+        const exact = { exactOptionalPropertyTypes: true };
+        expect(compileApp(declarations, healthCheckApp, exact)).toEqual([]);
+    });
+
+    it.each([
+        ['a key the block does not have', '{ bogus: 1 }', /^2353 .*bogus/],
+        ['an interval that is a string', "{ interval: '5000' }", /^2322 .*string.*number/],
+        ['a passive that is a number', '{ passive: 1 }', /^2322 .*number.*boolean/]
+    ])('refuse a healthCheck block with %s', (_name, block, error) => {
+        const wrong = healthCheckApp.replace('healthCheck: { rise: 1 }', 'healthCheck: ' + block);
+        const errors = compileApp(declarations, wrong);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatch(error);
     });
 
     // such an app checks the declarations of every package it imports, and a default import

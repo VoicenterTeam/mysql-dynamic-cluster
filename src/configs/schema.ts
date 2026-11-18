@@ -2,10 +2,11 @@ import { z } from 'zod';
 import { LOGLEVEL } from '../types/LoggerInterfaces';
 import { IParsedSettings } from '../types/SettingsInterfaces';
 import { IValidatorParams } from '../types/PoolInterfaces';
+import { IHealthCheck, IHealthCheckSettings } from '../types/PoolSettingsInterfaces';
 
 /**
  * Settings schema. Every object is strict: a key the schema doesn't know is an error, not ignored.
- * Defaults live here and nowhere else
+ * Defaults live here and nowhere else. Those of a healthCheck block are in fillHealthCheck()
  */
 
 const validator = z.strictObject({
@@ -29,6 +30,25 @@ const timerCheckRange = z.strictObject({
     end: z.number()
 }).partial();
 
+// A time in ms that a timer of Node can wait. A longer one would fire after 1 ms
+const timerMs = z.number().positive().max(2147483647);
+// how many checks in a row
+const checkCount = z.number().int().min(1);
+
+// Any key may be left out. No defaults in the schema: it must never add the block, since a
+// node without one keeps the legacy check
+const healthCheck = z.strictObject({
+    // time in ms between two checks, counted from the end of the check before
+    interval: timerMs,
+    // time in ms one check may take. It may be longer than the interval
+    timeout: timerMs,
+    fall: checkCount,
+    rise: checkCount,
+    // the last two are validated and kept. No rule of the check reads them yet
+    authRetryInterval: timerMs,
+    passive: z.boolean()
+}).partial();
+
 // Pool settings without defaults, shared by defaultPoolSettings and every host
 const poolFields = {
     user: z.string(),
@@ -47,6 +67,8 @@ const poolFields = {
     // time in ms
     timerCheckRange,
     timerCheckMultiplier: z.number(),
+    // a node that has it is checked by its rules, and ignores the two keys above
+    healthCheck,
     // time in ms
     queryTimeout: z.number(),
     // time in seconds
@@ -80,6 +102,8 @@ const defaultPoolSettings = z.strictObject({
         end: z.number().default(15000)
     }).prefault({}),
     timerCheckMultiplier: poolFields.timerCheckMultiplier.default(1.3),
+    // no default: left out, every host without one of its own keeps the legacy check
+    healthCheck: poolFields.healthCheck.optional(),
     queryTimeout: poolFields.queryTimeout.default(2 * 60 * 1000),
     slowQueryTime: poolFields.slowQueryTime.default(1),
     redisFactor: poolFields.redisFactor.default(1),
@@ -131,6 +155,24 @@ export const settingsSchema = z.strictObject({
         level: z.enum(LOGLEVEL).default(LOGLEVEL.INFO)
     }).prefault({})
 });
+
+/**
+ * The healthCheck block of a node with every key: what the app wrote, and the default for
+ * each key it left out. A key set to undefined counts as left out
+ * @param written the block of the default pool settings with the keys of the host on top
+ */
+export function fillHealthCheck(written: IHealthCheckSettings): IHealthCheck {
+    const {
+        interval = 5000,
+        // one check may take as long as the wait between two
+        timeout = interval,
+        fall = 2,
+        rise = 2,
+        authRetryInterval = 60000,
+        passive = true
+    } = written;
+    return { interval, timeout, fall, rise, authRetryInterval, passive };
+}
 
 /**
  * Validate settings and fill in the defaults

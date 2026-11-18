@@ -2,7 +2,7 @@ import { spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { parseSettings } from '../../src/configs/schema';
+import { fillHealthCheck, parseSettings } from '../../src/configs/schema';
 import { Settings } from '../../src/utils/Settings';
 import { IUserSettings } from '../../src/types/SettingsInterfaces';
 import { IUserPoolSettings } from '../../src/types/PoolSettingsInterfaces';
@@ -316,6 +316,10 @@ describe('Settings.mixSettings', () => {
         ['a host', '{"hosts":[{"host":"a","__proto__":{"x":1}}]}'],
         ['the timerCheckRange of a host', '{"hosts":[{"host":"a","timerCheckRange":{"__proto__":{"x":1}}}]}'],
         ['a validator of a host', '{"hosts":[{"host":"a","validators":[{"key":"k","operator":"=","value":1,"__proto__":{"x":1}}]}]}'],
+        ['the healthCheck block of a host',
+            '{"hosts":[{"host":"a","healthCheck":{"__proto__":{"x":1}}}]}'],
+        ['the healthCheck block of defaultPoolSettings',
+            '{"defaultPoolSettings":{"healthCheck":{"__proto__":{"x":1}}}}'],
         ['defaultPoolSettings', '{"defaultPoolSettings":{"__proto__":{"x":1}}}']
     ])('rejects a __proto__ key in %s', (_place, json) => {
         const settings = { ...base(), ...JSON.parse(json) };
@@ -378,6 +382,98 @@ describe('Settings.mixSettings', () => {
     it('throws on invalid settings', () => {
         const invalid = { ...base(), errorRetryCount: 'abc' } as any;
         expect(() => Settings.mixSettings(invalid)).toThrow('→ at errorRetryCount');
+    });
+});
+
+describe('the healthCheck block', () => {
+    const defaults = {
+        interval: 5000, timeout: 5000, fall: 2, rise: 2, authRetryInterval: 60000, passive: true
+    };
+    const withBlock = (pool: object, host: object = {}): IUserSettings => ({
+        ...base(),
+        defaultPoolSettings: { user: 'u', password: 'p', database: 'd', ...pool },
+        hosts: [{ host: 'a', ...host }]
+    });
+
+    it('fillHealthCheck gives an empty block the six defaults', () => {
+        expect(fillHealthCheck({})).toStrictEqual(defaults);
+    });
+
+    it('fillHealthCheck sets a timeout left out to the interval that was written', () => {
+        expect(fillHealthCheck({ interval: 300 }))
+            .toStrictEqual({ ...defaults, interval: 300, timeout: 300 });
+    });
+
+    it('fillHealthCheck gives a key set to undefined its default', () => {
+        const block = { interval: undefined, timeout: undefined, fall: undefined, rise: 7 };
+        expect(fillHealthCheck(block)).toStrictEqual({ ...defaults, rise: 7 });
+    });
+
+    it('is not added by the schema: the defaults and a host have none', () => {
+        const settings = Settings.mixSettings(base());
+
+        expect(Object.keys(settings.defaultPoolSettings)).not.toContain('healthCheck');
+        expect(Object.keys(settings.hosts[0])).not.toContain('healthCheck');
+    });
+
+    it('is filled in on the host and kept as written in the default pool settings', () => {
+        const settings = Settings.mixSettings(withBlock({ healthCheck: { fall: 3 } }));
+
+        expect(settings.hosts[0].healthCheck).toStrictEqual({ ...defaults, fall: 3 });
+        expect(settings.defaultPoolSettings.healthCheck).toStrictEqual({ fall: 3 });
+    });
+
+    it.each<[string, object, object, string[]]>([
+        ['nothing for a host without the block', { timerCheckMultiplier: 2 }, {}, []],
+        ['nothing when the app wrote neither key', { healthCheck: {} }, {}, []],
+        ['the key of the default pool settings',
+            { healthCheck: {}, timerCheckMultiplier: 2 }, {}, ['timerCheckMultiplier']],
+        ['the key of the host',
+            { healthCheck: {} }, { timerCheckRange: { start: 1 } }, ['timerCheckRange']],
+        ['both keys, one from each place, in a fixed order',
+            { timerCheckMultiplier: 2 }, { healthCheck: {}, timerCheckRange: {} },
+            ['timerCheckRange', 'timerCheckMultiplier']],
+        ['nothing for a key set to undefined',
+            { healthCheck: {}, timerCheckMultiplier: undefined },
+            { timerCheckRange: undefined }, []]
+    ])('Settings.ignoredCheckKeys names %s', (_name, pool, host, keys) => {
+        const settings = Settings.mixSettings(withBlock(pool, host));
+
+        expect(Settings.ignoredCheckKeys(settings.hosts[0])).toEqual(keys);
+    });
+
+    it('Settings.ignoredCheckKeys names the keys of each host by itself', () => {
+        const settings = Settings.mixSettings({
+            ...base(),
+            hosts: [
+                { host: 'a', healthCheck: {} },
+                { host: 'b', healthCheck: {}, timerCheckMultiplier: 2 },
+                { host: 'c', timerCheckMultiplier: 2 }
+            ]
+        });
+
+        expect(settings.hosts.map(host => Settings.ignoredCheckKeys(host)))
+            .toEqual([[], ['timerCheckMultiplier'], []]);
+    });
+
+    it.each<[string, any]>([
+        ['a copy of the host', (host: IUserPoolSettings) => ({ ...host })],
+        ['undefined', (): undefined => undefined],
+        ['a string', () => 'a']
+    ])('Settings.ignoredCheckKeys names nothing for %s', (_name, other) => {
+        const pool = { healthCheck: {}, timerCheckMultiplier: 2 };
+        const settings = Settings.mixSettings(withBlock(pool));
+
+        expect(Settings.ignoredCheckKeys(other(settings.hosts[0]))).toEqual([]);
+    });
+
+    it('Settings.ignoredCheckKeys hands out a new array on every call', () => {
+        const pool = { healthCheck: {}, timerCheckMultiplier: 2 };
+        const [host] = Settings.mixSettings(withBlock(pool)).hosts;
+
+        Settings.ignoredCheckKeys(host).push('changed');
+
+        expect(Settings.ignoredCheckKeys(host)).toEqual(['timerCheckMultiplier']);
     });
 });
 
