@@ -1034,6 +1034,55 @@ describe('health check with a healthCheck block: the settings', () => {
         expect(config.current.defaultPoolSettings.healthCheck.interval).toBe(2000);
     });
 
+    // The block of the default pool settings, the block of the host, and the
+    // authRetryInterval of the host: what the app wrote, or the longer of 60000 and the
+    // interval of that host when nobody wrote it
+    it.each<[string, object | undefined, object | undefined, number]>([
+        ['is 60000 with the default interval', {}, undefined, 60000],
+        ['is 60000 with an interval below it', { interval: 59999 }, undefined, 60000],
+        ['is 60000 with an interval of 60000', { interval: 60000 }, undefined, 60000],
+        ['is the interval once that is longer', { interval: 60001 }, undefined, 60001],
+        ['is the interval of 300000 of the default block', { interval: 300000 }, {}, 300000],
+        ['follows the interval of a host that has its own',
+            { interval: 2000 }, { interval: 90000 }, 90000],
+        ['is 60000 again for a host with a shorter interval of its own',
+            { interval: 300000 }, { interval: 2000 }, 60000],
+        ['follows the interval of a host that alone has a block',
+            undefined, { interval: 120000 }, 120000],
+        ['is the value the app wrote, also below the interval',
+            { interval: 300000, authRetryInterval: 1000 }, undefined, 1000],
+        ['is the value written in the default block, whatever the interval of the host',
+            { authRetryInterval: 60000 }, { interval: 300000 }, 60000],
+        ['is the value written on the host first',
+            { interval: 300000, authRetryInterval: 1000 }, { authRetryInterval: 500 }, 500],
+        ['set to undefined on the host counts as left out',
+            { interval: 300000 }, { authRetryInterval: undefined }, 300000],
+        ['set to undefined in both places counts as left out',
+            { interval: 90000, authRetryInterval: undefined },
+            { authRetryInterval: undefined }, 90000]
+    ])('authRetryInterval %s', (_name, onDefaults, onHost, wanted) => {
+        const hosts = [{ host: 'node-a', ...(onHost ? { healthCheck: onHost } : {}) }];
+        createPoolCluster(settingsOf(onDefaults ? { healthCheck: onDefaults } : {}, hosts));
+
+        expect(blocks()[0].authRetryInterval).toBe(wanted);
+    });
+
+    it('the default authRetryInterval is not written into the default pool settings', () => {
+        createPoolCluster(settingsOf({ healthCheck: { interval: 300000 } }, twoHosts()));
+
+        expect(config.current.defaultPoolSettings.healthCheck).toEqual({ interval: 300000 });
+        expect(blocks().map(block => block.authRetryInterval)).toEqual([300000, 300000]);
+    });
+
+    it('an interval of 90000 alone makes a refused login wait 90000 too', async () => {
+        const node = fakeNode([PASS, 'denied', 'denied', PASS]);
+        await start({ healthCheck: { interval: 90000 } });
+
+        await pass(270000);
+
+        expect(waits(node)).toEqual([90000, 90000, 90000]);
+    });
+
     it('a host overrides the authRetryInterval of the default block', async () => {
         const a = fakeNode([PASS, 'denied', PASS], 'node-a');
         const b = fakeNode([PASS, 'denied', PASS], 'node-b');

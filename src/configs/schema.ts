@@ -50,7 +50,7 @@ const healthCheck = z.strictObject({
     fall: checkCount,
     rise: checkCount,
     // time in ms before the next check after one the server refused the login of. It may be
-    // shorter than the interval
+    // shorter than the interval. Left out, it is the longer of 60000 and the interval
     authRetryInterval: waitMs,
     // validated and kept. No rule of the check reads it yet
     passive: z.boolean()
@@ -175,7 +175,9 @@ export function fillHealthCheck(written: IHealthCheckSettings): IHealthCheck {
         timeout = interval,
         fall = 2,
         rise = 2,
-        authRetryInterval = 60000,
+        // a node that refuses the login is not asked more often than one that answers,
+        // unless the app wrote it so
+        authRetryInterval = Math.max(60000, interval),
         passive = true
     } = written;
     return { interval, timeout, fall, rise, authRetryInterval, passive };
