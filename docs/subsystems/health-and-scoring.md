@@ -324,8 +324,10 @@ connection to use again.
   so is a limit of the account (1226).
 - `authRetryInterval: 100`, the lowest value the settings take, is 600
   logins in a minute, measured, which makes 36000 in an hour.
-- `interval` has no part in the first three rows: `interval: 1000` with the
-  default `authRetryInterval` is 60 as well.
+- An `interval` below 60000 changes none of the first three rows:
+  `interval: 1000` with the default `authRetryInterval` is 60 as well. A
+  longer `interval` is also the default `authRetryInterval`: with
+  `interval: 90000` alone a refused login is followed by 90000.
 - Only the checks are counted. Without `flags` in the settings each
   `connect()` logs in once more to read the server version, and a query the
   app sends to that node logs in too.
