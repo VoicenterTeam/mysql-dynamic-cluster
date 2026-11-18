@@ -29,9 +29,10 @@ the cluster is created.
 | | Legacy check | Check with a `healthCheck` block |
 | --- | --- | --- |
 | Which node | A node whose settings hold no `healthCheck` block. That is every node of an app that does not set the block | A node whose settings hold the block, from `defaultPoolSettings` or from its host. An empty block is enough. Not in 4.6.0 or earlier |
-| Wait before the next check | Longer after an answered check, shorter after a failed one, inside `timerCheckRange`. See [Adaptive timer](#adaptive-timer) | `healthCheck.interval`, the same after every check |
+| Wait before the next check | Longer after an answered check, shorter after a failed one, inside `timerCheckRange`. See [Adaptive timer](#adaptive-timer) | `healthCheck.interval` after every check but one: after a check the server refused the login of it is `healthCheck.authRetryInterval` |
 | Timeout of one check | `min(queryTimeout, timerCheckRange.end)` | `healthCheck.timeout` |
-| Down | At the second failed check in a row, or with one check a validator says no to | At the `fall`th failed check in a row, or with one check a validator says no to |
+| Down | At the second failed check in a row, or with one check a validator says no to | At the `fall`th failed check in a row, with one check a validator says no to, or with one check the server refuses the login of |
+| A refused login | A failed check like any other | Down at once and a slower next check, see [A login or account refusal](#a-login-or-account-refusal) |
 | Back | With one check that passes | With `rise` passes in a row, or with the first pass since `connect()` |
 | Over `disconnect()` and a new `connect()` | The count of failed checks and the wait are kept | Both runs start again |
 | A check that throws after its answer came | The node is already set to what the validators said | A failed check. A pass it held does not count, a no does |
@@ -43,7 +44,8 @@ The check itself is the same in both: one `SHOW GLOBAL STATUS` through
 and the wait before the next check differ. `PoolStatus` keeps the block as
 `_healthCheck`. The constructor takes the timeout and `fall` from it,
 `startTimerCheck()` resets the runs for it, `checkStatus()` applies its rules
-and `nextCheckStatus()` waits its interval.
+and `nextCheckStatus()` waits its `interval`, or its `authRetryInterval`
+after a refusal.
 
 The settings are in [../configuration.md](../configuration.md#healthcheck).
 The legacy check is pinned by
@@ -65,7 +67,7 @@ Next to `isValid` three values make the state of a node:
 `startTimerCheck()` sets all three back, so every `connect()` starts with no
 run. It leaves `isValid` as it is.
 
-A check ends in one of three ways:
+A check ends in one of four ways:
 
 1. **It passed.** The status query ran and every validator said yes. The run
    of failures is reset and the run of passes grows by one. A node that is up
@@ -73,12 +75,17 @@ A check ends in one of three ways:
    a row, or the first pass since `connect()`.
 2. **A validator said no.** The status query ran. The node goes down at
    once, whatever `fall` is, and both runs are reset.
-3. **It failed.** It got no answer: no connection, a refused login, a lost
-   connection, the timeout of the check, or an error the package made. The
-   run of passes is reset and the run of failures grows by one. At `fall` in
-   a row the node goes down. Every kind of failure counts the same.
+3. **It failed.** It got no answer: no connection, a lost connection, the
+   timeout of the check, an error of the server that is no refusal, or an
+   error the package made. The run of passes is reset and the run of
+   failures grows by one. At `fall` in a row the node goes down. Every kind
+   of failure counts the same, but for the next one.
+4. **The server refused the login or the account.** It is a failed check
+   that takes the node down at once, whatever `fall` is. See
+   [A login or account refusal](#a-login-or-account-refusal).
 
-After each of the three the next check is set `interval` ms later.
+After a refusal the next check is set `authRetryInterval` ms later. After
+each of the other three it is set `interval` ms later.
 
 More on these rules:
 
@@ -103,8 +110,9 @@ More on these rules:
   with the legacy check.
 - **A change of state is logged, one line each.** A node that goes down logs
   a `warn`, a node that comes back an `info`. The meta has `pool`, `valid`
-  and `reason`: `fall` or `validator` for a node that went down,
-  `first_pass` or `rise` for one that came up. A check that leaves the node
+  and `reason`: `fall`, `refusal` or `validator` for a node that went down,
+  `first_pass` or `rise` for one that came up. The line of a `refusal` also
+  has the `errno` of the server. A check that leaves the node
   as it was logs no such line, so a dead node logs one `warn` and then only
   the error line of each failed check. A node that was never up logs no
   `warn`. The legacy check logs none of these lines.
@@ -124,6 +132,150 @@ More on these rules:
   validators gave it holds: the node goes down at once. The legacy check
   sets the node to what the validators said before the rest of the check
   runs, so there such a check can leave a node valid.
+
+### A login or account refusal
+
+A check the server refused is a failed check with two rules of its own:
+
+1. The node goes down with that one check, whatever `fall` is.
+2. The next check waits `authRetryInterval`, 60000 ms by default, where
+   every other check is followed by `interval`.
+
+For the rest it is a failed check like any other. It ends a run of passes,
+sets `checkError`, emits `pool_check_failed` and is recorded as an `error`
+check. The node comes back by `rise` passes in a row, or by the first pass
+since `connect()`. Only the check right after a refusal waits
+`authRetryInterval`. The passes that bring the node back are `interval`
+apart.
+
+A refusal is told by the `errno` of the reduced
+[`checkError`](#the-error-of-the-last-check), and by nothing else. The list
+is fixed:
+
+| `errno` | `code` in mysql2 3.24.6 | Message of the server |
+| --- | --- | --- |
+| 1044 | `ER_DBACCESS_DENIED_ERROR` | Access denied for user '%s'@'%s' to database '%s' |
+| 1045 | `ER_ACCESS_DENIED_ERROR` | Access denied for user '%s'@'%s' (using password: %s) |
+| 1049 | `ER_BAD_DB_ERROR` | Unknown database '%s' |
+| 1129 | `ER_HOST_IS_BLOCKED` | Host '%s' is blocked because of many connection errors; unblock with 'mysqladmin flush-hosts' |
+| 1130 | `ER_HOST_NOT_PRIVILEGED` | Host '%s' is not allowed to connect to this MySQL server |
+| 1226 | `ER_USER_LIMIT_REACHED` | User '%s' has exceeded the '%s' resource (current value: %ld) |
+| 1862 | `ER_MUST_CHANGE_PASSWORD_LOGIN` | Your password has expired. To log in you must change it using a client that supports expired passwords. |
+| 3118 | `ER_ACCOUNT_HAS_BEEN_LOCKED` | Access denied for user '%s'@'%s'. Account is locked. |
+| 3159 | `ER_SECURE_TRANSPORT_REQUIRED` | Connections using insecure transport are prohibited while --require_secure_transport=ON. |
+| 3955 | `ER_USER_ACCESS_DENIED_FOR_USER_ACCOUNT_BLOCKED_BY_PASSWORD_LOCK` | Access denied for user '%s'@'%s'. Account is blocked for %s day(s) (%s day(s) remaining) due to %u consecutive failed logins. |
+| 4150, MariaDB | `ER_BULK_PARSER_UNEXPECTED_CHAR_AFTER_COLUMN_TERMINATOR` | User is blocked because of too many credential errors; unblock with 'FLUSH PRIVILEGES' |
+| 4151, MariaDB | `ER_BULK_PARSER_INCOMPLETE_ESCAPE_SEQUENCE` | Access denied, this account is locked |
+
+The messages of 1044 to 3955 are those of the
+[MySQL 8.0 server error reference](https://dev.mysql.com/doc/mysql-errors/8.0/en/server-error-reference.html),
+the last two those of the
+[MariaDB error codes 4100 to 4199](https://mariadb.com/docs/server/reference/error-codes/mariadb-error-codes-4100-to-4199).
+
+- **Go by `errno`, not by `code`, for 4150 and 4151.** mysql2 names an errno
+  by the table of MySQL. In the
+  [MySQL 8.4 reference](https://dev.mysql.com/doc/mysql-errors/8.4/en/server-error-reference.html)
+  these two numbers are errors about a row of a data file, so a MariaDB node
+  that blocked the user shows the `code` of the table above. A health check
+  loads no data file, so a MySQL node does not answer a check with them.
+- **Never by `fatal`.** The same refusal reaches a check in three shapes,
+  and only one of them is fatal:
+
+  | Where the server refused | What mysql2 3.24.6 hands out |
+  | --- | --- |
+  | At the login of a new connection, when the pool had no free one | The error packet with `errno`, `code` and `sqlState`, and no `fatal` |
+  | At the change of user on an open connection. Every query of the package sends one first, the check included | The same error with `fatal: true`. mysql2 marks every error of a change of user as fatal. The pool destroys that connection, so the next check logs in on a new one |
+  | As the answer to the status query, as a limit on queries per hour does with 1226 | The error packet, and no `fatal` |
+
+- **A failure the package made is never a refusal.** Its `checkError` is
+  an empty object: the timeout of the check, an error thrown after the
+  answer came, and an error the app passed to `failWaiting()`, whatever
+  `errno` that error has.
+- **Every other error counts toward `fall`** and is followed by `interval`:
+  too many connections (1040), too many connections of the user (1203), a
+  deadlock (1213), a lock wait timeout (1205), a node that is not ready
+  (1047), a lost or a refused connection. They pass with time, or say
+  nothing about the login.
+- **What a check on an open connection does not see.** An app reported from
+  a real server that for 1040 and 1129 a new login is refused while the
+  change of user on an open connection still passes. A pool that holds an
+  open connection runs its check on that one. Such a check passes, and sees
+  neither of the two until it has to open a new connection. This was not
+  reproduced here and is not changed.
+- **`connect()` checks at once.** `authRetryInterval` holds back the timer
+  of the node, nothing else. A `disconnect()` and a new `connect()` log in
+  right away, whatever the last check ended with. A refused check of that
+  `connect()` is followed by `authRetryInterval` again.
+- **`authRetryInterval` is used as it is written**, also when it is shorter
+  than `interval`. An app with an `interval` above 60000 that wants no
+  faster check after a refusal sets `authRetryInterval` as well.
+- **The change of state is logged like any other**, as one `warn` with the
+  reason `refusal` and the `errno`. A refusal of a node that is down already
+  logs no such line, as no state changed.
+- **The legacy check has no such rule.** There a refused login is a failed
+  check like any other: the second in a row takes the node down, and the
+  wait follows `timerCheckRange` and `timerCheckMultiplier`.
+- **The list is not a setting.** An app cannot add or remove an errno.
+
+#### Why the next check waits
+
+Every check is a login. A check that finds no free connection opens one,
+and a check on an open connection sends a change of user, which the server
+answers as it answers a login. A server counts refused logins, and what it
+counts them toward does not pass by asking again:
+
+- MySQL 8.0.19 and later lock an account after `FAILED_LOGIN_ATTEMPTS`
+  wrong passwords in a row, for `PASSWORD_LOCK_TIME` days or until someone
+  unlocks it. A locked account answers with 3955. See
+  [Failed-login tracking and temporary account locking](https://dev.mysql.com/doc/refman/8.0/en/password-management.html#failed-login-tracking).
+- The MySQL connection control plugin delays the answer once an account
+  failed more often in a row than its threshold, 3 by default. The delay
+  starts at one second and grows by a second with each attempt, until a
+  login passes. See
+  [Connection control plugin installation](https://dev.mysql.com/doc/refman/8.0/en/connection-control-plugin-installation.html).
+- MariaDB blocks a user after `max_password_errors` logins with a wrong
+  password, until `FLUSH PRIVILEGES`. The message of 4150 is the one of
+  such a block. See
+  [`max_password_errors`](https://mariadb.com/docs/server/server-management/variables-and-modes/server-system-variables#max_password_errors).
+- An account with a limit per hour that reached it is refused with 1226:
+  "the server rejects further connections for the account until that hour
+  is up". See
+  [Setting account resource limits](https://dev.mysql.com/doc/refman/8.0/en/user-resources.html).
+- A host the server blocked after `max_connect_errors` broken connection
+  attempts answers with 1129 until the host cache is flushed. See
+  [DNS lookups and the host cache](https://dev.mysql.com/doc/refman/8.0/en/host-cache.html).
+
+So a refused login is not worth repeating every few seconds: it will be
+refused again, and with a wrong password each repeat is one more toward a
+lock. The slow retry does not prevent a lock. It gives more time to act: a
+limit of `N` wrong passwords is reached after `N - 1` minutes with the
+default, where an interval of 5000 reaches it after `N - 1` times 5 seconds,
+as long as only the check logs in.
+
+#### Logins in one hour
+
+Measured with a fake clock in
+[tests/pool/health-check.test.ts](../../tests/pool/health-check.test.ts). A
+node passes the check of `connect()`, and from then on the server refuses
+every login with 1045. The table counts the checks in the hour after the
+first refused one. Each is one login at the server, as the pool holds no
+connection to use again.
+
+| Settings | Wait after a refused login, ms | Logins in that hour |
+| --- | --- | --- |
+| `healthCheck: {}` | 60000 | 60 |
+| `healthCheck: { authRetryInterval: 300000 }` | 300000 | 12 |
+| `healthCheck: { authRetryInterval: 5000 }` | 5000 | 720 |
+| Legacy, default settings | 10000, 7692, 5917, then 5000 | 718 |
+| Legacy, range 15000 to 60000, multiplier 0.1 | 60000 | 60 |
+
+- A failure that is no refusal is checked again every `interval`. Too many
+  connections (1040) with `healthCheck: {}` is 720 checks in that hour.
+- `interval` has no part in the first three rows: `interval: 1000` with the
+  default `authRetryInterval` is 60 as well.
+- Only the checks are counted. Without `flags` in the settings each
+  `connect()` logs in once more to read the server version, and a query the
+  app sends to that node logs in too.
 
 ### Time to leave rotation and to come back
 
@@ -160,6 +312,11 @@ failed, or while a check hangs.
   before its check is due. Back: 5000 with `rise: 1`, 6000 with
   `interval: 2000` and `rise: 3`.
 - The legacy values next to the block change none of these numbers.
+- A node whose login is refused is out with the first refused check: 5000
+  at most with the defaults, and the same with `fall: 3`. Once the login is
+  put right it is back after `authRetryInterval`, plus `interval` for each
+  further pass of `rise`: 65000 with the defaults, 60000 with `rise: 1`,
+  24000 with `authRetryInterval: 20000`, `interval: 2000` and `rise: 3`.
 
 ### Where the pattern comes from
 
@@ -214,6 +371,10 @@ Private members worth knowing about:
 - `_passedChecks: number`, `_passedSinceStart: boolean`: the run of passes
   and the first pass since `connect()`. Only a node with the block reads
   them.
+- `_refusals`: the errno list of
+  [A login or account refusal](#a-login-or-account-refusal), static.
+  `_refused()` looks the `errno` of `_checkError` up in it, and says no for
+  a node of the legacy check.
 - `_validator: Validator`, `_loadFactor: LoadFactor`, `_timer: Timer` —
   constructed once and reused for the lifetime of the pool
   ([PoolStatus.ts](../../src/pool/PoolStatus.ts)).
@@ -246,7 +407,8 @@ Async, idempotent against the `active` flag. Sequence on every tick:
 6. `this._loadScore = this._loadFactor.check(result)`
    ([PoolStatus.ts](../../src/pool/PoolStatus.ts)).
 7. `this.nextCheckStatus()` schedules the next tick on success. With a
-   `healthCheck` block the wait is `interval`, here and in the `catch`.
+   `healthCheck` block the wait is `interval`, here and in the `catch`. The
+   `catch` waits `authRetryInterval` when the server refused the check.
 
 If any step throws, the `catch` branch
 ([PoolStatus.ts](../../src/pool/PoolStatus.ts)) logs, still records
@@ -263,7 +425,9 @@ counter and assigns `_isValid` from the validator again. Before 3.2.2 a
 failed check never touched `_isValid`, so a node whose checks all failed
 stayed in rotation. With a `healthCheck` block the count that takes the node
 down is `fall`, kept as `_fall`, and a failed check also resets the run of
-passes.
+passes. A check the server refused does not wait for that count: `_refused()`
+says so from the `errno` of the reduced error, and the node goes down with
+that check.
 
 Every check that ends is recorded as the metric
 `mysql_dynamic_cluster.health_check.duration`, with the result `valid`,
@@ -357,7 +521,8 @@ check with `ETIMEDOUT` when the timer of the check is longer than that.
 [src/pool/PoolStatus.ts](../../src/pool/PoolStatus.ts).
 
 This is the wait of the legacy check. For a node with a `healthCheck` block
-`nextCheckStatus` starts the timer with `healthCheck.interval` and returns
+`nextCheckStatus` starts the timer with `healthCheck.interval`, or with
+`healthCheck.authRetryInterval` after a check the server refused, and returns
 before any of the arithmetic below. `_nextCheckTime` is not touched then.
 
 ```text

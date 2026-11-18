@@ -120,6 +120,7 @@ Not in 4.6.0 or earlier. A node that has this block is checked by new rules: a f
 | `timeout` | `number` (ms), 1 or more | the `interval` of the node | The limit of one check, the wait for a connection included |
 | `fall` | integer, 1 or more | `2` | Failed checks in a row before a node goes down |
 | `rise` | integer, 1 or more | `2` | Passed checks in a row before a node that is down comes back |
+| `authRetryInterval` | `number` (ms), 100 or more | `60000` | The wait before the next check after a check whose login or account the server refused. Such a check also takes the node down at once |
 
 An empty block is enough to switch a node, and gives it the defaults:
 
@@ -137,7 +138,9 @@ What to know:
 - **`timeout` may be longer than `interval`.** The interval is counted from the end of a check, so two checks of the timer do not run at the same time. A check that waits for a new connection also ends with the connect timeout of mysql2, 10 seconds, when `timeout` is longer than that.
 - **A node that was down needs `rise` passes, the first pass after `connect()` only one.** So a start is not slowed, and neither is a node that was down when the app started. Set `rise: 1` to bring every node back with one pass, as the legacy check does.
 - **A validator that says no takes the node down with one check**, whatever `fall` is. `fall` counts the checks that got no answer.
-- **A change of state is logged.** A node that goes down logs one `warn`, a node that comes back one `info`, each with the meta `pool`, `valid` and `reason`. The reason is `fall` or `validator` for a node that went down, `first_pass` or `rise` for one that came up. A node of the legacy check logs neither.
+- **A refused login takes the node down with one check too, and the next check waits `authRetryInterval`.** A wrong password, a locked account or a blocked host does not pass by asking again, and each login can count against the account at the server. With the default a node that refuses the login is asked once a minute, 60 times an hour, where `interval` alone would ask 720 times. The check after that is `interval` away again, so only the check right after a refusal is slowed. Which errors count as a refusal, and why, is in [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#a-login-or-account-refusal).
+- **`authRetryInterval` is used as it is written.** It may be shorter than `interval`. An app with an `interval` above 60000 sets it as well, or a node that refuses the login is checked more often than one that answers.
+- **A change of state is logged.** A node that goes down logs one `warn`, a node that comes back one `info`, each with the meta `pool`, `valid` and `reason`. The reason is `fall`, `refusal` or `validator` for a node that went down, `first_pass` or `rise` for one that came up. The line of a `refusal` also has the `errno` the server refused with. A node of the legacy check logs neither.
 
 #### On `defaultPoolSettings` and on a host
 
@@ -154,6 +157,8 @@ hosts: [
 ]
 ```
 
+`authRetryInterval` is 60000 on all three, as nobody wrote it.
+
 - A `timeout` nobody wrote is the `interval` of that node, as for `db3.example` above. A `timeout` written in `defaultPoolSettings` reaches every host that does not write its own, whatever its `interval`.
 - A block on one host alone switches that host alone. The other hosts keep the legacy check.
 - A block in `defaultPoolSettings` switches every host. A host cannot go back to the legacy check then. To run both kinds in one cluster, leave the block out of `defaultPoolSettings` and set it on the hosts that should have it.
@@ -165,7 +170,8 @@ hosts: [
 The block is strict like every other object of the settings, and every problem is named by its path, such as `defaultPoolSettings.healthCheck.fall` or `hosts[0].healthCheck.interval`:
 
 - A key the block does not have is an error.
-- `interval` is a number of 100 or more, `timeout` a number of 1 or more. Node turns a wait below 1 ms into 1 ms, and an interval of a few ms would ask a node hundreds of times a second, each time with a login. Both are at most 2147483647, the longest wait a timer of Node takes. A fraction is allowed.
+- `interval` and `authRetryInterval` are numbers of 100 or more, `timeout` a number of 1 or more. Node turns a wait below 1 ms into 1 ms, and an interval of a few ms would ask a node hundreds of times a second, each time with a login. All three are at most 2147483647, the longest wait a timer of Node takes. A fraction is allowed.
+- `authRetryInterval` is not compared with `interval`: either may be the longer one.
 - `fall` and `rise` are integers, 1 or more.
 - Anything but an object is an error for the block itself, `null` included.
 
@@ -199,16 +205,21 @@ defaultPoolSettings: {
 | A node whose checks hang is out after, at most | 105 s | 20 s |
 | A node that answers again is back after, at most | 60 s | 10 s |
 | The same when a check was hanging as the node returned | 75 s | 15 s |
+| Wait after a check whose login the server refused | 60 s | 60 s |
+| Logins in one hour at a node that refuses the login | 60 | 60 |
 
-Every number is measured, see [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#time-to-leave-rotation-and-to-come-back).
+Every number is measured, see [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#time-to-leave-rotation-and-to-come-back) and, for the last two rows, [Logins in one hour](subsystems/health-and-scoring.md#logins-in-one-hour).
+
+A multiplier below 1 turns the legacy rule around: the wait shrinks after an answered check and grows after a failed one. An app that set it, with a wide range, to keep a node with a wrong password from being asked every 5 seconds can drop both keys. With the legacy defaults such a node gets 718 logins in an hour. The wide range brought that down to 60, and made every other failure wait a minute as well, so a dead node took 75 s to leave rotation. The block keeps the 60 for a refused login alone, through `authRetryInterval`, and checks a node that fails any other way every `interval`.
 
 What changes for the app:
 
-1. **Remove `timerCheckRange` and `timerCheckMultiplier`.** They are ignored next to the block, and each node logs one `warn` while they are there.
+1. **Remove `timerCheckRange` and `timerCheckMultiplier`.** They are ignored next to the block, and each node logs one `warn` while they are there. The slow retry they gave a refused login comes from `authRetryInterval` now, with no key to set.
 2. **A node is checked more often.** Each check is one `SHOW GLOBAL STATUS` on a connection of the pool. With the defaults that is one every 5 s per node, where the legacy defaults settle at one every 15 s. Set `interval` to keep the old pace: `healthCheck: { interval: 15000 }` checks every 15 s and takes a dead node out after 30 s, or after 60 s when its checks hang.
 3. **The check no longer follows `queryTimeout`.** Set `timeout` when a healthy node can take longer than `interval` to answer the status query.
 4. **A node that was down comes back after two passes, not one.** Set `rise: 1` to keep the old rule.
-5. **`pool_check_failed` comes every `interval` while a node fails**, not at the pace of the legacy range.
+5. **`pool_check_failed` comes every `interval` while a node fails**, not at the pace of the legacy range, and every `authRetryInterval` while it refuses the login.
+6. **A refused login takes the node down with the first check**, not with the second. The legacy check counts it like any other failure.
 
 ## `escapeNamedValues`
 

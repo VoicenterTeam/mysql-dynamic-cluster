@@ -225,8 +225,9 @@ registered pool. They are the `isValid` and `loadScore` that
 
 - A node turns `0` when a validator says no, or with the second failed
   check in a row. It turns `1` again with the next check that passes. A node
-  with a `healthCheck` block turns `0` at the `fall`th failed check in a row
-  and `1` again at the `rise`th pass in a row.
+  with a `healthCheck` block turns `0` at the `fall`th failed check in a row,
+  or with one check the server refused the login of, and `1` again at the
+  `rise`th pass in a row.
 - A node that was never checked reports `0` and a load score of `100000`.
   That is the score a status starts with, and it puts an unchecked node
   last. Both points are reported as the status holds them, so a node that
@@ -264,7 +265,9 @@ to look.
   That makes it the next health check of any node at the latest, and no
   query of the app is needed. The time between two checks of a node is
   within `timerCheckRange`, 5 to 15 seconds by default, or
-  `healthCheck.interval` for a node with a `healthCheck` block.
+  `healthCheck.interval` for a node with a `healthCheck` block. After a
+  check the server refused the login of, such a node waits
+  `healthCheck.authRetryInterval`, one minute by default.
 - When the app replaces a provider, the same record takes the callback off
   the old one. From then on the pools are not read for it.
 

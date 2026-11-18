@@ -122,7 +122,8 @@ What to know:
 
 - It fires for every failed check, not only the first. A failing pool is checked again every
   `timerCheckRange.start` ms at the fastest, so expect one event per check until it recovers.
-  A node with a `healthCheck` block is checked every `healthCheck.interval` ms, failing or not.
+  A node with a `healthCheck` block is checked every `healthCheck.interval` ms, failing or not,
+  and `healthCheck.authRetryInterval` ms after a check the server refused the login of.
 - It fires for the first check inside `connect()` too, so subscribe before calling `connect()`.
 - It fires when the check ends with an error: the status query was rejected, or the check
   timed out. A check that runs into its own timer gives an `Error` with the message
@@ -135,6 +136,8 @@ What to know:
 - One failed check does not take the pool out of rotation, the second in a row does (see
   [health-and-scoring.md](./subsystems/health-and-scoring.md)). The event fires for both.
   With a `healthCheck` block the count is `fall`, and the event fires for every one of them.
+  A refused login takes such a node out with one check, and the event fires for it as for
+  any failed check.
 - A listener that throws does not stop the health checks. The next check is set before the
   listeners run, and the thrown error is logged. Other listeners of the same event that were
   added after the one that threw do not run for that check. The other events have no such

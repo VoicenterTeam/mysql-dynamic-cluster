@@ -479,7 +479,10 @@ still created, its first check fails, and that check sets `checkError`.
   checks in a row yet: its answer was fine, and it is still not valid.
 - One failed check does not take a valid node out, the second in a row does, or the
   `fall`th for a node with a `healthCheck` block. So a node can
-  be valid and have a `checkError` for one check interval.
+  be valid and have a `checkError` for one check interval. A node with a `healthCheck`
+  block is the exception when the server refused the login of the check: it is out with
+  that one check. See
+  [A login or account refusal](subsystems/health-and-scoring.md#a-login-or-account-refusal).
 - `disconnect()` does not clear it, as it does not clear `isValid`. After `disconnect()`,
   `nodes()` still shows the error of the last check. A later `connect()` keeps it until its
   first check ends. That check sets it or clears it.
@@ -489,7 +492,9 @@ still created, its first check fails, and that check sets `checkError`.
 On `nodes()` it is the error of the last check, not of this moment. A node is checked every
 `timerCheckRange.start` to `timerCheckRange.end` ms, 5 to 15 seconds with the defaults, so
 the value can be up to one check interval old, plus the time the check itself takes. A node
-with a `healthCheck` block is checked every `healthCheck.interval` ms.
+with a `healthCheck` block is checked every `healthCheck.interval` ms. After a check the
+server refused the login of, its next check is `healthCheck.authRetryInterval` ms away, one
+minute by default, so a refusal on `nodes()` can be that old.
 
 On a result of `ready` or `firstReady` it is the error of the health check of that connect,
 and of no other check. It does not change later. For the state of a node now, read
@@ -559,6 +564,13 @@ None of them is a wrong user or password:
 | `PROTOCOL_ERROR`, `PROTOCOL_UNEXPECTED_PACKET` | The server sent a packet when no command was waiting for one. mysql2 raises these on the connection, so they may never reach a health check. |
 
 A refused login is `ER_ACCESS_DENIED_ERROR` with `errno` 1045 and `sqlState` `'28000'`.
+
+The health check of a node with a `healthCheck` block reads `checkError` too, and draws its
+own line. It takes a wider list of `errno` values as a refusal of the login or the account,
+1045 and 1049 among them and 1040 not, and treats the node apart for those: down with one
+check, and a slower next check. The list is in
+[A login or account refusal](subsystems/health-and-scoring.md#a-login-or-account-refusal).
+The tables above are about what a code means to an app, and do not change with it.
 
 ```ts
 const results = await cluster.ready;

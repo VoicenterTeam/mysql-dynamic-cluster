@@ -38,6 +38,10 @@ The two ways a node is checked. A node without a `healthCheck` block in its sett
 
 Keys of the `healthCheck` block. `fall` is how many checks have to fail in a row before a node goes down, `rise` how many have to pass in a row before a node that is down comes back. One check that fails resets the run of passes, and one that passes resets the run of failures.
 
+### Refusal and `authRetryInterval`
+
+A check of a node with a `healthCheck` block that the server answered by refusing the login or the account: a wrong password, a locked account, a blocked host. It is told by the `errno` of the error, from a fixed list. Such a check takes the node down at once, whatever `fall` is, and the next check waits `authRetryInterval`, a key of the block, in place of `interval`. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#a-login-or-account-refusal).
+
 ### Load factor
 
 A `{ key, multiplier }` pair telling the cluster how to weight one status variable when ranking healthy pools. Each load factor reads its `key` from the latest `SHOW GLOBAL STATUS` result and contributes `value * multiplier` to the pool's load score; see [src/pool/LoadFactor.ts:25](../src/pool/LoadFactor.ts#L25). Defaults at [src/configs/schema.ts](../src/configs/schema.ts) weight `Connections` by 2 and `wsrep_local_recv_queue_avg` by 10.
