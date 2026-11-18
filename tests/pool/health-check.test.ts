@@ -1517,9 +1517,12 @@ describe('health check with a healthCheck block: the logins of refused checks in
         expect(waits(node)).toEqual([5000, ...new Array(600).fill(100)]);
     });
 
-    // what a refused login cost before the list: a failure like this one, at the interval
-    it('too many connections, an empty block: 720, one every interval', async () => {
-        const times = await hourAfterFirst({ healthCheck: {} }, serverError('login', tooMany));
+    // what a refused login cost before the list: a failure like these, at the interval
+    it.each<[string, () => any]>([
+        ['too many connections, errno 1040', tooMany],
+        ['a limit of the account, errno 1226', overLimit]
+    ])('%s, an empty block: 720, one every interval', async (_name, error) => {
+        const times = await hourAfterFirst({ healthCheck: {} }, serverError('login', error));
 
         expect(times).toEqual(every(5000, 720));
     });
