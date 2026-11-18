@@ -220,7 +220,8 @@ const connectTimeout = () => {
 // One letter per check. P passes, S passes after SLOW ms, N is answered and the validator
 // says no. The rest fail: R connection refused, L connection lost, H hangs, T too many
 // connections, U a limit of the account (1226), E the connect timeout of mysql2, M an error
-// of the server that mysql2 has no name for, so one with an errno and no code.
+// of the server that mysql2 has no name for, so one with an errno and no code, Z the query
+// timeout of mysql2, which has a code and no errno.
 // Three are refused by the server: D the login of a new connection with 1045,
 // C the change of user on an open one with 1045, Q the status query with 1044.
 // B and X are answered and then throw: the validators accepted B and said no to X
@@ -230,6 +231,8 @@ const STEPS: { [letter: string]: Step } = {
     U: serverError('login', overLimit),
     E: serverError('login', connectTimeout),
     M: serverError('query', () => Object.assign(new Error('unnamed'), { errno: 1927 })),
+    Z: serverError('query', () => Object.assign(new Error('Query inactivity timeout'),
+        { code: 'PROTOCOL_SEQUENCE_TIMEOUT' })),
     C: serverError('changeUser', denied),
     Q: serverError('query', packet(1044, 'ER_DBACCESS_DENIED_ERROR', '42000')),
     B: PASS_THROWS, X: NO_THROWS
@@ -662,6 +665,7 @@ describe('health check with a healthCheck block: the slow pace after a refusal',
         ['too many connections, errno 1040', 'T'],
         ['a limit of the account, errno 1226', 'U'],
         ['an error of the server with an errno and no code', 'M'],
+        ['the query timeout of mysql2, PROTOCOL_SEQUENCE_TIMEOUT', 'Z'],
         ['a pass that then throws in the package', 'B'],
         ['a validator no that then throws in the package', 'X']
     ])('%s ends it: the next check that hangs waits the interval', async (_name, answer) => {
