@@ -133,7 +133,7 @@ is exactly one instance per Node process, regardless of how many times
 | --- | --- | --- |
 | `Logger` | [src/utils/Logger.ts](../src/utils/Logger.ts) | A second `Logger.init()` would overwrite the log level and the app-supplied logger set by the first cluster. |
 | `Redis` | [src/Redis/Redis.ts:93](../src/Redis/Redis.ts#L93) | A second Redis singleton would overwrite the `clusterName` prefix and the injected `ioredis` client, mixing cache keys between clusters. |
-| `Metrics` | [src/metrics/Metrics.ts](../src/metrics/Metrics.ts) | The cluster name attribute is stored once; a second `init()` would relabel the metrics of the first cluster. |
+| `Metrics` | [src/metrics/Metrics.ts](../src/metrics/Metrics.ts) | The cluster name attribute is stored once; a second `init()` would relabel the metrics of the first cluster. The pools of every connected cluster are in one registry and report their connection metrics under that one name. Two pools with the same name, address and port become one series. |
 | `config` | [src/configs/index.ts](../src/configs/index.ts) | `config.current` holds one set of settings; calling `config.load(...)` again overwrites the first cluster's hosts, validators, and Redis settings. |
 | `Events` | [src/utils/Events.ts:4](../src/utils/Events.ts#L4) | The single `EventEmitter` would fan out `connected` / `disconnected` / `hashing_created` events from both clusters into every subscriber. |
 

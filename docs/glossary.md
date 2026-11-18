@@ -64,7 +64,7 @@ An instrument that records a distribution of samples: a count, a sum and bucket 
 
 ### Observable up-down counter
 
-An instrument for a value that goes up and down and is read, not recorded. The SDK calls a callback at each collection and the callback reports the value as it is then. The three pool connection metrics of the library are of this kind and read `Pool.stats()`; see [subsystems/metrics.md](subsystems/metrics.md#pool-connection-metrics).
+An instrument for a value that goes up and down and is read, not recorded. The SDK calls a callback at each collection and the callback reports the value as it is then. The three pool connection metrics of the library are of this kind. They read `Pool.stats()` and the `connectionLimit` of the pool; see [subsystems/metrics.md](subsystems/metrics.md#pool-connection-metrics).
 
 ### Attribute
 

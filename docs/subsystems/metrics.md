@@ -104,8 +104,9 @@ There is no timer.
 | `mysql_dynamic_cluster.connection.limit` | `{connection}` | `connectionLimit` of the node. No point for a node whose limit is `0`, which means no limit. |
 
 The values are the ones `cluster.getPoolStats()` returns, read from the same
-place, `Pool.stats()`. See [../node-api.md](../node-api.md#getpoolstats) for
-what each count holds:
+places. The counts come from `Pool.stats()` and the limit from the
+`connectionLimit` of the pool. See
+[../node-api.md](../node-api.md#getpoolstats) for what each count holds:
 
 - `used` is every connection of the pool minus the idle ones. A connection
   that still logs in counts as used. So does a connection the app took with
@@ -176,7 +177,9 @@ to look.
 | `mysql_dynamic_cluster.cache.result` | `hit`, `expired` or `miss` | cache lookup |
 
 In the last column, connection stands for the three pool connection metrics.
-They carry the attributes named for them and no other.
+They carry the attributes named for them and no other. They leave out
+`db.namespace`, since a connection of the pool changes its database with
+every query.
 
 Notes on cardinality and content:
 
