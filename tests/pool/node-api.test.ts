@@ -4,7 +4,10 @@ jest.mock('../../src/utils/Logger', () => ({
 }));
 jest.mock('../../src/metrics/Metrics', () => ({
     __esModule: true,
-    default: { recordOperation: jest.fn(), recordQuery: jest.fn(), recordCacheLookup: jest.fn() }
+    default: {
+        recordOperation: jest.fn(), recordQuery: jest.fn(), recordCacheLookup: jest.fn(),
+        recordHealthCheck: jest.fn()
+    }
 }));
 // a mysql2 pool that opens nothing. Its three lists are the ones mysql2 keeps: every
 // connection, the free ones, and the callbacks that wait for a connection
