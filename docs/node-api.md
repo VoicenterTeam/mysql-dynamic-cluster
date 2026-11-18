@@ -68,12 +68,15 @@ changing them changes nothing in the cluster.
 ```ts
 getConnection(options?: IGetConnectionOptions): Promise<IClusterConnection>
 
-interface IGetConnectionOptions { exclude?: number[] }
+interface IGetConnectionOptions { exclude?: number[]; signal?: AbortSignal }
 interface IClusterConnection { connection: PoolConnection; nodeId: number }
 ```
 
 It takes one connection out of the pool of one node and hands it to you. `connection` is the
 `PoolConnection` of mysql2 and `nodeId` is the node it belongs to.
+
+`exclude` leaves nodes out, see [Which node](#which-node). `signal` ends the wait for the
+connection, see [Give up the wait with a signal](#give-up-the-wait-with-a-signal).
 
 ### Which node
 
@@ -81,8 +84,8 @@ The cluster takes the nodes that are valid and not in `exclude`, and picks the o
 lowest load score. `query()` filters and sorts its pools with the same code. Service hashing
 plays no part here. There is no service, so no node is pinned.
 
-Only `exclude` is read. A value passed as `options` that is not an object, such as the list
-in `getConnection([2])`, is ignored with no error, and no node is left out.
+Only `exclude` and `signal` are read. A value passed as `options` that is not an object, such
+as the list in `getConnection([2])`, is ignored with no error, and no node is left out.
 
 It asks that one node once. It does not retry and it does not try a second node. To move on
 to another node, call again with the failed node in `exclude`:
@@ -105,12 +108,15 @@ async function connectionOfAnyNode(cluster) {
 ### It waits without limit
 
 When the node already has `connectionLimit` connections and all are in use, the request waits
-in the queue of mysql2 until a connection is released. Nothing ends that wait. The cluster
-sets no timeout and the package sets no queue limit. `getPoolStats()` shows such a request
-as `pending`.
+in the queue of mysql2 until a connection is released. Nothing ends that wait by itself. The
+cluster sets no timeout and the package sets no queue limit. `getPoolStats()` shows such a
+request as `pending`.
 
-If you race the promise against your own timer, the request still waits in the queue after
-your timer wins. When it gets its connection later, somebody has to release it:
+A [`signal`](#give-up-the-wait-with-a-signal) ends the wait of one call and takes its
+request out of the queue. That is the way to put a time limit on the call.
+
+If you race the promise against your own timer instead, the request still waits in the queue
+after your timer wins. When it gets its connection later, somebody has to release it:
 
 ```ts
 async function connectionWithin(cluster, ms) {
@@ -133,6 +139,99 @@ async function connectionWithin(cluster, ms) {
 
 `failWaiting()` ends the wait of every request of a node at once.
 
+### Give up the wait with a signal
+
+The `signal` option is not in 4.6.0 or earlier. Those versions ignore it with no error, and
+the call waits as if no signal was passed.
+
+Pass the `signal` of an `AbortController` and call `abort()` when you no longer want the
+connection:
+
+```ts
+async function connectionWithin(cluster, ms) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error('no connection in time')), ms);
+    try {
+        return await cluster.getConnection({ signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+```
+
+`cluster.getConnection({ signal: AbortSignal.timeout(ms) })` does the same in one line, on a
+Node that has `AbortSignal.timeout`. The call then rejects with the `TimeoutError` Node puts
+on that signal.
+
+A call without `signal` behaves as before. With one, what happens depends on when the signal
+aborts:
+
+| The signal aborts | What happens |
+| --- | --- |
+| Before the call | The promise rejects with the reason. No node is asked and nothing is queued. This comes before the search for a node, so it is the answer also when no node is valid. |
+| While the request waits in the queue of the node | The promise rejects with the reason at that moment. The request is taken out of the queue, so `getPoolStats()` shows one `pending` less right away. |
+| While a new connection for the call logs in | The promise rejects with the reason at that moment. The login goes on. When the connection arrives the package releases it to the pool, where it is `idle` for the next caller. If the login fails instead, nobody is told. |
+| After the promise resolved | Nothing. You have the connection and you release it. |
+| After the promise rejected | Nothing. The first rejection stays. |
+
+The other requests that wait for the node keep their place and their order.
+
+The call settles once, and what comes first wins. A call that an error of the node or
+`failWaiting()` rejected first keeps that error, with its `nodeId`. A call that the signal
+ended first keeps the reason. A later `failWaiting()` does not find it and does not count it.
+
+#### The reason
+
+The promise rejects with `signal.reason`, the value you passed to `abort()`. It is the same
+value, not a copy. The package does not wrap it, adds no `nodeId` to it and does not change it.
+
+- `abort()` without a value: Node puts a `DOMException` with the name `AbortError` on the
+  signal, and that is what the call rejects with.
+- `AbortSignal.timeout()`: a `DOMException` with the name `TimeoutError`.
+- A signal without a `reason`, as on an old Node that has no `signal.reason` yet and with
+  some polyfills: the call rejects with an `Error` whose `name` is `AbortError`, made by the
+  package.
+
+Pass an `Error` as the reason. Any value is passed through, also `null` or a string, and code
+that reads `error.nodeId` or `error.code` of a rejection then has to cope with it. An `Error`
+reason has no `nodeId`, so the loop in [Which node](#which-node) stops on it and throws it.
+
+#### What counts as a signal
+
+`undefined` and `null` both mean no signal. Any other value has to have a boolean `aborted`
+and the functions `addEventListener` and `removeEventListener`. The package does not ask for
+the `AbortSignal` class of the running Node. So the signal of a polyfill is taken, and so is
+one made in another realm, such as a vm context. Anything else rejects with a `TypeError` and
+asks no node.
+
+A wrong `exclude` and a wrong `signal` are both reported before the signal is read. So a call
+with a wrong `exclude` and an aborted signal rejects with the `TypeError` about `exclude`.
+
+#### The listener
+
+The package puts one `abort` listener on the signal while the call waits, and takes it off
+when the call settles: resolved, rejected by an error, rejected by the abort or rejected by
+`failWaiting()`. A call that asks no node adds none. So one long-lived signal can be passed
+to any number of calls and does not collect listeners.
+
+The listener runs inside your `abort()` call. It throws nothing into it.
+
+#### When the request cannot be taken out of the queue
+
+Taking one request out of the queue reaches into mysql2, which has no call for it. Two cases
+are known where the package cannot do it:
+
+- Something wraps the request on its way into the queue, so the package cannot tell which
+  entry is its own. mysql2 does that itself while a subscriber listens on its tracing channel
+  `mysql2:pool:connect`. A tracing library that patches the pool of mysql2 would have the
+  same effect.
+- A mysql2 whose queue is not the one mysql2 3 keeps.
+
+The promise still rejects with the reason at the abort. Only the queue is slower to follow:
+the request keeps its place and still counts as `pending`. When its turn comes, the package
+releases the connection at once and the next waiter gets it. No connection is lost. A
+`failWaiting()` in between counts that request, though its call already ended.
+
 ### Errors
 
 | Rejection | When |
@@ -140,7 +239,9 @@ async function connectionWithin(cluster, ms) {
 | `Error` with `code: 'MDC_NO_NODE_AVAILABLE'` | No node is left: none is valid, or every valid node is in `exclude`. This is also the answer before `connect()`. |
 | The error of mysql2, with `nodeId` added | The node gave no connection. It is the same object mysql2 made, so `code`, `errno` and `fatal` are as mysql2 set them. Examples: a refused login, a node that went down after its last check, `Pool is closed.` after `disconnect()`. |
 | The error passed to `failWaiting()`, with `nodeId` added | The request waited and `failWaiting()` failed it. |
+| The reason of the `signal`, as it is, with no `nodeId` | The signal was aborted before the call, or it aborted while the call waited. See [The reason](#the-reason). |
 | `TypeError` | `exclude` is given and is not an array of numbers. No node is asked. |
+| `TypeError` with the message `getConnection: options.signal must be an AbortSignal` | `signal` is given and is not a signal. No node is asked. See [What counts as a signal](#what-counts-as-a-signal). |
 
 An error that cannot take a new property, such as a frozen `Error` passed to
 `failWaiting()`, is rejected as it is, without `nodeId`.
@@ -170,6 +271,28 @@ sure what state it is in, call `connection.destroy()` instead. The pool then ope
 when it needs it. A connection you never give back counts against `connectionLimit` for good.
 Hold all of them and the health check of that node waits in the queue too, times out, and
 after two failed checks the node is no longer valid.
+
+### Who releases what after an abort
+
+It follows from how the promise ended, not from the state of the signal:
+
+- The promise resolved. The connection is yours and you release it. That holds also when the
+  signal is aborted by the time your code runs, because the abort came a moment after the
+  connection. The package never takes back a connection it handed out.
+- The promise rejected, with the reason or with anything else. You got no connection and have
+  nothing to release. A connection that arrives later for a call the signal ended is released
+  by the package. It is released as it is, with no reset: nobody has used it. The events
+  `connection`, `acquire` and `release` fire for it as for any other connection.
+
+```ts
+const { connection } = await cluster.getConnection({ signal });
+// signal.aborted can be true here. The connection is still yours
+try {
+    // ...
+} finally {
+    connection.release();
+}
+```
 
 ### Reset before you release
 
@@ -470,7 +593,8 @@ const failed = cluster.failWaiting(2, new Error('node 2 is being drained'));
 
 What it touches and what it does not:
 
-- It fails waiting `getConnection()` calls. They reject with `error`, plus `nodeId`.
+- It fails waiting `getConnection()` calls. They reject with `error`, plus `nodeId`. A call
+  that its `signal` already ended does not wait any more and is not failed again.
 - It also fails the cluster's own queries that wait on that node. `cluster.query()` then
   retries on another node, as it does after any failed attempt, within `maxRetry` and the
   valid nodes that are left. A health check that waits is failed too and counts as a failed

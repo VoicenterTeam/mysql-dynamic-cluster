@@ -270,10 +270,12 @@ Added in 4.5.0, at the end of the class, so the line references above did
 not move. `GaleraCluster` calls them for the node API of
 [../node-api.md](../node-api.md). `_pool` stays private.
 
-- `getConnection()` takes one connection from the mysql2 pool and resolves
-  with it as it is. It does not change the database, sets no timeout and
-  records no metric. It rejects with the error object of mysql2, or with
-  `POOL_NOT_CONNECTED` before `connect()` created the mysql2 pool.
+- `getConnection(signal?, outcome?)` takes one connection from the mysql2
+  pool and resolves with it as it is. It does not change the database, sets
+  no timeout and records no metric. It rejects with the error object of
+  mysql2, or with `POOL_NOT_CONNECTED` before `connect()` created the mysql2
+  pool. Without a signal it does what it did before. With one, see
+  [A signal on getConnection](#a-signal-on-getconnection).
 - `failWaiting(error)` empties `_connectionQueue` of the mysql2 pool, then
   calls every callback it took out with `error`, and returns how many. The
   queue is emptied first, so a callback that asks for a connection again is
@@ -304,6 +306,54 @@ API:
   The steps of `connect()` above did not change, and no line number of the
   references above moved.
 
+### A signal on getConnection
+
+`GaleraCluster.getConnection()` hands the `signal` of its options to
+`getConnection(signal, outcome)`. The contract is in
+[../node-api.md](../node-api.md#give-up-the-wait-with-a-signal). Inside the
+pool it works like this:
+
+- A signal that is already aborted rejects the call before `_pool` is
+  looked at. mysql2 is not asked.
+- Otherwise the pool puts one `abort` listener on the signal and then asks
+  mysql2. The listener goes on first, because mysql2 can call back inside
+  the request, and the callback takes the listener off again.
+- The call has two ends, the callback of mysql2 and the listener. Two flags
+  say which came first, and the second one does nothing to the promise.
+- The callback comes first: the listener is taken off and the promise is
+  resolved or rejected as without a signal.
+- The listener comes first: it takes itself off, calls `_leaveQueue` for
+  the mysql2 pool the request went to, and rejects the promise with
+  `Pool.abortReason(signal)`. When the callback comes later with a
+  connection, the connection is released. When it comes with an error, the
+  error is dropped.
+- mysql2 throws inside the request, which happens when a listener of one of
+  its events throws: the listener is taken off and the promise rejects with
+  what was thrown, as it did before.
+
+`_leaveQueue(mysqlPool, callback)` is static. It looks for the callback in
+`_connectionQueue` of that mysql2 pool with the `get` of that queue, and
+takes it out with `removeOne`, so the entries around it keep their order.
+It does nothing when the queue is missing or has no `get` or `removeOne`,
+and when the callback is not in it.
+The callback is not in it while its connection logs in, and when mysql2
+queued a wrapper of it, which it does while something subscribes to its
+tracing channel `mysql2:pool:connect`. In each of those cases the request is
+settled by the release on arrival instead. The listener runs inside the
+`abort()` of the app, so what it does to the queue sits in a `try`. A throw
+there is logged at `warn` with `nodeId`, `pool` and `error`, and the promise
+is still rejected.
+
+`Pool.abortReason(signal)` is static. It returns `signal.reason`, or an
+`Error` named `AbortError` when the signal has none. The cluster uses it for
+a signal that is already aborted, before it picks a pool.
+
+`outcome` is an `IAbortOutcome`, an object of the caller that the pool fills
+with `aborted: true` when the abort ended the call. The cluster reads it to
+leave the reason alone: it adds `nodeId` to every other rejection. The state
+of the signal cannot tell the two apart, since a signal can abort just after
+an error ended the call.
+
 The errors `Pool` makes with a code of its own are marked with
 `PoolStatus.ownError()`, so a health check that fails with one reports an
 empty `checkError`: the `POOL_NOT_CONNECTED` error of `_notConnected()` and
@@ -326,7 +376,8 @@ the waiting requests reject with it as before.
 | `disconnect()` | `() => void` | [:223](../../src/pool/Pool.ts#L223) |
 | `query<T>(sql, options?)` | `async => Promise<T \| T[]>` | [:247](../../src/pool/Pool.ts#L247) |
 | `multiStatementQuery<T>(sqls, options)` | `async => Promise<T[]>` | [:324](../../src/pool/Pool.ts#L324) |
-| `getConnection()` | `() => Promise<PoolConnection>` | [`getConnection`](../../src/pool/Pool.ts) |
+| `getConnection(signal?, outcome?)` | `(signal?: AbortSignal, outcome?: IAbortOutcome) => Promise<PoolConnection>` | [`getConnection`](../../src/pool/Pool.ts) |
+| `Pool.abortReason(signal)` | `static (signal: AbortSignal) => unknown` | [`abortReason`](../../src/pool/Pool.ts) |
 | `failWaiting(error)` | `(error: Error) => number` | [`failWaiting`](../../src/pool/Pool.ts) |
 | `stats()` | `() => { used, idle, pending }` | [`stats`](../../src/pool/Pool.ts) |
 | `checkError` | getter returning `INodeCheckError \| undefined` | [`checkError`](../../src/pool/Pool.ts) |

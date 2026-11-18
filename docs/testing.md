@@ -28,7 +28,8 @@ tests/
     query-pool-order.test.ts     # The order query() tries its pools in: load score, the pool of the service first
     node-api.test.ts             # Node API over fake pools: getConnection, failWaiting, getPoolStats, nodes
     node-api-public.test.ts      # Node API through createPoolCluster, before connect()
-    node-api-loopback.test.ts    # Node API with the real mysql2 against its server class on loopback
+    node-api-loopback.test.ts    # Node API with the real mysql2 against its server class on loopback, getConnection with a signal included
+    get-connection-signal.test.ts # getConnection({ signal }) over fake pools: what counts as a signal, already aborted, the reason, nodeId
     ready.test.ts                # cluster.ready: pass, fail, never rejects, one promise per connect(); connect() as before
     ready-unhandled.test.ts      # cluster.ready and firstReady leave no unhandled rejection, in a clean Node process
     first-ready.test.ts          # cluster.firstReady: first pass, none pass, never rejects, one promise per connect()
@@ -63,6 +64,7 @@ tests/
     check-error-paths.test.ts    # Every way a check of a real Pool fails, and what checkError holds after each
     reconnect-checks.test.ts     # A pool connected, disconnected and connected again is checked again
     node-api.test.ts             # Pool.getConnection, failWaiting and stats over a mocked mysql2 pool
+    get-connection-signal.test.ts # Pool.getConnection with a signal over a mocked mysql2 pool: queue, login, listener, reason
   toolchain/
     compiler.test.ts             # The compiler parses the syntax zod 4 needs; every import resolves through exports maps
     declarations.test.ts         # The built declarations export the node API types, checked by compiling an app

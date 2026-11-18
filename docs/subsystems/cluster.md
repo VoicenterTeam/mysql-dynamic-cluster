@@ -280,10 +280,20 @@ loop in `query`.
 | `query<T>(sql, values?, queryOptions?)` | [`query`](../../src/cluster/GaleraCluster.ts) | The full routing pipeline described above. |
 | `ready: Promise<INodeReadyResult[]>` (getter) | [`ready`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Resolves once every pool finished the first connect of the current `connect()` call. Never rejects. Since 4.6.0 a result has `checkError` when the health check of that connect did not get its answer. |
 | `firstReady: Promise<INodeReadyResult[]>` (getter) | [`firstReady`](../../src/cluster/GaleraCluster.ts) | Since 4.6.0. Resolves when the first pool passed the first connect of the current `connect()` call, with the results that are in by then. With every result when none passed. Never rejects. |
-| `getConnection(options?)` | [`getConnection`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. One connection of the valid node with the lowest load score. The caller owns it. |
+| `getConnection(options?)` | [`getConnection`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. One connection of the valid node with the lowest load score. The caller owns it. The `signal` option, which came after 4.6.0, ends the wait: the call rejects with the reason of the signal. |
 | `failWaiting(nodeId, error): number` | [`failWaiting`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Fails the requests that wait for a connection of one node. |
 | `getPoolStats(): INodePoolStats[]` | [`getPoolStats`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Used, idle and waiting connections per node. |
 | `nodes(): INodeInfo[]` | [`nodes`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. A snapshot of the nodes as plain objects. Since 4.6.0 a node has `checkError` when its last health check did not get its answer. |
 
 The last six rows are the node API. Its contract, errors and examples are in
 [../node-api.md](../node-api.md).
+
+`getConnection()` reads its options in this order: `exclude`, then `signal`,
+then whether the signal is already aborted. Only after that it calls
+`_validPools`, so an aborted call asks no node. `_isAbortSignal` tells a
+signal by its members, a boolean `aborted` and the functions
+`addEventListener` and `removeEventListener`, not by its class. The signal
+goes to `Pool.getConnection(signal, outcome)`, which does the waiting and the
+abort, see [pool.md](./pool.md#a-signal-on-getconnection). The cluster adds
+`nodeId` to a rejection of the pool unless the pool set `outcome.aborted`:
+the reason of an abort goes back to the app as it is.
