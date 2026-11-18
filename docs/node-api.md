@@ -97,7 +97,7 @@ async function connectionOfAnyNode(cluster) {
         try {
             return await cluster.getConnection({ exclude });
         } catch (error) {
-            // no nodeId: no node is left, or exclude was wrong
+            // no nodeId: no node is left, an option was wrong, or the signal ended the call
             if (error.nodeId === undefined) throw error;
             exclude.push(error.nodeId);
         }
@@ -189,8 +189,13 @@ value, not a copy. The package does not wrap it, adds no `nodeId` to it and does
   signal, and that is what the call rejects with.
 - `AbortSignal.timeout()`: a `DOMException` with the name `TimeoutError`.
 - A signal without a `reason`, as on an old Node that has no `signal.reason` yet and with
-  some polyfills: the call rejects with an `Error` whose `name` is `AbortError`, made by the
-  package.
+  some polyfills: the call rejects with an `Error` made by the package. It has the three
+  marks of the `AbortError` of Node itself: the `name` `AbortError`, the `code` `ABORT_ERR`
+  and the message `The operation was aborted`.
+
+To tell an abort without a reason from any other rejection, test `error.name === 'AbortError'`.
+It is the one test that holds on both paths. The `DOMException` of a current Node has the
+`code` `20`, not `ABORT_ERR`, and its own message.
 
 Pass an `Error` as the reason. Any value is passed through, also `null` or a string, and code
 that reads `error.nodeId` or `error.code` of a rejection then has to cope with it. An `Error`
@@ -225,7 +230,13 @@ are known where the package cannot do it:
   entry is its own. mysql2 does that itself while a subscriber listens on its tracing channel
   `mysql2:pool:connect`. A tracing library that patches the pool of mysql2 would have the
   same effect.
-- A mysql2 whose queue is not the one mysql2 3 keeps.
+- A mysql2 whose queue is not the one mysql2 3 keeps. The package then logs one line at
+  `warn` for the mysql2 pool of the node, with `nodeId` and `pool`, at the first abort that
+  runs into it. It is logged once for that pool, not once for every call. A later `connect()`
+  makes a new mysql2 pool, which gets a line of its own.
+
+The first case is not logged. The package cannot tell a wrapped request in the queue from a
+request whose connection still logs in.
 
 The promise still rejects with the reason at the abort. Only the queue is slower to follow:
 the request keeps its place and still counts as `pending`. When its turn comes, the package
@@ -283,6 +294,12 @@ It follows from how the promise ended, not from the state of the signal:
   nothing to release. A connection that arrives later for a call the signal ended is released
   by the package. It is released as it is, with no reset: nobody has used it. The events
   `connection`, `acquire` and `release` fire for it as for any other connection.
+
+That release runs inside mysql2, not inside a call of yours. So a `release` listener of yours
+that throws for such a connection has nobody to throw to. The package catches the throw and
+logs it at `warn` with `nodeId`, `pool` and `error`. The connection is not lost: mysql2 puts
+it back into the pool before it calls the listeners, so it is `idle` and the next caller gets
+it. The `release` listeners that come after the one that threw are not called for it.
 
 ```ts
 const { connection } = await cluster.getConnection({ signal });

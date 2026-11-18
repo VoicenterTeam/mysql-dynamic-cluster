@@ -325,28 +325,43 @@ pool it works like this:
 - The listener comes first: it takes itself off, calls `_leaveQueue` for
   the mysql2 pool the request went to, and rejects the promise with
   `Pool.abortReason(signal)`. When the callback comes later with a
-  connection, the connection is released. When it comes with an error, the
-  error is dropped.
+  connection, `_releaseLate` releases it. When it comes with an error, the
+  error is dropped and nothing is logged.
 - mysql2 throws inside the request, which happens when a listener of one of
   its events throws: the listener is taken off and the promise rejects with
   what was thrown, as it did before.
 
-`_leaveQueue(mysqlPool, callback)` is static. It looks for the callback in
+`_leaveQueue(mysqlPool, callback)` looks for the callback in
 `_connectionQueue` of that mysql2 pool with the `get` of that queue, and
 takes it out with `removeOne`, so the entries around it keep their order.
-It does nothing when the queue is missing or has no `get` or `removeOne`,
-and when the callback is not in it.
+It does nothing when the callback is not in it. It leaves a queue alone that
+is missing or has no `get` or `removeOne`, which would be a mysql2 that
+keeps its queue another way. No aborted request can leave such a queue, so
+the pool says so at `warn`, with `nodeId` and `pool`. It says it once for a
+mysql2 pool: `_unsearchable` is a `WeakSet` of the mysql2 pools it reported.
 The callback is not in it while its connection logs in, and when mysql2
 queued a wrapper of it, which it does while something subscribes to its
 tracing channel `mysql2:pool:connect`. In each of those cases the request is
-settled by the release on arrival instead. The listener runs inside the
+settled by the release on arrival instead, and nothing is logged: the pool
+cannot tell the two apart. The listener runs inside the
 `abort()` of the app, so what it does to the queue sits in a `try`. A throw
 there is logged at `warn` with `nodeId`, `pool` and `error`, and the promise
 is still rejected.
 
-`Pool.abortReason(signal)` is static. It returns `signal.reason`, or an
-`Error` named `AbortError` when the signal has none. The cluster uses it for
-a signal that is already aborted, before it picks a pool.
+`_releaseLate(connection)` calls `connection.release()` in a `try`. It runs
+in the callback of mysql2, where a throw would be an uncaught exception,
+and `release()` runs the `release` listeners of the app. mysql2 pushes the
+connection onto its free list before it emits `release`, and the listener
+of the pool tells the idle reaper before it emits the event of the cluster.
+So after a listener of the app threw, the connection is idle in the pool
+and the reaper knows it. The throw is logged at `warn` with `nodeId`, `pool`
+and `error`.
+
+`Pool.abortReason(signal)` is static. It returns `signal.reason`, or, when
+the signal has none, an `Error` with the name `AbortError`, the code
+`ABORT_ERR` and the message `The operation was aborted`, as the `AbortError`
+of Node has them. The cluster uses it for a signal that is already aborted,
+before it picks a pool.
 
 `outcome` is an `IAbortOutcome`, an object of the caller that the pool fills
 with `aborted: true` when the abort ended the call. The cluster reads it to
