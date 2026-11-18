@@ -116,8 +116,8 @@ Not in 4.6.0 or earlier. A node that has this block is checked by new rules: a f
 
 | key | type | default | meaning |
 |---|---|---|---|
-| `interval` | `number` (ms) | `5000` | The wait between two checks of a node, counted from the end of the check before. It is the same after a passed and after a failed check |
-| `timeout` | `number` (ms) | the `interval` of the node | The limit of one check, the wait for a connection included |
+| `interval` | `number` (ms), 100 or more | `5000` | The wait between two checks of a node, counted from the end of the check before. It is the same after a passed and after a failed check |
+| `timeout` | `number` (ms), 1 or more | the `interval` of the node | The limit of one check, the wait for a connection included |
 | `fall` | integer, 1 or more | `2` | Failed checks in a row before a node goes down |
 | `rise` | integer, 1 or more | `2` | Passed checks in a row before a node that is down comes back |
 
@@ -134,9 +134,10 @@ What to know:
 - **The block switches the node, not single keys.** There is no default block. With no `healthCheck` in `defaultPoolSettings` and none on a host, that host keeps the legacy check.
 - **`timerCheckRange` and `timerCheckMultiplier` are ignored for a node that has the block.** When the app wrote one of them for such a node, on the host or in `defaultPoolSettings`, the node logs one `warn` when the cluster is created. The line has the meta `pool`, the name of the pool, and `ignored`, the keys. A default the schema filled in is not something the app wrote and logs nothing.
 - **`queryTimeout` has no part in the check of such a node.** Its check ends at `healthCheck.timeout`. The legacy check ends at `min(queryTimeout, timerCheckRange.end)`.
-- **`timeout` may be longer than `interval`.** The interval is counted from the end of a check, so two checks of a node never run at the same time. A check that waits for a new connection also ends with the connect timeout of mysql2, 10 seconds, when `timeout` is longer than that.
+- **`timeout` may be longer than `interval`.** The interval is counted from the end of a check, so two checks of the timer do not run at the same time. A check that waits for a new connection also ends with the connect timeout of mysql2, 10 seconds, when `timeout` is longer than that.
 - **A node that was down needs `rise` passes, the first pass after `connect()` only one.** So a start is not slowed, and neither is a node that was down when the app started. Set `rise: 1` to bring every node back with one pass, as the legacy check does.
 - **A validator that says no takes the node down with one check**, whatever `fall` is. `fall` counts the checks that got no answer.
+- **A change of state is logged.** A node that goes down logs one `warn`, a node that comes back one `info`, each with the meta `pool`, `valid` and `reason`. The reason is `fall` or `validator` for a node that went down, `first_pass` or `rise` for one that came up. A node of the legacy check logs neither.
 
 #### On `defaultPoolSettings` and on a host
 
@@ -164,7 +165,7 @@ hosts: [
 The block is strict like every other object of the settings, and every problem is named by its path, such as `defaultPoolSettings.healthCheck.fall` or `hosts[0].healthCheck.interval`:
 
 - A key the block does not have is an error.
-- `interval` and `timeout` are numbers above 0 and at most 2147483647, the longest wait a timer of Node takes. A fraction is allowed.
+- `interval` is a number of 100 or more, `timeout` a number of 1 or more. Node turns a wait below 1 ms into 1 ms, and an interval of a few ms would ask a node hundreds of times a second, each time with a login. Both are at most 2147483647, the longest wait a timer of Node takes. A fraction is allowed.
 - `fall` and `rise` are integers, 1 or more.
 - Anything but an object is an error for the block itself, `null` included.
 

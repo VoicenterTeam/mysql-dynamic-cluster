@@ -473,8 +473,10 @@ still created, its first check fails, and that check sets `checkError`.
   the check timed out. Every failed check sets it again, with the error of that check.
 - It is cleared by the next check whose query ran, whatever the validators then say.
 - So a node that is **not valid and has no `checkError`** is a node the server answered for,
-  and a validator said no. For example the node is not `Synced`. The only other case is a
-  node whose first check has not ended yet.
+  and a validator said no. For example the node is not `Synced`. There are two other
+  cases. One is a node whose first check has not ended yet. The other is a node with a
+  `healthCheck` block that was down and passed its last check, but has not passed `rise`
+  checks in a row yet: its answer was fine, and it is still not valid.
 - One failed check does not take a valid node out, the second in a row does, or the
   `fall`th for a node with a `healthCheck` block. So a node can
   be valid and have a `checkError` for one check interval.
