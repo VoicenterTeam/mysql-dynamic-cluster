@@ -47,6 +47,7 @@ export class PoolStatus {
     private _validator: Validator;
     private _loadFactor: LoadFactor;
     // Failed checks in a row. One failure (network blip) doesn't take the pool out of rotation
+    // With a healthCheck block a refused login is the exception: it takes the pool out at once
     private _failedChecks: number = 0;
     // How many of them take the pool out of rotation
     private readonly _fall: number;
@@ -245,7 +246,14 @@ export class PoolStatus {
             Logger.error("Something wrong while checking status in host: " + this._pool.host +
                 ".\n Message: " + PoolStatus._errorText(err));
             this._passedChecks = 0;
-            if (++this._failedChecks >= this._fall) this._setValid(false, 'fall');
+            this._failedChecks++;
+            // With a healthCheck block a refused login takes the node down with this one
+            // check, whatever `fall` is. Any other failure counts toward `fall`
+            if (this._refused()) {
+                this._setValid(false, 'refusal');
+            } else if (this._failedChecks >= this._fall) {
+                this._setValid(false, 'fall');
+            }
 
             queryTimer.end();
             this._queryTime = queryTimer.get();
@@ -266,11 +274,14 @@ export class PoolStatus {
      * one line each: a warn when the node goes down, an info when it comes back. A check
      * that leaves the node as it was logs nothing here, and neither does the legacy check
      * @param valid the state after this check
-     * @param reason what moved the node: `fall` failed checks in a row, a validator that
-     * said no, the first pass since connect() or `rise` passes in a row
+     * @param reason what moved the node: `fall` failed checks in a row, a login or account
+     * the server refused, a validator that said no, the first pass since connect() or
+     * `rise` passes in a row
      * @private
      */
-    private _setValid(valid: boolean, reason: 'fall' | 'validator' | 'first_pass' | 'rise') {
+    private _setValid(
+        valid: boolean, reason: 'fall' | 'refusal' | 'validator' | 'first_pass' | 'rise'
+    ) {
         const changed = valid !== this._isValid;
         this._isValid = valid;
         if (!changed || !this._healthCheck) return;
@@ -280,6 +291,10 @@ export class PoolStatus {
         if (reason === 'fall') {
             Logger.warn(pool + " went down: " + this._fall +
                 (this._fall > 1 ? " failed checks in a row" : " failed check"), meta);
+        } else if (reason === 'refusal') {
+            // the errno says which refusal it was. The message of the server stays out
+            Logger.warn(pool + " went down: the server refused the login of its check",
+                { ...meta, errno: this._checkError.errno });
         } else if (reason === 'validator') {
             Logger.warn(pool + " went down: a validator said no", meta);
         } else if (reason === 'first_pass') {
@@ -289,6 +304,26 @@ export class PoolStatus {
             Logger.info(pool + " is back up: " + rise +
                 (rise > 1 ? " checks passed in a row" : " check passed"), meta);
         }
+    }
+
+    // The errno of the errors a server refuses a login or an account with. A node that
+    // answers a check with one of them goes on refusing, most of them until someone acts on
+    // the server, and each new login can count against the account there. 4150 and 4151
+    // are of MariaDB
+    private static readonly _refusals: ReadonlySet<number> = new Set([
+        1044, 1045, 1049, 1129, 1130, 1226, 1862, 3118, 3159, 3955, 4150, 4151
+    ]);
+
+    /**
+     * Whether the check that just failed was refused by the server: a node with a
+     * healthCheck block whose reduced checkError has an errno of the list. Never by `fatal`:
+     * mysql2 marks a login refused on an open connection as fatal, and one refused on a new
+     * connection not. A failure the package made has an empty checkError and is none.
+     * Always false for a node of the legacy check
+     * @private
+     */
+    private _refused(): boolean {
+        return !!this._healthCheck && PoolStatus._refusals.has(this._checkError.errno);
     }
 
     /**

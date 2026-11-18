@@ -23,9 +23,11 @@ type Rows = { Variable_name: string, Value: string }[];
 // How one request for a connection ends. Rows answer the status query, 'slow' answers it
 // with a pass after SLOW ms. 'refused' and 'denied' fail the request at once, 'lost' breaks
 // the connection under the query, and 'hang' hands out a connection that never answers.
-// 'held' hands out one that answers when the test says so, through node.held.
+// 'held' hands out one that answers when the test says so, through node.held, and 'waits'
+// leaves the request in the queue of mysql2, as a pool at its limit does.
 // A ServerError is an error packet of the server, at the place its `at` names
-type Step = Rows | 'slow' | 'refused' | 'denied' | 'lost' | 'hang' | 'held' | ServerError;
+type Step = Rows | 'slow' | 'refused' | 'denied' | 'lost' | 'hang' | 'held' | 'waits'
+    | ServerError;
 // Where a check can get an error packet: at the login of a new connection, at the change of
 // user it sends on an open one, or as the answer to its status query
 type Where = 'login' | 'changeUser' | 'query';
@@ -88,11 +90,12 @@ const makeNode = (steps: Step[]) => {
         held: [] as Cb[],
         mysqlPool: {
             on: jest.fn(), end: jest.fn(),
-            _allConnections: [], _freeConnections: [], _connectionQueue: [],
+            _allConnections: [], _freeConnections: [], _connectionQueue: [] as Cb[],
             getConnection: (cb: Cb) => {
                 node.asked.push(Date.now());
                 const step = node.plan.length > 1 ? node.plan.shift() : node.plan[0];
                 if (step === 'refused' || step === 'denied') return cb(errors[step]());
+                if (step === 'waits') return node.mysqlPool._connectionQueue.push(cb);
                 const answer = isServerError(step) ? step : undefined;
                 if (answer?.at === 'login') return cb(answer.error());
                 cb(null, {
@@ -176,11 +179,44 @@ const DEFAULT_BLOCK = {
     interval: 5000, timeout: 5000, fall: 2, rise: 2, authRetryInterval: 60000, passive: true
 };
 
+// The errors of the server that refuse the login or the account of a check, by errno, with
+// the name mysql2 3.24.6 has for each as the code, and the SQL state
+const REFUSALS: [number, string, string][] = [
+    [1044, 'ER_DBACCESS_DENIED_ERROR', '42000'],
+    [1045, 'ER_ACCESS_DENIED_ERROR', '28000'],
+    [1049, 'ER_BAD_DB_ERROR', '42000'],
+    [1129, 'ER_HOST_IS_BLOCKED', 'HY000'],
+    [1130, 'ER_HOST_NOT_PRIVILEGED', 'HY000'],
+    [1226, 'ER_USER_LIMIT_REACHED', '42000'],
+    [1862, 'ER_MUST_CHANGE_PASSWORD_LOGIN', 'HY000'],
+    [3118, 'ER_ACCOUNT_HAS_BEEN_LOCKED', 'HY000'],
+    [3159, 'ER_SECURE_TRANSPORT_REQUIRED', 'HY000'],
+    [3955, 'ER_USER_ACCESS_DENIED_FOR_USER_ACCOUNT_BLOCKED_BY_PASSWORD_LOCK', 'HY000'],
+    // The two of MariaDB. mysql2 names them by the table of MySQL, where these numbers
+    // belong to the bulk loader
+    [4150, 'ER_BULK_PARSER_UNEXPECTED_CHAR_AFTER_COLUMN_TERMINATOR', 'HY000'],
+    [4151, 'ER_BULK_PARSER_INCOMPLETE_ESCAPE_SEQUENCE', 'HY000']
+];
+// The three places such an error reaches a check. Only the second one is fatal
+const PLACES: [string, Where][] = [
+    ['at the login of a new connection', 'login'],
+    ['at the change of user on an open connection, where mysql2 marks it fatal', 'changeUser'],
+    ['as the answer to the status query', 'query']
+];
+const DENIED = { code: 'ER_ACCESS_DENIED_ERROR', errno: 1045, sqlState: '28000' };
+const denied = packet(1045, 'ER_ACCESS_DENIED_ERROR', '28000');
+const tooMany = packet(1040, 'ER_CON_COUNT_ERROR', '08004');
+
 // One letter per check. P passes, S passes after SLOW ms, N is answered and the validator
-// says no. The rest fail: R connection refused, D login denied, L connection lost, H hangs.
+// says no. The rest fail: R connection refused, L connection lost, H hangs, T too many
+// connections. Three are refused by the server: D the login of a new connection with 1045,
+// C the change of user on an open one with 1045, Q the status query with 1226.
 // B and X are answered and then throw: the validators accepted B and said no to X
 const STEPS: { [letter: string]: Step } = {
     P: PASS, S: 'slow', N: NO, R: 'refused', D: 'denied', L: 'lost', H: 'hang',
+    T: serverError('login', tooMany),
+    C: serverError('changeUser', denied),
+    Q: serverError('query', packet(1226, 'ER_USER_LIMIT_REACHED', '42000')),
     B: PASS_THROWS, X: NO_THROWS
 };
 const stepsOf = (letters: string): Step[] => letters.split(' ').map(letter => STEPS[letter]);
@@ -304,7 +340,7 @@ describe('health check with a healthCheck block: when a node goes down', () => {
     it.each<[string, object, string, string]>([
         ['the default fall is 2: one failed check leaves the node up', {}, 'P R', 'U U'],
         ['the default fall is 2: the second in a row takes it down', {}, 'P R R', 'U U d'],
-        ['a refused login counts like any other failure', {}, 'P D D', 'U U d'],
+        ['too many connections count like any other failure', {}, 'P T T', 'U U d'],
         ['a lost connection counts like any other failure', {}, 'P L L', 'U U d'],
         ['a check that hangs counts like any other failure', {}, 'P H H', 'U U d'],
         ['failures of different kinds make one run', {}, 'P L H', 'U U d'],
@@ -347,6 +383,143 @@ describe('health check with a healthCheck block: when a node comes back', () => 
         ['and goes down again at fall', {}, 'P R R P P R R', 'U U d d U U d']
     ])('%s', async (_name, block, letters, wanted) => {
         expect(await upAfterEach(block, letters)).toBe(wanted);
+    });
+});
+
+describe('health check with a healthCheck block: a login or account refusal', () => {
+    describe.each(REFUSALS)('errno %i, %s', (errno, code, sqlState) => {
+        // fall is 3: no count of failed checks takes this node down with one check
+        it.each(PLACES)('%s takes an up node down with one check', async (_name, at) => {
+            const node = fakeNode([PASS, serverError(at, packet(errno, code, sqlState)), 'hang']);
+            await start({ healthCheck: { fall: 3 } });
+            expect(valid()).toBe(true);
+
+            await nextCheck(node);
+
+            expect([valid(), info().checkError]).toEqual([false, { code, errno, sqlState }]);
+        });
+    });
+
+    it('reaches the check as fatal from a change of user only', async () => {
+        const seen: any[] = [];
+        const node = fakeNode([PASS, ...PLACES.map(([, at]) => serverError(at, denied)), 'hang']);
+        await start({ healthCheck: {} });
+        cluster.on('pool_check_failed', ([error]: any[]) => seen.push([error.errno, error.fatal]));
+        for (let i = 0; i < 3; i++) await nextCheck(node);
+
+        expect(seen).toEqual([[1045, undefined], [1045, true], [1045, undefined]]);
+    });
+
+    // Errors that are no refusal: a limit that passes with time, an error of a query, a
+    // connection that is gone, and errors that only look like one of the list
+    const lostWith2013 = () => Object.assign(errors.lost(), { errno: 2013 });
+    const codeOnly = () => Object.assign(new Error('Access denied'), { code: DENIED.code });
+    const OTHERS: [string, Step, object][] = [
+        ['too many connections, errno 1040, at the login',
+            serverError('login', tooMany), { code: 'ER_CON_COUNT_ERROR', errno: 1040 }],
+        ['too many connections, errno 1040, at a change of user, so fatal',
+            serverError('changeUser', tooMany), { code: 'ER_CON_COUNT_ERROR', errno: 1040 }],
+        ['too many connections of the user, errno 1203',
+            serverError('login', packet(1203, 'ER_TOO_MANY_USER_CONNECTIONS', '42000')),
+            { errno: 1203 }],
+        ['a deadlock, errno 1213',
+            serverError('query', packet(1213, 'ER_LOCK_DEADLOCK', '40001')), { errno: 1213 }],
+        ['a lock wait timeout, errno 1205',
+            serverError('query', packet(1205, 'ER_LOCK_WAIT_TIMEOUT')), { errno: 1205 }],
+        ['a node that is not ready, errno 1047',
+            serverError('query', packet(1047, 'ER_UNKNOWN_COM_ERROR', '08S01')), { errno: 1047 }],
+        ['a lost connection with the errno 2013 of the client library',
+            serverError('query', lostWith2013), { code: 'PROTOCOL_CONNECTION_LOST', errno: 2013 }],
+        ['a lost connection as mysql2 has it, fatal and with no errno',
+            'lost', { code: 'PROTOCOL_CONNECTION_LOST' }],
+        ['the code of a refused login with no errno',
+            serverError('login', codeOnly), { code: 'ER_ACCESS_DENIED_ERROR' }],
+        ['the errno of a refused login as a string',
+            serverError('login', () => Object.assign(codeOnly(), { errno: '1045' })),
+            { code: 'ER_ACCESS_DENIED_ERROR' }],
+        ['a refused connection, errno -111', 'refused', { code: 'ECONNREFUSED', errno: -111 }]
+    ];
+    describe.each(OTHERS)('%s', (_name, step, checkError) => {
+        it('leaves an up node up the first time, like any failed check', async () => {
+            const node = fakeNode([PASS, step, 'hang']);
+            await start({ healthCheck: {} });
+            await nextCheck(node);
+
+            expect(info()).toMatchObject({ isValid: true, checkError });
+        });
+
+        it('takes it down the second time in a row', async () => {
+            const node = fakeNode([PASS, step, step, 'hang']);
+            await start({ healthCheck: {} });
+            await nextCheck(node);
+            await nextCheck(node);
+
+            expect(valid()).toBe(false);
+        });
+    });
+
+    it('an error the app passed to failWaiting() is none, whatever its errno', async () => {
+        const node = fakeNode([PASS, 'waits', 'hang']);
+        await start({ healthCheck: {} });
+        await nextCheck(node);
+
+        expect(cluster.failWaiting(0, Object.assign(new Error('leaving'), DENIED))).toBe(1);
+        await pass(0);
+
+        // the check failed with an error the package was handed: nothing of the server
+        expect([valid(), info().checkError]).toEqual([true, {}]);
+    });
+
+    it.each<[string, object, string, string]>([
+        ['takes an up node down with one check, whatever fall is', { fall: 5 }, 'P D', 'U d'],
+        ['does so on an open connection', { fall: 5 }, 'P C', 'U d'],
+        ['and as the answer to the status query', { fall: 5 }, 'P Q', 'U d'],
+        ['takes the node down after one failed check of another kind', {}, 'P R D', 'U U d'],
+        ['leaves a node that is down as it is', {}, 'P R R D', 'U U d d'],
+        ['a failed check after it leaves the node down', {}, 'P D R', 'U d d'],
+        ['one pass after it leaves the node down: the default rise is 2', {}, 'P D P', 'U d d'],
+        ['the second pass in a row brings the node back', {}, 'P D P P', 'U d d U'],
+        ['rise 1: one pass brings the node back', { rise: 1 }, 'P D P', 'U d U'],
+        ['rise 3: the third pass in a row brings the node back',
+            { rise: 3 }, 'P C P P P', 'U d d d U'],
+        ['ends a run of passes', { rise: 3 }, 'P R R P P D P P', 'U U d d d d d d'],
+        ['and the run starts again after it',
+            { rise: 3 }, 'P R R P P D P P P', 'U U d d d d d d U'],
+        ['a failed check between the passes after it ends their run',
+            {}, 'P D P R P', 'U d d d d'],
+        ['a node that came back goes down again with the next one', {}, 'P D P P Q', 'U d d U d'],
+        ['the check of connect() is refused: the first pass brings the node up',
+            { rise: 3 }, 'D P', 'd U'],
+        ['three refused checks from connect() on, then the first pass',
+            { rise: 3 }, 'D D D P', 'd d d U'],
+        ['one after the first pass does not make the next pass a first pass',
+            { rise: 3 }, 'P D P P', 'U d d d']
+    ])('a refusal: %s', async (_name, block, letters, wanted) => {
+        expect(await upAfterEach(block, letters)).toBe(wanted);
+    });
+
+    it('a node without the block needs two of them, also on an open connection', async () => {
+        const refusal = serverError('changeUser', denied);
+        const node = fakeNode([PASS, refusal, refusal, 'hang']);
+        await start({});
+        await nextCheck(node);
+        const afterOne = valid();
+        await nextCheck(node);
+
+        expect([afterOne, valid()]).toEqual([true, false]);
+    });
+
+    it('in one cluster only the host with the block goes down with one', async () => {
+        const hosts = [{ host: 'node-a' }, { host: 'node-b', healthCheck: { fall: 3 } }];
+        const a = fakeNode([PASS, 'denied', 'denied', 'hang'], 'node-a');
+        const b = fakeNode([PASS, 'denied', 'hang'], 'node-b');
+        await start({}, hosts);
+        await nextCheck(b);
+        await nextCheck(a);
+        const afterOne = [valid(0), valid(1)];
+        await nextCheck(a);
+
+        expect([afterOne, [valid(0), valid(1)]]).toEqual([[true, false], [false, false]]);
     });
 });
 
@@ -419,6 +592,34 @@ describe('health check with a healthCheck block: the first pass after connect()'
         expect(valid()).toBe(true);
     });
 
+    it('a node a refusal took down is up with the one pass of a new connect()', async () => {
+        await reconnected('P D', 'P');
+
+        expect(valid()).toBe(true);
+    });
+
+    it('is up with the first pass also when the new connect() is refused first', async () => {
+        const node = await reconnected('P D', 'C P');
+        expect(valid()).toBe(false);
+
+        await nextCheck(node);
+
+        expect(valid()).toBe(true);
+    });
+
+    it('a refusal still out at the disconnect() does not count after it', async () => {
+        const node = fakeNode([PASS, 'held', PASS, 'hang']);
+        await start({ healthCheck: block });
+        await nextCheck(node);
+        await cluster.disconnect();
+        // the check of the new connect() passes, then the old check gets its refusal
+        await connect();
+        node.held[0](denied());
+        await pass(0);
+
+        expect([valid(), info().checkError]).toEqual([true, undefined]);
+    });
+
     it('a failed check from before the disconnect() does not count after it', async () => {
         // one failed check, then the new connect(): its check fails too, the first of two
         const node = await reconnected('P R', 'R R');
@@ -476,6 +677,10 @@ describe('health check with a healthCheck block: the log of a change of state', 
     const upRise = ['info', { pool, valid: true, reason: 'rise' }];
     const downFall = ['warn', { pool, valid: false, reason: 'fall' }];
     const downNo = ['warn', { pool, valid: false, reason: 'validator' }];
+    // the record of a refusal also has the errno the server refused with
+    const downRefusal = (errno: number) => {
+        return ['warn', { pool, valid: false, reason: 'refusal', errno }];
+    };
 
     it.each<[string, object, string, any[]]>([
         ['down by failed checks and back: one line per change, none for the checks between',
@@ -486,7 +691,15 @@ describe('health check with a healthCheck block: the log of a change of state', 
         ['a node that starts down logs its first pass and no fall', {}, 'R R R P', [up1]],
         ['a node that stays up logs nothing more', {}, 'P R P R P', [up1]],
         ['a no that then throws is one line, the one of the validator',
-            { fall: 1 }, 'P X', [up1, downNo]]
+            { fall: 1 }, 'P X', [up1, downNo]],
+        ['down by a refused login and back: one line for the first refusal',
+            {}, 'P D C P P', [up1, downRefusal(1045), upRise]],
+        ['a refusal that is the answer to the status query has its own errno',
+            {}, 'P Q', [up1, downRefusal(1226)]],
+        ['fall 1: a refusal is not logged as the fall',
+            { fall: 1 }, 'P D', [up1, downRefusal(1045)]],
+        ['a refusal of a node that is down already logs no line', {}, 'P R R D', [up1, downFall]],
+        ['a node refused from its connect() on logs its first pass only', {}, 'D D P', [up1]]
     ])('%s', async (_name, block, letters, wanted) => {
         await upAfterEach(block, letters);
 
@@ -997,6 +1210,30 @@ describe('health check with a healthCheck block: what stays as it was', () => {
         expect(await read()).toEqual(wanted);
     });
 
+    it('a refused check is an error check, and the node is not valid', async () => {
+        expect(await upAfterEach({}, 'P D')).toBe('U d');
+
+        const wanted = { checks: { valid: 1, error: 1 }, valid: 0, loadScore: 19 };
+        expect(await read()).toEqual(wanted);
+    });
+
+    it('nodes() shows a refused node as not valid, with the error of the server', async () => {
+        const node = fakeNode([up(7), 'denied', up(9), up(11)]);
+        await start({ healthCheck: {} });
+        const seen = [];
+        for (let i = 0; i < 3; i++) {
+            await nextCheck(node);
+            seen.push(info());
+        }
+
+        const base = { id: 0, name: 'node-a:3306', host: 'node-a', port: 3306 };
+        expect(seen).toEqual([
+            { ...base, isValid: false, loadScore: 19, checkError: DENIED },
+            { ...base, isValid: false, loadScore: 23 },
+            { ...base, isValid: true, loadScore: 27 }
+        ]);
+    });
+
     it('nodes() tells of a node as before: state, score, error of the last check', async () => {
         const node = fakeNode([up(7), 'refused', 'refused', up(9), up(11)]);
         await start({ healthCheck: {} });
@@ -1041,6 +1278,26 @@ describe('health check with a healthCheck block: what stays as it was', () => {
         });
         expect(result.error).toBeInstanceOf(Error);
         await expect(connecting).rejects.toBe('pool in host node-a is not valid');
+    });
+
+    it('firstReady and nodes() have the error of a refused check of connect() too', async () => {
+        fakeNode(['denied']);
+        cluster = createPoolCluster(settingsOf({ healthCheck: {} }));
+        cluster.connect().catch((): void => undefined);
+
+        const [result] = await cluster.firstReady;
+        expect([result.nodeId, result.ok, result.checkError]).toEqual([0, false, DENIED]);
+        expect(info()).toMatchObject({ isValid: false, checkError: DENIED });
+    });
+
+    it('pool_check_failed comes with every refused check, with the error of mysql2', async () => {
+        const failed: any[] = [];
+        const node = fakeNode(stepsOf('P D C Q P'));
+        await start({ healthCheck: {} });
+        cluster.on('pool_check_failed', (args: any[]) => failed.push([args[0].errno, args[1]]));
+        for (let i = 0; i < 4; i++) await nextCheck(node);
+
+        expect(failed).toEqual([[1045, 0], [1045, 0], [1226, 0]]);
     });
 
     it('pool_check_failed comes with every failed check, also of a down node', async () => {
