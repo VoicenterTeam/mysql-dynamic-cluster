@@ -30,8 +30,13 @@ const timerCheckRange = z.strictObject({
     end: z.number()
 }).partial();
 
-// A time in ms that a timer of Node can wait. A longer one would fire after 1 ms
-const timerMs = z.number().positive().max(2147483647);
+// The longest wait a timer of Node takes, in ms. A longer one would fire after 1 ms
+const LONGEST_TIMER = 2147483647;
+// A wait before the next check, in ms. Node turns a wait below 1 ms into 1 ms, and a wait
+// of a few ms would ask a node hundreds of times a second, each time with a login
+const waitMs = z.number().min(100).max(LONGEST_TIMER);
+// The time one check may take, in ms
+const limitMs = z.number().min(1).max(LONGEST_TIMER);
 // how many checks in a row
 const checkCount = z.number().int().min(1);
 
@@ -39,13 +44,13 @@ const checkCount = z.number().int().min(1);
 // node without one keeps the legacy check
 const healthCheck = z.strictObject({
     // time in ms between two checks, counted from the end of the check before
-    interval: timerMs,
+    interval: waitMs,
     // time in ms one check may take. It may be longer than the interval
-    timeout: timerMs,
+    timeout: limitMs,
     fall: checkCount,
     rise: checkCount,
     // the last two are validated and kept. No rule of the check reads them yet
-    authRetryInterval: timerMs,
+    authRetryInterval: waitMs,
     passive: z.boolean()
 }).partial();
 

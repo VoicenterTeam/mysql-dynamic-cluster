@@ -702,7 +702,9 @@ describe('health check with a healthCheck block: settings the schema refuses', (
         it.each<[string, any]>([
             ['the longest timer of Node as interval and timeout',
                 { interval: 2147483647, timeout: 2147483647 }],
-            ['an interval below one ms', { interval: 0.5 }],
+            ['the shortest of each: interval 100, timeout 1, authRetryInterval 100',
+                { interval: 100, timeout: 1, authRetryInterval: 100 }],
+            ['an interval with a fraction', { interval: 100.5 }],
             ['fall 1 and rise 1', { fall: 1, rise: 1 }],
             ['a timeout above the interval', { interval: 1000, timeout: 30000 }]
         ])('%s is accepted', (_name, block) => {
@@ -734,6 +736,8 @@ const flipsAt = async (total: number, before: boolean) => {
     await pass(total - 1);
     expect(valid()).toBe(before);
     await pass(1);
+            ['an interval below one ms', { interval: 0.5 }, '.interval'],
+            ['an interval of 99 ms', { interval: 99 }, '.interval'],
     expect(valid()).toBe(!before);
 };
 
@@ -741,6 +745,7 @@ describe('health check with a healthCheck block: the time to leave rotation', ()
     // from the moment the node stops until it is out, at the `fall`th failed check. The node
     // stops right after a check that passed, which is the longest it can take
     it.each<[string, object, Step, number]>([
+            ['a timeout below one ms', { timeout: 0.5 }, '.timeout'],
         // wait 5000, fail, wait 5000, fail
         ['the defaults, connections refused: 10000 ms', { healthCheck: {} }, 'refused', 10000],
         // wait 5000, hang 5000, wait 5000, hang 5000
@@ -751,6 +756,7 @@ describe('health check with a healthCheck block: the time to leave rotation', ()
         ['interval 2000, timeout 1000 and fall 3, checks that hang: 9000 ms',
             { healthCheck: { interval: 2000, timeout: 1000, fall: 3 } }, 'hang', 9000],
         // wait 15000, fail, wait 15000, fail
+            ['an authRetryInterval of 99 ms', { authRetryInterval: 99 }, '.authRetryInterval'],
         ['interval 15000, connections refused: 30000 ms',
             { healthCheck: { interval: 15000 } }, 'refused', 30000],
         // wait 15000, hang 15000, wait 15000, hang 15000
