@@ -310,11 +310,12 @@ export class PoolStatus {
     }
 
     // The errno of the errors a server refuses a login or an account with. A node that
-    // answers a check with one of them goes on refusing, most of them until someone acts on
-    // the server, and each new login can count against the account there. 4150 and 4151
-    // are of MariaDB
+    // answers a check with one of them goes on refusing until someone acts on the server,
+    // and each new login can count against the account there. 4150 and 4151 are of
+    // MariaDB. 1226 is not here: a server also answers with it while the account has too
+    // many connections open, which passes when one of them closes
     private static readonly _refusals: ReadonlySet<number> = new Set([
-        1044, 1045, 1049, 1129, 1130, 1226, 1862, 3118, 3159, 3955, 4150, 4151
+        1044, 1045, 1049, 1129, 1130, 1862, 3118, 3159, 3955, 4150, 4151
     ]);
 
     /**

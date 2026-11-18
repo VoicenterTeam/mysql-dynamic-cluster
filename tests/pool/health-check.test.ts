@@ -189,7 +189,6 @@ const REFUSALS: [number, string, string][] = [
     [1049, 'ER_BAD_DB_ERROR', '42000'],
     [1129, 'ER_HOST_IS_BLOCKED', 'HY000'],
     [1130, 'ER_HOST_NOT_PRIVILEGED', 'HY000'],
-    [1226, 'ER_USER_LIMIT_REACHED', '42000'],
     [1862, 'ER_MUST_CHANGE_PASSWORD_LOGIN', 'HY000'],
     [3118, 'ER_ACCOUNT_HAS_BEEN_LOCKED', 'HY000'],
     [3159, 'ER_SECURE_TRANSPORT_REQUIRED', 'HY000'],
@@ -208,17 +207,20 @@ const PLACES: [string, Where][] = [
 const DENIED = { code: 'ER_ACCESS_DENIED_ERROR', errno: 1045, sqlState: '28000' };
 const denied = packet(1045, 'ER_ACCESS_DENIED_ERROR', '28000');
 const tooMany = packet(1040, 'ER_CON_COUNT_ERROR', '08004');
+// 1226 is what a server answers when an account is over a limit per hour, and also while it
+// has too many connections open at once, which passes when one of them closes
+const overLimit = packet(1226, 'ER_USER_LIMIT_REACHED', '42000');
 
 // One letter per check. P passes, S passes after SLOW ms, N is answered and the validator
 // says no. The rest fail: R connection refused, L connection lost, H hangs, T too many
 // connections. Three are refused by the server: D the login of a new connection with 1045,
-// C the change of user on an open one with 1045, Q the status query with 1226.
+// C the change of user on an open one with 1045, Q the status query with 1044.
 // B and X are answered and then throw: the validators accepted B and said no to X
 const STEPS: { [letter: string]: Step } = {
     P: PASS, S: 'slow', N: NO, R: 'refused', D: 'denied', L: 'lost', H: 'hang',
     T: serverError('login', tooMany),
     C: serverError('changeUser', denied),
-    Q: serverError('query', packet(1226, 'ER_USER_LIMIT_REACHED', '42000')),
+    Q: serverError('query', packet(1044, 'ER_DBACCESS_DENIED_ERROR', '42000')),
     B: PASS_THROWS, X: NO_THROWS
 };
 const stepsOf = (letters: string): Step[] => letters.split(' ').map(letter => STEPS[letter]);
@@ -465,6 +467,12 @@ describe('health check with a healthCheck block: a login or account refusal', ()
         ['too many connections of the user, errno 1203',
             serverError('login', packet(1203, 'ER_TOO_MANY_USER_CONNECTIONS', '42000')),
             { errno: 1203 }],
+        ['a limit of the account, errno 1226, at the login',
+            serverError('login', overLimit), { code: 'ER_USER_LIMIT_REACHED', errno: 1226 }],
+        ['a limit of the account, errno 1226, at a change of user, so fatal',
+            serverError('changeUser', overLimit), { errno: 1226 }],
+        ['a limit of the account, errno 1226, as the answer to the status query',
+            serverError('query', overLimit), { errno: 1226 }],
         ['a deadlock, errno 1213',
             serverError('query', packet(1213, 'ER_LOCK_DEADLOCK', '40001')), { errno: 1213 }],
         ['a lock wait timeout, errno 1205',
@@ -789,7 +797,7 @@ describe('health check with a healthCheck block: the log of a change of state', 
         ['down by a refused login and back: one line for the first refusal',
             {}, 'P D C P P', [up1, downRefusal(1045), upRise]],
         ['a refusal that is the answer to the status query has its own errno',
-            {}, 'P Q', [up1, downRefusal(1226)]],
+            {}, 'P Q', [up1, downRefusal(1044)]],
         ['fall 1: a refusal is not logged as the fall',
             { fall: 1 }, 'P D', [up1, downRefusal(1045)]],
         ['a refusal of a node that is down already logs no line', {}, 'P R R D', [up1, downFall]],
@@ -1475,7 +1483,7 @@ describe('health check with a healthCheck block: what stays as it was', () => {
         cluster.on('pool_check_failed', (args: any[]) => failed.push([args[0].errno, args[1]]));
         for (let i = 0; i < 4; i++) await nextCheck(node);
 
-        expect(failed).toEqual([[1045, 0], [1045, 0], [1226, 0]]);
+        expect(failed).toEqual([[1045, 0], [1045, 0], [1044, 0]]);
     });
 
     it('pool_check_failed comes with every failed check, also of a down node', async () => {
