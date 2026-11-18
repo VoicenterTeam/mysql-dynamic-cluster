@@ -307,9 +307,12 @@ export class PoolStatus {
             Logger.warn(pool + " went down: " + this._fall +
                 (this._fall > 1 ? " failed checks in a row" : " failed check"), meta);
         } else if (reason === 'refusal') {
-            // the errno says which refusal it was. The message of the server stays out
-            Logger.warn(pool + " went down: the server refused the login of its check",
-                { ...meta, errno: this._checkError.errno });
+            // the errno says which refusal it was, retryIn how many ms the next check is
+            // away. The message of the server stays out
+            Logger.warn(pool + " went down: the server refused the login of its check", {
+                ...meta, errno: this._checkError.errno,
+                retryIn: this._healthCheck.authRetryInterval
+            });
         } else if (reason === 'validator') {
             Logger.warn(pool + " went down: a validator said no", meta);
         } else if (reason === 'first_pass') {

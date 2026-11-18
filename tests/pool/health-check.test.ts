@@ -898,9 +898,10 @@ describe('health check with a healthCheck block: the log of a change of state', 
     const upRise = ['info', { pool, valid: true, reason: 'rise' }];
     const downFall = ['warn', { pool, valid: false, reason: 'fall' }];
     const downNo = ['warn', { pool, valid: false, reason: 'validator' }];
-    // the record of a refusal also has the errno the server refused with
-    const downRefusal = (errno: number) => {
-        return ['warn', { pool, valid: false, reason: 'refusal', errno }];
+    // the record of a refusal also has the errno the server refused with, and the ms
+    // until the next check as retryIn
+    const downRefusal = (errno: number, retryIn: number = 60000) => {
+        return ['warn', { pool, valid: false, reason: 'refusal', errno, retryIn }];
     };
 
     it.each<[string, object, string, any[]]>([
@@ -919,6 +920,10 @@ describe('health check with a healthCheck block: the log of a change of state', 
             {}, 'P Q', [up1, downRefusal(1044)]],
         ['fall 1: a refusal is not logged as the fall',
             { fall: 1 }, 'P D', [up1, downRefusal(1045)]],
+        ['retryIn is the authRetryInterval the app wrote',
+            { authRetryInterval: 20000 }, 'P D', [up1, downRefusal(1045, 20000)]],
+        ['retryIn is the interval when that is the longer default',
+            { interval: 90000 }, 'P C', [up1, downRefusal(1045, 90000)]],
         ['a refusal of a node that is down already logs no line', {}, 'P R R D', [up1, downFall]],
         ['a node refused from its connect() on logs its first pass only', {}, 'D D P', [up1]]
     ])('%s', async (_name, block, letters, wanted) => {
