@@ -407,10 +407,12 @@ export class PoolStatus {
     }
 
     // The codes of a connection that could not be opened: nothing listens on the port, no
-    // answer within the connect timeout of mysql2, no route to the host or to its network,
-    // and a host name that does not resolve
+    // answer within the connect timeout of mysql2, no route to the host or to its network.
+    // ENOTFOUND is not here, and neither is EAI_AGAIN: a name lookup is shared by every
+    // node the app addresses by name, so a resolver that fails for a moment says nothing
+    // about one node
     private static readonly _connectCodes: ReadonlySet<string> = new Set([
-        'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND'
+        'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH'
     ]);
     // The codes of a connection that was lost: closed by the server as mysql2 reports it,
     // reset, and written to after the other side closed it

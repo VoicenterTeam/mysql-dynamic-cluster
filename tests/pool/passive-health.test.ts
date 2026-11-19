@@ -165,8 +165,18 @@ const CONNECT: [string, number | undefined, string | undefined][] = [
     // the connect timeout of mysql2 itself: no errno
     ['ETIMEDOUT', undefined, undefined],
     ['EHOSTUNREACH', -113, 'connect'],
-    ['ENETUNREACH', -101, 'connect'],
-    ['ENOTFOUND', -3008, 'getaddrinfo']
+    ['ENETUNREACH', -101, 'connect']
+];
+// Codes of the network that are left out on purpose, each with the errno of Linux. A name
+// lookup is shared by every node addressed by name, and the others say something about
+// this host or about one connection, not about the node
+const LEFT_OUT: [string, string, number, string][] = [
+    ['a host name that does not resolve', 'ENOTFOUND', -3008, 'getaddrinfo'],
+    ['a resolver that does not answer', 'EAI_AGAIN', -3001, 'getaddrinfo'],
+    ['no local address to connect from', 'EADDRNOTAVAIL', -99, 'connect'],
+    ['a connection this host aborted', 'ECONNABORTED', -103, 'read'],
+    ['a host that is reported down', 'EHOSTDOWN', -112, 'connect'],
+    ['a network of this host that is down', 'ENETDOWN', -100, 'connect']
 ];
 // The codes of a connection that was lost
 const LOST: [string, number | undefined, string | undefined][] = [
@@ -428,7 +438,14 @@ describe('passive health: what never counts', () => {
             failure('query', mark(reset(), { errno: 1213 }))],
         ['a fatal error whose code is no string',
             failure('open', mark(refused(), { code: 111 }))],
-        ['a rejection that is no object', failure('open', () => 'ECONNREFUSED')]
+        ['a rejection that is no object', failure('open', () => 'ECONNREFUSED')],
+        // fatal and with no errno of a server, as every code that counts is
+        ...LEFT_OUT.flatMap(([name, code, errno, syscall]): [string, Step][] => [
+            [name + ', ' + code + ', in place of a connection',
+                failure('open', network(code, errno, syscall))],
+            [name + ', ' + code + ', on a connection that was handed out',
+                failure('query', network(code, errno, syscall))]
+        ])
     ];
     // the app's own calls: getConnection() asks for a connection and sends nothing on it
     const callsOf = (step: Step): Call[] => {
