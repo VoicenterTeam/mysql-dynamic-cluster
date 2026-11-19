@@ -497,18 +497,19 @@ describe('two healthy nodes whose idle pooled connections the path forgot', () =
         expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
     });
 
-    it('the check runs again for each one that is left, then gets its answer', async () => {
-        const { cluster, proxies, failedChecks } = await stale();
+    it('the check opens a new connection for its own forgotten one, and gets its answer',
+        async () => {
+            const { cluster, proxies, failedChecks } = await stale();
 
-        await burst(cluster, 0, 3);
-        await settled(cluster, 0);
+            await burst(cluster, 0, 3);
+            await settled(cluster, 0);
 
-        // three resets for the queries and one for the check connection, which the path
-        // forgot as well: the check opened a new one and got its answer there
-        expect(failedChecks[0]).toEqual([]);
-        expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG]);
-        expect([proxies[0].resets(), cluster.nodes()[0].checkError]).toEqual([4, undefined]);
-    });
+            // three resets for the queries and one for the check connection, which the path
+            // forgot as well: the check opened a new one and got its answer there
+            expect(failedChecks[0]).toEqual([]);
+            expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG]);
+            expect([proxies[0].resets(), cluster.nodes()[0].checkError]).toEqual([4, undefined]);
+        });
 
     // The check asks on its own connection, so it uses up none of the pool: what the path
     // forgot there waits for a query of the app
@@ -948,7 +949,8 @@ describe('the check connection of a healthCheck node', () => {
 
         // The first check lost the connection it held and the one it opened then. The
         // second held none: the reset of the one it opened is its result. fall is 3
-        expect([first, proxy.resets(), failedChecks]).toEqual([2, 3, ['ECONNRESET', 'ECONNRESET']]);
+        const lost = ['ECONNRESET', 'ECONNRESET'];
+        expect([first, proxy.resets(), failedChecks]).toEqual([2, 3, lost]);
         const reset = { code: 'ECONNRESET', errno: -104 };
         expect(node(cluster)).toEqual({ isValid: true, checkError: reset });
     });

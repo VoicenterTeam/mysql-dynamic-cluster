@@ -97,9 +97,8 @@ const makeNode = (steps: Step[]) => {
             };
             const unopened = () => step === 'opening' || step === 'waits' || !!failureAt('open');
             if (step === 'opening') {
-                node.opening.push((error?: any) => {
-                    return error ? connection.emit('error', error) : connection.emit('connect', {});
-                });
+                node.opening.push((error?: any) => error
+                    ? connection.emit('error', error) : connection.emit('connect', {}));
             } else {
                 later(() => {
                     const failure = failureAt('open');
