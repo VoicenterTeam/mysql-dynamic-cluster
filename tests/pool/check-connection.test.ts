@@ -385,12 +385,17 @@ describe('the check connection: a connection that was lost', () => {
 
 // Passive health tells the status of a call of the app that failed, and starts a check at
 // once. The connection the node holds says nothing about a new one, so after a call that
-// could open none the check opens one itself
+// could open none the check opens one itself. The one the node holds stays until the new
+// one logged in, and it stays for good when the new one finds no route
 describe('the check connection: after a call of the app that could open no connection', () => {
     const noRoute = () => Object.assign(new Error('connect ENETUNREACH'),
         { code: 'ENETUNREACH', errno: -101, syscall: 'connect', fatal: true });
     const timedOut = () => Object.assign(new Error('connect ETIMEDOUT'),
         { code: 'ETIMEDOUT', fatal: true });
+    const refused = () => Object.assign(new Error('connect ECONNREFUSED'),
+        { code: 'ECONNREFUSED', errno: -111, syscall: 'connect', fatal: true });
+    const denied = () => Object.assign(new Error('Access denied'),
+        { code: 'ER_ACCESS_DENIED_ERROR', errno: 1045, sqlState: '28000' });
     // the call fails, and the check that passive health starts for it is out
     const afterCall = async (error: any, opening: boolean, settings?: object) => {
         const pool = await started(settings);
@@ -405,14 +410,17 @@ describe('the check connection: after a call of the app that could open no conne
     };
 
     it.each([['found no route', noRoute], ['got none in time', timedOut]])(
-        'that %s: the check logs out of the one it held and asks on a new one',
+        'that %s: the check opens a new one, and the one it held stays until that logged in',
         async (_name, error) => {
             const { pool, held } = await afterCall(error(), true);
+            const opening = [connections().length, used(held), pool.holdsCheckConnection];
             await logIn(last());
+            const loggedIn = used(held);
             await answer(last());
 
             // the check of connect() asked on the first one, this check on the second
-            expect([connections().length, used(held), used(last())]).toEqual([2, [1, 1], [0, 1]]);
+            expect([opening, loggedIn]).toEqual([[2, [0, 1], true], [1, 1]]);
+            expect([connections().length, used(last())]).toEqual([2, [0, 1]]);
             expect([pool.status.isValid, pool.checkError]).toEqual([true, undefined]);
         });
 
@@ -425,39 +433,90 @@ describe('the check connection: after a call of the app that could open no conne
             expect([pool.status.isValid, pool.checkError]).toEqual([true, undefined]);
         });
 
-    it('no route for the new one either: the node stays up and holds none', async () => {
+    it('no route for the new one either: the node stays up, and the one it held stays',
+        async () => {
+            const { pool, held } = await afterCall(noRoute(), true);
+            last().emit('error', noRoute());
+            await settle();
+            const after = [pool.status.isValid, pool.holdsCheckConnection, pool.checkError];
+
+            // the next check has nothing to decide: it asks on the connection that stayed
+            const checking = pool.status.checkStatus();
+            await settle();
+            await answer(held);
+            await checking;
+
+            expect(after).toEqual([true, true, { code: 'ENETUNREACH', errno: -101 }]);
+            expect([connections().length, used(held)]).toEqual([2, [0, 2]]);
+            expect([pool.status.isValid, pool.checkError]).toEqual([true, undefined]);
+        });
+
+    // Whatever else keeps the new one from logging in takes the node down, and the one the
+    // node held goes with it: a node that came back on that one would take no call
+    it.each<[string, () => any, object]>([
+        ['is refused', refused, { code: 'ECONNREFUSED', errno: -111 }],
+        ['is reset while it logs in', lost, { code: 'ECONNRESET', errno: -104 }],
+        ['is refused its login', denied,
+            { code: 'ER_ACCESS_DENIED_ERROR', errno: 1045, sqlState: '28000' }]
+    ])('the new one %s: down with that check, and the one it held is logged out of',
+        async (_name, error, checkError) => {
+            const { pool, held } = await afterCall(noRoute(), true);
+            last().emit('error', error());
+            await settle();
+
+            expect([pool.status.isValid, pool.checkError]).toEqual([false, checkError]);
+            expect([connections().length, used(held)]).toEqual([2, [1, 1]]);
+            expect(pool.holdsCheckConnection).toBe(false);
+        });
+
+    it('the new one is not there in time: down at the timeout, and neither is kept',
+        async () => {
+            const { pool, held } = await afterCall(timedOut(), true);
+            const before = [pool.status.isValid, used(held)];
+            await jest.advanceTimersByTimeAsync(TIMEOUT);
+
+            expect(before).toEqual([true, [0, 1]]);
+            expect([pool.status.isValid, pool.checkError]).toEqual([false, {}]);
+            expect([connections().length, used(held), last().destroy.mock.calls.length])
+                .toEqual([2, [1, 1], 1]);
+            expect(pool.holdsCheckConnection).toBe(false);
+        });
+
+    it('the new one is lost after its login: down with that check, and no third is opened',
+        async () => {
+            const { pool, held } = await afterCall(noRoute(), true);
+            await logIn(last());
+            await answerUser(last(), lost());
+
+            expect([connections().length, used(held), pool.status.isValid]).toEqual(
+                [2, [1, 1], false]);
+            expect(pool.checkError).toEqual({ code: 'ECONNRESET', errno: -104 });
+        });
+
+    // the fake server never closes, so a logout ends with the drop after 2000 ms
+    it.each<[string, (pool: any) => void]>([
+        ['a disconnect()', pool => pool.disconnect()],
+        ['a second connect()', pool => { pool.connect().catch((): void => undefined); }]
+    ])('%s while the new one logs in: the node logs out of both', async (_name, act) => {
         const { pool, held } = await afterCall(noRoute(), true);
-        last().emit('error', noRoute());
-        await settle();
+        const opened = last();
 
-        expect([connections().length, used(held)]).toEqual([2, [1, 1]]);
-        expect([pool.status.isValid, pool.holdsCheckConnection]).toEqual([true, false]);
-        expect(pool.checkError).toEqual({ code: 'ENETUNREACH', errno: -101 });
-    });
+        act(pool);
+        const ended = [used(held)[0], used(opened)[0]];
+        pool.disconnect();
+        jest.advanceTimersByTime(2000);
 
-    it('the new one is lost: down with that check, and no third one is opened', async () => {
-        const { pool } = await afterCall(noRoute(), true);
-        await logIn(last());
-        await answerUser(last(), lost());
-
-        expect([connections().length, pool.status.isValid]).toEqual([2, false]);
-        expect(pool.checkError).toEqual({ code: 'ECONNRESET', errno: -104 });
-    });
-
-    it('the new one is not there in time: down at the timeout of the check', async () => {
-        const { pool } = await afterCall(timedOut(), true);
-        const before = pool.status.isValid;
-        await jest.advanceTimersByTimeAsync(TIMEOUT);
-
-        expect([before, pool.status.isValid, pool.checkError]).toEqual([true, false, {}]);
-        expect([connections().length, pool.holdsCheckConnection]).toEqual([2, false]);
+        expect(ended).toEqual([1, 1]);
+        expect([held.destroy.mock.calls.length, opened.destroy.mock.calls.length])
+            .toEqual([1, 1]);
+        expect(jest.getTimerCount()).toBe(0);
     });
 
     // connect() on a node that is connected runs its own check next to the one of the
-    // timer. Both have to decide, and the second must not log out of the connection the
-    // first is opening: that one is as new as it gets
+    // timer. Both have to decide, and the second must not open one more: the one the first
+    // is opening is as new as it gets
     it('two checks at once that have to decide ask on one new connection', async () => {
-        const { pool } = await afterCall(noRoute(), true);
+        const { pool, held } = await afterCall(noRoute(), true);
         const second = pool.status.checkStatus();
         await settle();
         const opened = [connections().length, used(last())];
@@ -469,7 +528,7 @@ describe('the check connection: after a call of the app that could open no conne
         await second;
 
         expect(opened).toEqual([2, [0, 0]]);
-        expect([connections().length, used(last())]).toEqual([2, [0, 2]]);
+        expect([connections().length, used(held), used(last())]).toEqual([2, [1, 1], [0, 2]]);
         expect([pool.status.isValid, pool.checkError]).toEqual([true, undefined]);
     });
 

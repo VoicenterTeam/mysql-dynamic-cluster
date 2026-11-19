@@ -12,6 +12,9 @@ export class CheckConnection {
     // the connection, and its login: resolved with the connection once the server took it.
     // `open` from then on
     private _held?: { connection: any, ready: Promise<any>, open: boolean };
+    // The connection that was held when a check opened a new one beside it. Put aside
+    // until the new one logged in or failed. See queryOnNew()
+    private _kept?: { connection: any, ready: Promise<any>, open: boolean };
     private _closed: boolean = false;
     // The connection a second connect() put in the place of this one, when no disconnect()
     // came in between. See close()
@@ -50,7 +53,36 @@ export class CheckConnection {
      */
     public async query<T>(sql: string): Promise<T> {
         if (this._closed) throw new Error("the check connection is closed");
-        const held = this._held || this._open();
+        return this._ask<T>(this._held || this._open(), sql);
+    }
+
+    /**
+     * Send one query on a new connection, while the one that is held stays open beside
+     * it: that one answers although no new connection may reach the node. Once the new
+     * one logged in it is the connection that is held, and the old one is logged out of.
+     * When the new one does not get that far, `keeps` says by its error whether the old
+     * one is held again. If not, the old one is logged out of as well.
+     * With no connection held, or one that is still logging in, this is query(): that
+     * connection is new already, and a second check that asks for a new one shares it
+     * @param sql the query
+     * @param keeps whether the old connection stays after the new one failed with this
+     */
+    public async queryOnNew<T>(sql: string, keeps: (error: any) => boolean): Promise<T> {
+        if (this._closed || !this._held?.open || this._kept) return this.query<T>(sql);
+        this._kept = this._held;
+        const opened = this._open();
+        try {
+            await opened.ready;
+        } catch (error) {
+            this._settle(keeps(error));
+            throw error;
+        }
+        this._settle(false);
+        if (this._closed) throw new Error("the check connection is closed");
+        return this._ask<T>(opened, sql);
+    }
+
+    private async _ask<T>(held: { connection: any, ready: Promise<any> }, sql: string) {
         const connection = await held.ready;
         return new Promise<T>((resolve, reject) => {
             const fail = (error: any) => {
@@ -69,19 +101,12 @@ export class CheckConnection {
 
     /**
      * Drop the connection that is held, with its socket and whatever was asked on it: no
-     * answer comes for that any more. The next query opens a new connection
+     * answer comes for that any more. The next query opens a new connection. A connection
+     * that was put aside for a new one is logged out of: the new one was not there in time
      */
     public drop(): void {
         this._drop(this._held);
-    }
-
-    /**
-     * Log out of the connection that is held, so the next query opens a new one. A query
-     * that is out on it gets its answer first. One that is still logging in is left: it
-     * is a new connection already, and a second check that asks for one shares it
-     */
-    public renew(): void {
-        if (this._held?.open) this._logOut();
+        this._settle(false);
     }
 
     /**
@@ -91,13 +116,22 @@ export class CheckConnection {
     public close(replacedBy?: CheckConnection): void {
         this._closed = true;
         this._replacedBy = replacedBy;
-        this._logOut();
-    }
-
-    private _logOut(): void {
         const held = this._held;
         this._held = undefined;
         if (held) logOut(held.connection);
+        this._settle(false);
+    }
+
+    /**
+     * The end of a connection that was put aside: held again when it is to be kept and
+     * none took its place, logged out of otherwise
+     */
+    private _settle(keep: boolean): void {
+        const kept = this._kept;
+        this._kept = undefined;
+        if (!kept) return;
+        if (keep && !this._held && !this._closed) this._held = kept;
+        else logOut(kept.connection);
     }
 
     private _open() {
@@ -123,6 +157,8 @@ export class CheckConnection {
     private _drop(held?: { connection: any }) {
         if (!held) return;
         if (this._held === held) this._held = undefined;
+        // one that broke while it was put aside is not held again
+        if (this._kept === held) this._kept = undefined;
         drop(held.connection);
     }
 }

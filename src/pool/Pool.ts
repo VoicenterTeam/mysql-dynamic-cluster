@@ -694,12 +694,15 @@ export class Pool {
      * Rejects with the error of mysql2, or with POOL_NOT_CONNECTED outside connect() and
      * disconnect()
      * @param sql the status query
+     * @param keeps when given, the query goes out on a new connection beside the one the
+     * node holds, which stays until the new one logged in. It says by the error of a new
+     * one that did not log in whether the held one stays after that, too
      */
-    public checkQuery<T>(sql: string): Promise<T> {
+    public checkQuery<T>(sql: string, keeps?: (error: any) => boolean): Promise<T> {
         const metricOptions = { ...this._metricOptions(this._database), sql };
         const queryTimer = new QueryTimer();
         queryTimer.start();
-        return this._askCheckConnection<T>(sql).then(result => {
+        return this._askCheckConnection<T>(sql, this._check, keeps).then(result => {
             queryTimer.end();
             Metrics.recordOperation(queryTimer.get(), metricOptions);
             return result;
@@ -717,11 +720,15 @@ export class Pool {
      * that way is asked again on the one that took its place. Not after a disconnect():
      * a check from before it is dropped, and asks nothing of a later connect()
      * @param check the connection to ask on
+     * @param keeps see checkQuery()
      * @private
      */
-    private _askCheckConnection<T>(sql: string, check = this._check): Promise<T> {
+    private _askCheckConnection<T>(
+        sql: string, check = this._check, keeps?: (error: any) => boolean
+    ): Promise<T> {
         if (!check) return Promise.reject<T>(this._notConnected());
-        return check.query<T>(sql).catch(error => {
+        const asked = keeps ? check.queryOnNew<T>(sql, keeps) : check.query<T>(sql);
+        return asked.catch(error => {
             if (!check.replacedBy) throw error;
             return this._askCheckConnection<T>(sql, check.replacedBy);
         });
@@ -733,14 +740,6 @@ export class Pool {
      */
     public dropCheckConnection(): void {
         this._check?.drop();
-    }
-
-    /**
-     * Log out of the check connection, so the check that asks next opens a new one and
-     * finds out whether a new connection reaches the node
-     */
-    public renewCheckConnection(): void {
-        this._check?.renew();
     }
 
     /**

@@ -728,6 +728,9 @@ describe('nodes addressed by a name that this host has no route for', () => {
         // that found no route it asks neither the pool nor the connection the node held
         if (giveBack) held.release();
         else closers.push(() => held.destroy());
+        // Without its check connection the node has to open one for every check after
+        // that one too. One it held would answer the checks of the timer
+        if (!giveBack) cluster.pools[index].dropCheckConnection();
         return [error.code, error.errno < 0, error.fatal, isUp(cluster)[index]];
     };
 
@@ -826,38 +829,56 @@ describe('nodes addressed by a name that this host has no route for', () => {
         return error.code;
     };
 
-    it('empty pools and a route that stays gone for new connections: down by fall',
-        async () => {
-            const { cluster, downs, failedChecks, servers } = await emptyPools();
-            // the check of the timer after the one passive health starts
-            timerDue(1);
+    it('empty pools and calls that go on failing: down by fall, and the connection the ' +
+        'node held stays', async () => {
+        const { cluster, downs, failedChecks, servers } = await emptyPools();
 
-            const code = await openNone(cluster, 0);
-            await until(() => !isUp(cluster)[0], 'node 0 to go down', () => waitsOf(cluster, 0));
-            await until(() => servers[0].open() === 0, 'the held one to close', servers[0].open);
+        const first = await openNone(cluster, 0);
+        await settled(cluster, 0);
+        // passive health holds this one back: its check is the next one of the timer
+        const second = await openNone(cluster, 0);
+        await cluster.pools[0].status.checkStatus();
 
-            // both checks had to open a connection, and the one the node held is logged out of
-            expect(code).toBe('ENETUNREACH');
-            expect(failedChecks[0]).toEqual(['ENETUNREACH', 'ENETUNREACH']);
-            expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG, LONG]);
-            expect([isUp(cluster), downs()]).toEqual([[false, true], ['fall']]);
-        });
+        expect([first, second]).toEqual(['ENETUNREACH', 'ENETUNREACH']);
+        expect(failedChecks[0]).toEqual(['ENETUNREACH', 'ENETUNREACH']);
+        expect([isUp(cluster), downs()]).toEqual([[false, true], ['fall']]);
+        // each check tried a new connection beside the one of connect(), which is still
+        // open and still the one of the node
+        expect([servers[0].logins(), servers[0].open()]).toEqual([1, 1]);
+        expect(cluster.pools[0].holdsCheckConnection).toBe(true);
+    });
 
-    it('empty pools and a route that is back for the next check: the node stays up, with ' +
-        'one connection', async () => {
+    it('empty pools and calls that stop failing: the check of the timer passes on the ' +
+        'connection the node held', async () => {
         const { cluster, downs, failedChecks, servers } = await emptyPools();
 
         const code = await openNone(cluster, 0);
         await settled(cluster, 0);
+        // the check of the timer, by hand. It has nothing to decide
+        await cluster.pools[0].status.checkStatus();
+
+        // the first of fall 2, then a pass where the node answers
+        expect([code, failedChecks[0]]).toEqual(['ENETUNREACH', ['ENETUNREACH']]);
+        expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
+        expect([servers[0].logins(), servers[0].open()]).toEqual([1, 1]);
+        expect(cluster.nodes()[0].checkError).toBeUndefined();
+    });
+
+    it('a route that is back for a check of the timer that has to decide: it passes on ' +
+        'a new connection, the one of the node from then on', async () => {
+        const { cluster, downs, failedChecks, servers } = await emptyPools();
+
+        await openNone(cluster, 0);
+        await settled(cluster, 0);
+        const second = await openNone(cluster, 0);
         noRoute = false;
-        // the check of the timer, by hand
         await cluster.pools[0].status.checkStatus();
         await until(() => servers[0].open() === 1, 'one open connection', servers[0].open);
 
-        // the first of fall 2, then a pass on the connection the second check opened
-        expect([code, failedChecks[0]]).toEqual(['ENETUNREACH', ['ENETUNREACH']]);
+        // the login of connect() and the one of this check: the first one is logged out of
+        expect([second, failedChecks[0], servers[0].logins()]).toEqual(
+            ['ENETUNREACH', ['ENETUNREACH'], 2]);
         expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
-        expect([servers[0].logins(), cluster.nodes()[0].checkError]).toEqual([2, undefined]);
     });
 
     it('a route that is back when the check starts: it passes on a new connection, and ' +

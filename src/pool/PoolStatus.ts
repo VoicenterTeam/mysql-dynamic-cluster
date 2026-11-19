@@ -375,19 +375,21 @@ export class PoolStatus {
      * check, and so is a loss on a connection that was not held before.
      * A check that has to decide after a call of the app found no route or got no
      * connection in time asks on a new connection: the one the node holds answers although
-     * no new one reaches the node. The held one is logged out of, so the node keeps one
+     * no new one reaches the node. The held one stays until the new one logged in, and it
+     * stays after a new one that found no route, which says nothing about the node. A new
+     * one that fails any other way takes the held one along
      * @private
      */
     private async _askOnCheckConnection(): Promise<GlobalStatusResult[]> {
         const sql = `SHOW GLOBAL STATUS;`;
         const run = this._checkRun;
-        if (this._decides === 'unreachable' || this._decides === 'timeout') {
-            this._pool.renewCheckConnection();
-        }
-        // read before the query, which opens a connection when none is held
-        const held = this._pool.holdsCheckConnection;
+        const onNew = this._decides === 'unreachable' || this._decides === 'timeout';
+        // Read before the query, which opens a connection when none is held. A new one is
+        // opened by this check itself, and is not opened a second time
+        const held = !onNew && this._pool.holdsCheckConnection;
         try {
-            return await this._pool.checkQuery<GlobalStatusResult[]>(sql);
+            const keeps = onNew ? PoolStatus._noRoute : undefined;
+            return await this._pool.checkQuery<GlobalStatusResult[]>(sql, keeps);
         } catch (error) {
             const code = PoolStatus._reduce(error).code;
             const lost = held && PoolStatus._lostCodes.has(code) && run === this._checkRun;
@@ -609,6 +611,14 @@ export class PoolStatus {
      */
     private _foundNoRoute(): boolean {
         return PoolStatus._unreachableCodes.has(this._checkError.code);
+    }
+
+    /**
+     * Whether a connection failed to open for want of a route, by its error
+     * @private
+     */
+    private static _noRoute(error: unknown): boolean {
+        return PoolStatus._unreachableCodes.has(PoolStatus._reduce(error).code);
     }
 
     /**
