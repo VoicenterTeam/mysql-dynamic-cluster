@@ -614,7 +614,49 @@ describe('passive health: a check that meets one more lost connection', () => {
         });
     });
 
+    describe('is over with the run that ends it', () => {
+        // The check of the timer at 6001 uses the hold-off up, so the call at 7000 may
+        // start a check again
+        it('a row that a pass ended: a later lost connection starts a check again', async () => {
+            const node = await lostThen([RESET, PASS, PASS, RESET, PASS, 'hang'], {}, {});
+            await pass(6000);
+            await failed(direct());
+            await pass(0);
+
+            expect(askedAt(node)).toEqual([0, 1000, 1000, 1001, 6001, 7000, 7000]);
+        });
+
+        it('a row that the bound ended: once the node is back, the same', async () => {
+            // down at 1001, back by the pass at 6001, since rise is 1
+            const checks: Step[] = [RESET, RESET, PASS, RESET, PASS, 'hang'];
+            const node = await lostThen(checks, { connectionLimit: 1 }, { fall: 3, rise: 1 });
+            await pass(6000);
+            const back = valid();
+            await failed(direct());
+            await pass(0);
+
+            expect([back, askedAt(node)]).toEqual([true, [0, 1000, 1000, 1001, 6001, 7000, 7000]]);
+        });
+    });
+
     describe('next to the other rules', () => {
+        it('a refused connection after the lost one: down, and the check still runs again',
+            async () => {
+                // both calls at 1000, before the check. Its first run meets a lost
+                // connection, its second passes: the first pass of two for the node
+                const node = fakeNode([PASS, RESET, REFUSED, RESET, PASS, PASS, 'hang']);
+                await start({ healthCheck: {} });
+                await pass(1000);
+                await failed(direct());
+                await failed(direct());
+                await pass(1);
+                const afterRuns = [valid(), askedAt(node)];
+                await pass(5000);
+
+                expect(afterRuns).toEqual([false, [0, 1000, 1000, 1000, 1001]]);
+                expect([valid(), askedAt(node).slice(-1)]).toEqual([true, [6001]]);
+            });
+
         it('after a connect timeout the check runs again the same way', async () => {
             const node = fakeNode([PASS, TIMED_OUT, RESET, RESET, PASS, 'hang']);
             await start({ healthCheck: { fall: 3 } });
