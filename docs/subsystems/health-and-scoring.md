@@ -690,7 +690,10 @@ So that check asks on a new connection:
 
 - **It logs out of the connection the node holds and opens one.** The node
   then holds the new one, so it still holds one connection for its checks.
-  A check that is still out on the old one gets its answer first.
+  A check that is still out on the old one gets its answer first. A
+  connection that is still logging in is new already and is left: two
+  checks that have to decide at once, as after a `connect()` on a cluster
+  that is connected, ask on the same new one.
 - **Only a check that has to decide after such a call does this.** A check
   after a lost connection asks on the connection the node holds, and opens
   a new one only when that one was lost as well, see above. A check of the

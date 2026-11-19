@@ -453,6 +453,26 @@ describe('the check connection: after a call of the app that could open no conne
         expect([connections().length, pool.holdsCheckConnection]).toEqual([2, false]);
     });
 
+    // connect() on a node that is connected runs its own check next to the one of the
+    // timer. Both have to decide, and the second must not log out of the connection the
+    // first is opening: that one is as new as it gets
+    it('two checks at once that have to decide ask on one new connection', async () => {
+        const { pool } = await afterCall(noRoute(), true);
+        const second = pool.status.checkStatus();
+        await settle();
+        const opened = [connections().length, used(last())];
+
+        await logIn(last());
+        last().changeUser.mock.calls.forEach(([, done]: any[]) => done(null));
+        await settle();
+        last().query.mock.calls.forEach(([, done]: any[]) => done(null, []));
+        await second;
+
+        expect(opened).toEqual([2, [0, 0]]);
+        expect([connections().length, used(last())]).toEqual([2, [0, 2]]);
+        expect([pool.status.isValid, pool.checkError]).toEqual([true, undefined]);
+    });
+
     it('the check of the timer after it has nothing to decide: it asks on the new one',
         async () => {
             const { pool } = await afterCall(noRoute(), true);

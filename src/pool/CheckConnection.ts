@@ -9,8 +9,9 @@ import { drop, logOut } from "./ServerFlags";
  * One that broke is dropped, and the next query opens a new one
  */
 export class CheckConnection {
-    // the connection, and its login: resolved with the connection once the server took it
-    private _held?: { connection: any, ready: Promise<any> };
+    // the connection, and its login: resolved with the connection once the server took it.
+    // `open` from then on
+    private _held?: { connection: any, ready: Promise<any>, open: boolean };
     private _closed: boolean = false;
     // The connection a second connect() put in the place of this one, when no disconnect()
     // came in between. See close()
@@ -76,12 +77,11 @@ export class CheckConnection {
 
     /**
      * Log out of the connection that is held, so the next query opens a new one. A query
-     * that is out on it gets its answer first
+     * that is out on it gets its answer first. One that is still logging in is left: it
+     * is a new connection already, and a second check that asks for one shares it
      */
     public renew(): void {
-        const held = this._held;
-        this._held = undefined;
-        if (held) logOut(held.connection);
+        if (this._held?.open) this._logOut();
     }
 
     /**
@@ -91,14 +91,23 @@ export class CheckConnection {
     public close(replacedBy?: CheckConnection): void {
         this._closed = true;
         this._replacedBy = replacedBy;
-        this.renew();
+        this._logOut();
+    }
+
+    private _logOut(): void {
+        const held = this._held;
+        this._held = undefined;
+        if (held) logOut(held.connection);
     }
 
     private _open() {
         const connection: any = mysql.createConnection(this._options);
-        const held = { connection, ready: undefined as Promise<any> };
+        const held = { connection, ready: undefined as Promise<any>, open: false };
         held.ready = new Promise((resolve, reject) => {
-            connection.once('connect', () => resolve(connection));
+            connection.once('connect', () => {
+                held.open = true;
+                resolve(connection);
+            });
             // On, not once, and it stays after the login. mysql2 tells a connection that
             // nobody asks on of its loss with an error event, and an error event without
             // a listener would end the process
