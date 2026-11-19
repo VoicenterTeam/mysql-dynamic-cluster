@@ -174,6 +174,8 @@ export class PoolStatus {
             // and what passive health kept of the life before
             this._holdOff = 0;
             this._decides = undefined;
+            // for a state that reads clean as well: the first check of this connect()
+            // sets it to 0 however it ends
             this._reruns = 0;
         }
         this._timer.activate();

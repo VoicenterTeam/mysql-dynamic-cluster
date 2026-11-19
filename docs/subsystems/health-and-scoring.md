@@ -519,6 +519,10 @@ timeout, and itself fails with `PROTOCOL_CONNECTION_LOST`, `ECONNRESET` or
 - **Only a check that has to decide runs again.** A check with no failed
   call of the app before it that meets such a connection counts toward
   `fall` as any failed check, with a block and without, as in 4.6.0.
+- **A node that went down in the meantime is checked the same way.** When a
+  refused connection took the node down after the lost one and before the
+  check, the runs still go on until one of them decides. A pass among them
+  is the first of `rise`.
 
 Seen with the real mysql2 on the loopback interface, behind a TCP proxy
 that forgets its flows, in
