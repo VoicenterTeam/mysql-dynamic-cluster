@@ -389,7 +389,7 @@ export class PoolStatus {
             Logger.debug("Pool " + this._pool.name + ": the connection of the check was " +
                 "lost, the check opens a new one and asks again",
                 { pool: this._pool.name, code });
-            this._pool.dropCheckConnection();
+            // the lost one is dropped by now: such an error is fatal for mysql2
             return this._pool.checkQuery<GlobalStatusResult[]>(sql);
         }
     }
