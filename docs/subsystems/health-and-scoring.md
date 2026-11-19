@@ -426,6 +426,19 @@ all of them down at once. The check that starts decides instead. It passes
 on a pooled connection that still works, and it takes the node down when it
 finds no route either, or gets no answer within its `timeout`.
 
+**What this does not cover.** A call of the app opens a connection only
+when the pool has no idle one, and the check starts in the same moment. It
+draws a pooled connection when a query handed one back by then, or when the
+pool is at its limit and the check waits for one. Otherwise the check has
+to open a connection too. While the route is still gone it finds none
+either, and the node goes down with `passive_unreachable`, one check after
+the call where it used to go down with the call. Seen with the real mysql2
+on loopback: a route that is gone for 100 ms, two healthy nodes with one
+pooled connection each and four queries at once. Both nodes went down in 10
+of 10 runs, as they did before this rule, and they came back by their
+`rise` passes. With `passive: false` the same run loses 2 or 3 queries and
+no node.
+
 The code alone does not decide the kind. The place does too:
 
 | Where the error came | `ECONNREFUSED` | `EHOSTUNREACH`, `ENETUNREACH` | `ETIMEDOUT` | A code of the lost kind |
