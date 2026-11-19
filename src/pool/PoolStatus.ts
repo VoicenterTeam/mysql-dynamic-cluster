@@ -20,7 +20,8 @@ import Metrics from "../metrics/Metrics";
 import { HealthCheckResult } from "../types/MetricsInterfaces";
 
 // why passive health took a node down, as the log names it
-type PassiveReason = 'passive_connect' | 'passive_lost' | 'passive_timeout';
+type PassiveReason = 'passive_connect' | 'passive_lost' | 'passive_timeout'
+    | 'passive_unreachable';
 
 export class PoolStatus {
     public active: boolean;
@@ -72,10 +73,10 @@ export class PoolStatus {
     // started and the next one of the timer. So it starts one check at most between two
     // checks of the timer, however many queries of the app fail
     private _holdOff: number = 0;
-    // Set when a call of the app lost its connection, or got none within the connect
-    // timeout, since the last check that got its answer: which of the two it was. The next
-    // check that fails takes the node down, whatever `fall` is
-    private _decides?: 'lost' | 'timeout';
+    // Set when a call of the app lost its connection, got none within the connect timeout
+    // or found no route, since the last check that got its answer: which of the three it
+    // was. The next check that fails takes the node down, whatever `fall` is
+    private _decides?: 'lost' | 'timeout' | 'unreachable';
     // How many times in a row the check that decides ran again, because it met a
     // connection that was lost itself. 0 outside such a row
     private _reruns: number = 0;
@@ -308,8 +309,8 @@ export class PoolStatus {
             // With a healthCheck block a refused login takes the node down with this one
             // check, whatever `fall` is, and the next check waits authRetryInterval. Any
             // other failure counts toward `fall`. One failed check is enough as well when
-            // a call of the app lost its connection, or got none in time, since the last
-            // check that got its answer. But for a check that only met one more connection
+            // a call of the app lost its connection, got none in time or found no route,
+            // since the last check that got its answer. But for a check that only met one more connection
             // that was lost: it says nothing about the node, counts toward nothing and
             // runs again at once
             const refused = this._refused();
@@ -321,8 +322,7 @@ export class PoolStatus {
                 } else if (this._failedChecks >= this._fall) {
                     this._setValid(false, 'fall');
                 } else if (this._decides) {
-                    this._setValid(false,
-                        this._decides === 'timeout' ? 'passive_timeout' : 'passive_lost');
+                    this._setValid(false, PoolStatus._decided[this._decides]);
                 }
                 // a check that had to decide did: the checks after it count as any check
                 this._decides = undefined;
@@ -359,8 +359,9 @@ export class PoolStatus {
      * @param valid the state after this check
      * @param reason what moved the node: `fall` failed checks in a row, a login or account
      * the server refused, a validator that said no, the first pass since connect() or
-     * `rise` passes in a row. From passive health: a connection the app could not open, or
-     * a failed check after a connection it lost or one it did not get in time
+     * `rise` passes in a row. From passive health: a connection the node refused the app,
+     * or a failed check after a connection the app lost, did not get in time or found no
+     * route for
      * @private
      */
     private _setValid(
@@ -395,6 +396,9 @@ export class PoolStatus {
         } else if (reason === 'passive_timeout') {
             Logger.warn(pool + " went down: the app got no connection to it in time and " +
                 "the check after that failed", { ...meta, code: this._passiveCode });
+        } else if (reason === 'passive_unreachable') {
+            Logger.warn(pool + " went down: the app found no route to it and the check " +
+                "after that found none either", { ...meta, code: this._passiveCode });
         } else if (reason === 'first_pass') {
             Logger.info(pool + " is up: its first check since connect() passed", meta);
         } else {
@@ -452,13 +456,16 @@ export class PoolStatus {
             && PoolStatus._checkQueries.has(queryOptions);
     }
 
-    // The codes of a connection that could not be opened: nothing listens on the port, no
-    // route to the host or to its network. The node, or the path to it, said so itself.
-    // ENOTFOUND is not here, and neither is EAI_AGAIN: a name lookup is shared by every
-    // node the app addresses by name, so a resolver that fails for a moment says nothing
-    // about one node
-    private static readonly _connectCodes: ReadonlySet<string> = new Set([
-        'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH'
+    // The code of a connection the node refused: nothing listens on the port. The node,
+    // or a balancer in its place, answered and said no
+    private static readonly _refusedCode = 'ECONNREFUSED';
+    // The codes of a connection that no route led to: the host, or its network. This host
+    // or a router on the path says so, the node was never asked, and the connections the
+    // pool holds can go on working. ENOTFOUND is not here, and neither is EAI_AGAIN: a
+    // name lookup is shared by every node the app addresses by name, so a resolver that
+    // fails for a moment says nothing about one node
+    private static readonly _unreachableCodes: ReadonlySet<string> = new Set([
+        'EHOSTUNREACH', 'ENETUNREACH'
     ]);
     // No answer in time: the connect timeout of mysql2, or the one of the socket. Nobody
     // said the node is gone. The timer of mysql2 covers the whole login and is due as well
@@ -474,29 +481,34 @@ export class PoolStatus {
     private static readonly _ranInto = {
         connect: "could not open a connection",
         timeout: "got no connection in time",
+        unreachable: "found no route for a connection",
         lost: "lost a connection"
     };
+    // the reason a node goes down with when the check that had to decide failed
+    private static readonly _decided: {
+        [kind in 'lost' | 'timeout' | 'unreachable']: PassiveReason
+    } = { lost: 'passive_lost', timeout: 'passive_timeout', unreachable: 'passive_unreachable' };
 
     /**
      * What a failed query or getConnection() of the app says about the node, if anything.
-     * Only an error of the network does: `fatal` is true, the code is one of the two
-     * lists or the one of a timeout, the error has no errno of a server, and neither the
-     * package nor the app made it. Never by `fatal` alone: mysql2 marks a refused change
+     * Only an error of the network does: `fatal` is true, the code is one of those named
+     * above, the error has no errno of a server, and neither the package nor the app made
+     * it. Never by `fatal` alone: mysql2 marks a refused change
      * of user, a TLS or auth plugin error and a protocol error as fatal too, and none of
      * them says the node is gone. The place decides the kind as well
      * @param error what the call was rejected with
      * @param opening true when the error came instead of a connection, false when it came
      * on a connection the pool had handed out
      * @returns the kind, and the code it was told by, read once: a second read of a field
-     * of the error could throw. The kind is 'connect' for a code of the first list while a
-     * connection was being opened, and 'timeout' for ETIMEDOUT there. 'lost' for any of
-     * those codes on a connection that was handed out, and for a code of the second list
-     * at either place. Otherwise undefined
+     * of the error could throw. While a connection was being opened the kind is 'connect'
+     * for ECONNREFUSED, 'unreachable' for EHOSTUNREACH and ENETUNREACH and 'timeout' for
+     * ETIMEDOUT. 'lost' for any of those codes on a connection that was handed out, and for
+     * a code of the lost kind at either place. Otherwise undefined
      * @private
      */
     private static _connectionFailure(
         error: any, opening: boolean
-    ): { kind: 'connect' | 'timeout' | 'lost', code: string } | undefined {
+    ): { kind: 'connect' | 'unreachable' | 'timeout' | 'lost', code: string } | undefined {
         try {
             if (Object(error) !== error || PoolStatus._ownErrors.has(error)) return undefined;
             // read all three before any is used, as _reduce() does
@@ -504,11 +516,13 @@ export class PoolStatus {
             if (fatal !== true) return undefined;
             // Node gives an error of a socket a negative errno. A positive one is a server's
             if (Number.isInteger(errno) && errno > 0) return undefined;
-            const connect = PoolStatus._connectCodes.has(code);
+            const connect = code === PoolStatus._refusedCode;
+            const unreachable = PoolStatus._unreachableCodes.has(code);
             const timeout = code === PoolStatus._timeoutCode;
             if (opening && connect) return { kind: 'connect', code };
+            if (opening && unreachable) return { kind: 'unreachable', code };
             if (opening && timeout) return { kind: 'timeout', code };
-            const lost = connect || timeout || PoolStatus._lostCodes.has(code);
+            const lost = connect || unreachable || timeout || PoolStatus._lostCodes.has(code);
             return lost ? { kind: 'lost', code } : undefined;
         } catch (unreadable) {
             return undefined;
@@ -520,11 +534,10 @@ export class PoolStatus {
      * app that failed, never the query of a check. It does something for a node with a
      * healthCheck block whose `passive` is true, while the pool is connected and the node is
      * up, and only for an error _connectionFailure() knows:
-     * - a connection that could not be opened takes the node down at once. It comes back
-     *   as after any check that took it down: by `rise` passes, or its first pass since
-     *   connect()
-     * - a connection that was lost, and one that was not there within the connect timeout,
-     *   leave the node up. The next check that fails takes it down, whatever `fall` is,
+     * - a connection the node refused takes the node down at once. It comes back as after
+     *   any check that took it down: by `rise` passes, or its first pass since connect()
+     * - a connection that was lost, one that was not there within the connect timeout and
+     *   one that no route led to leave the node up. The next check that fails takes it down, whatever `fall` is,
      *   and a check that gets its answer ends that
      * Both start a check at once, in place of the one the timer was waiting for, unless a
      * check is out or passive health started one since the last check of the timer.

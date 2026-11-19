@@ -11,9 +11,9 @@ import { createPoolCluster } from '../../index';
 
 // Passive health of a node that has a healthCheck block: what a query or a getConnection()
 // of the app runs into moves the node between two checks. A connection that cannot be
-// opened takes the node down at once. A connection that was lost, and one that was not
-// there within the connect timeout, start a check at once, and that check takes the node
-// down when it fails. Nothing else counts, and the check itself never does. Every number
+// refused takes the node down at once. A connection that was lost, one that was not there
+// within the connect timeout and one that no route led to start a check at once, and that
+// check takes the node down when it fails. Nothing else counts, and the check itself never does. Every number
 // here is worked out by hand from the settings.
 // The cluster is the one an app gets from createPoolCluster. Only mysql2 is replaced, and
 // the clock is fake: a check that passive health starts is a request for a connection at
@@ -160,9 +160,13 @@ const packet = (errno: number, code: string, sqlState: string = 'HY000') => {
 };
 const failure = (at: string, error: () => any, then?: Failure): Failure => ({ at, error, then });
 
-// The codes of a connection that could not be opened, with the errno of Linux
+// The code of a connection the node refused, with the errno of Linux
 const CONNECT: [string, number | undefined, string | undefined][] = [
-    ['ECONNREFUSED', -111, 'connect'],
+    ['ECONNREFUSED', -111, 'connect']
+];
+// The codes of a connection that no route led to: this host, or a router on the path,
+// said so. Nobody asked the node
+const UNREACHABLE: [string, number | undefined, string | undefined][] = [
     ['EHOSTUNREACH', -113, 'connect'],
     ['ENETUNREACH', -101, 'connect']
 ];
@@ -187,6 +191,9 @@ const LOST: [string, number | undefined, string | undefined][] = [
 // the connect timeout of mysql2 itself: no errno. In place of a connection
 const timedOut = network('ETIMEDOUT');
 const TIMED_OUT = failure('open', timedOut);
+// no route to the network of the node, in place of a connection
+const NO_ROUTE = failure('open', network('ENETUNREACH', -101, 'connect'));
+const NO_ROUTE_CHECK = { code: 'ENETUNREACH', errno: -101 };
 const refused = network('ECONNREFUSED', -111, 'connect');
 const reset = network('ECONNRESET', -104, 'read');
 const REFUSED = failure('open', refused);
@@ -300,7 +307,7 @@ describe('passive health: a connection that cannot be opened', () => {
     // Told by the place too. A code of this list on a connection that was handed out, and
     // a socket that timed out there, is a lost connection: the node is up after the call,
     // and down by the check
-    describe.each([...CONNECT, ['ETIMEDOUT', -110, 'read']])(
+    describe.each([...CONNECT, ...UNREACHABLE, ['ETIMEDOUT', -110, 'read']])(
         '%s on a connection that was handed out', (code, errno, syscall) => {
             it.each(places(network(code as string, errno as number, syscall as string)))(
                 '%s is a lost connection', async (_name, call, step) => {
@@ -335,13 +342,17 @@ describe('passive health: a connection that cannot be opened', () => {
     });
 });
 
-describe('passive health: a connection that was not there in time', () => {
-    // The connect timeout of mysql2 has no errno, the one of the socket has. Nobody said
-    // the node is gone, so the node stays up and a check decides. fall is 3 throughout
+describe('passive health: a connection that did not come, and nobody refused it', () => {
+    // The connect timeout of mysql2 has no errno, the one of the socket has. No route is
+    // what this host or a router says. In none of them the node said it is gone, so the
+    // node stays up and a check decides. fall is 3 throughout
     const TIMEOUTS: [string, Step][] = [
         ['the connect timeout of mysql2', TIMED_OUT],
         ['the connect timeout of the socket',
-            failure('open', network('ETIMEDOUT', -110, 'connect'))]
+            failure('open', network('ETIMEDOUT', -110, 'connect'))],
+        ...UNREACHABLE.map(([code, errno, syscall]): [string, Step] => {
+            return ['no route, ' + code, failure('open', network(code, errno, syscall))];
+        })
     ];
     const ROWS = TIMEOUTS.flatMap(([name, step]) => {
         return CALLS.map((call): [string, Call, Step] => [name, call, step]);
@@ -375,6 +386,39 @@ describe('passive health: a connection that was not there in time', () => {
         await pass(0);
 
         expect([valid(), info().checkError]).toEqual([false, { code: 'ETIMEDOUT' }]);
+    });
+
+    it.each(UNREACHABLE)('%s, and a check that finds no route either: the node is down',
+        async (code, errno, syscall) => {
+            const step = failure('open', network(code, errno, syscall));
+            await hit(step, 'query', { fall: 3 }, [step]);
+            await pass(0);
+
+            expect([valid(), info().checkError]).toEqual([false, { code, errno }]);
+        });
+
+    it('no route, and a check that hangs: down at its timeout of 1000', async () => {
+        await hit(NO_ROUTE, 'query', { fall: 3, timeout: 1000 }, ['hang']);
+        await pass(999);
+        const before = valid();
+        await pass(1);
+
+        expect([before, valid(), info().checkError]).toEqual([true, false, {}]);
+    });
+
+    // What an app sees while this host has no route for a moment: no route for every node,
+    // though each of them is healthy and its pooled connections work
+    it('two healthy nodes and no route for a call of each: both stay up', async () => {
+        const a = fakeNode([PASS, NO_ROUTE, PASS], 'node-a');
+        const b = fakeNode([PASS, NO_ROUTE, PASS], 'node-b');
+        await start({ healthCheck: {} }, [{ host: 'node-a' }, { host: 'node-b' }]);
+        await pass(1000);
+        await Promise.all([failed(direct(0)), failed(direct(1))]);
+        await pass(0);
+
+        expect([valid(0), valid(1)]).toEqual([true, true]);
+        expect([askedAt(a), askedAt(b)]).toEqual([[0, 1000, 1000], [0, 1000, 1000]]);
+        expect(changes().filter(([level]) => level === 'warn')).toEqual([]);
     });
 
     it('a check that hangs takes the node down at its timeout of 1000', async () => {
@@ -676,6 +720,29 @@ describe('passive health: a check that meets one more lost connection', () => {
                 await pass(5001);
 
                 expect(changes().slice(-1)).toEqual([downBy('passive_timeout', 'ETIMEDOUT')]);
+            });
+
+        it('after a call that found no route the check runs again the same way', async () => {
+            const node = fakeNode([PASS, NO_ROUTE, RESET, RESET, PASS, 'hang']);
+            await start({ healthCheck: { fall: 3 } });
+            await pass(1000);
+            await failed(direct());
+            await pass(2);
+
+            expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000, 1001, 1002]]);
+        });
+
+        it('after no route, such a run and a check that finds none either: down, and why',
+            async () => {
+                fakeNode([PASS, NO_ROUTE, RESET, NO_ROUTE, 'hang']);
+                await start({ healthCheck: { fall: 3 } });
+                await pass(1000);
+                await failed(direct());
+                await pass(1);
+
+                expect(info().checkError).toEqual(NO_ROUTE_CHECK);
+                expect(changes().slice(-1)).toEqual(
+                    [downBy('passive_unreachable', 'ENETUNREACH')]);
             });
 
         it('a check of the timer that has to decide runs again as well', async () => {
@@ -1009,6 +1076,10 @@ describe('passive health: the check itself never counts', () => {
     // refused connection would take the node down and a lost one would start a check
     const CHECKS: [string, Step][] = [
         ...CONNECT.map(([code, errno, syscall]): [string, Step] => {
+            return [code + ' at its request for a connection',
+                failure('open', network(code, errno, syscall))];
+        }),
+        ...UNREACHABLE.map(([code, errno, syscall]): [string, Step] => {
             return [code + ' at its request for a connection',
                 failure('open', network(code, errno, syscall))];
         }),
@@ -1766,6 +1837,15 @@ describe('passive health: the log', () => {
             expect(changes()).toEqual([up1, down('passive_lost', code)]);
         });
 
+    it.each(UNREACHABLE)('%s and a failed check: one warn with the reason passive_unreachable',
+        async (code, errno, syscall) => {
+            await hit(failure('open', network(code, errno, syscall)), 'query', { fall: 3 },
+                [REFUSED]);
+            await pass(0);
+
+            expect(changes()).toEqual([up1, down('passive_unreachable', code)]);
+        });
+
     it('a connect timeout and a failed check: one warn with the reason passive_timeout',
         async () => {
             await hit(TIMED_OUT, 'query', { fall: 3 }, [REFUSED]);
@@ -1776,6 +1856,8 @@ describe('passive health: the log', () => {
 
     it.each<[string, object, Step[], Step[], any[]]>([
         ['a connect timeout whose check passes logs no line', {}, [TIMED_OUT], [PASS], [up1]],
+        ['a call that found no route and whose check passes logs no line',
+            {}, [NO_ROUTE], [PASS], [up1]],
         ['a lost connection whose check passes logs no line', {}, [RESET], [PASS], [up1]],
         ['a lost connection whose check a validator says no to: the line of the validator',
             {}, [RESET], [NO], [up1, ['warn', { pool, valid: false, reason: 'validator' }]]],
@@ -1810,6 +1892,8 @@ describe('passive health: the log', () => {
     it.each<[string, Step, object]>([
         ['a refused connection', REFUSED, { pool, passive: 'connect', code: 'ECONNREFUSED' }],
         ['a connect timeout', TIMED_OUT, { pool, passive: 'timeout', code: 'ETIMEDOUT' }],
+        ['no route to the network', NO_ROUTE,
+            { pool, passive: 'unreachable', code: 'ENETUNREACH' }],
         ['a lost connection', RESET, { pool, passive: 'lost', code: 'ECONNRESET' }]
     ])('%s: one debug line for the check that starts', async (_name, step, wanted) => {
         await debugStart([step, PASS]);
@@ -2049,6 +2133,12 @@ describe('passive health: the time a dead node takes to leave rotation', () => {
         ['a connect timeout, then connections refused: 0 ms', {}, TIMED_OUT, REFUSED, 0],
         ['a connect timeout and checks that hang, passive false: 19000 ms',
             { passive: false }, TIMED_OUT, 'hang', 19000],
+        // No route for the call. The check that starts finds none either, or it draws a
+        // pooled connection whose packets get no answer
+        ['no route, and none for the check: 0 ms, one check', {}, NO_ROUTE, NO_ROUTE, 0],
+        ['no route, then checks that hang: 5000 ms, one timeout', {}, NO_ROUTE, 'hang', 5000],
+        ['no route, and none for the checks, passive false: 9000 ms',
+            { passive: false }, NO_ROUTE, NO_ROUTE, 9000],
         // A node that resets every connection, old and new: the check and ten more runs,
         // as the default connectionLimit of 10 allows, each 1 ms after the one before
         ['a lost connection, then every connection is reset: 10 ms', {}, RESET, RESET, 10],
