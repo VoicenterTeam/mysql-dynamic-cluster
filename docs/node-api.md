@@ -297,7 +297,9 @@ When you are done, give it back with `connection.release()`. If it is broken or 
 sure what state it is in, call `connection.destroy()` instead. The pool then opens a new one
 when it needs it. A connection you never give back counts against `connectionLimit` for good.
 Hold all of them and the health check of that node waits in the queue too, times out, and
-after two failed checks the node is no longer valid.
+after two failed checks the node is no longer valid. That is the legacy check. A node with a
+`healthCheck` block is checked on a connection of its own and stays valid, while the
+requests of the app go on waiting.
 
 ### Who releases what after an abort
 
@@ -539,13 +541,14 @@ and of no other check. It does not change later. For the state of a node now, re
 
 | What ran out | `checkError` | Made by |
 | --- | --- | --- |
-| The timer of the check itself, `min(queryTimeout, timerCheckRange.end)`, 15 s with the defaults, or `healthCheck.timeout` for a node with a `healthCheck` block. It ends a check that waits for a free connection, for the change of database or for the answer to the status query. It also ends a check that waits for a new connection when that timer is shorter than 10 s. | `{}` | the package |
+| The timer of the check itself, `min(queryTimeout, timerCheckRange.end)`, 15 s with the defaults, or `healthCheck.timeout` for a node with a `healthCheck` block. It ends a check that waits for a free connection, for the change of database or for the answer to the status query. It also ends a check that waits for a new connection when that timer is shorter than 10 s. A check of a node with a `healthCheck` block waits for no free connection: it asks on a connection of its own, and drops that connection when this timer ends it. | `{}` | the package |
 | The connect timeout of mysql2, 10 s. A new connection got no greeting, or no answer to its login. It ends the check when the timer of the check is longer than 10 s, as with the defaults. | `{ code: 'ETIMEDOUT' }`, with no `errno` | mysql2 |
 | A connect timeout of the operating system. | `{ code: 'ETIMEDOUT', errno: -110 }`. The number depends on the platform. | the socket |
 | A timeout of the server, or of a proxy in between, that closes the connection while the check uses it. | `{ code: 'PROTOCOL_CONNECTION_LOST' }` | mysql2 |
 
 `PROTOCOL_SEQUENCE_TIMEOUT` is the code mysql2 has for the `timeout` option of a query. The
-status query is sent with that option. A check that times out still does not report the
+status query of the legacy check is sent with that option, the one of a node with a
+`healthCheck` block without it. A check that times out still does not report the
 code: the timer of the check has the same length and is set first, so it ends the check
 first, with `{}`. A check would report `PROTOCOL_SEQUENCE_TIMEOUT` only if mysql2 handed it
 that error before the check's own timer ran out.
@@ -611,6 +614,11 @@ keeps, at the moment of the call.
 - `pending` is the requests that wait for a connection.
 - `limit` is the `connectionLimit` of the node. `0` means no limit, as in mysql2.
 
+The connection a node with a `healthCheck` block keeps for its health checks is no connection
+of the pool and is in none of these counts. So such a node shows `idle: 0` after `connect()`
+until a query of the app ran, and holds one connection of the server more than `used` plus
+`idle`. A check never shows as `pending`.
+
 `used`, `idle` and `pending` are `0` while the mysql2 pool of the node does not exist, which
 is before `connect()`. `limit` is set from the start.
 
@@ -647,14 +655,17 @@ What it touches and what it does not:
   that its `signal` already ended does not wait any more and is not failed again.
 - It also fails the cluster's own queries that wait on that node. `cluster.query()` then
   retries on another node, as it does after any failed attempt, within `maxRetry` and the
-  valid nodes that are left. A health check that waits is failed too and counts as a failed
-  check.
+  valid nodes that are left. A health check of the legacy check that waits is failed too
+  and counts as a failed check.
 - Connections in use are left alone. So are logins that are still running.
 - The node stays in the cluster, and the call does not set `isValid`. It can still cost the
-  node its validity through a health check. A check that waits is failed with the others
-  and counts as a failed check, and the second failed check in a row marks the node not
-  valid. A check waits when every connection of the node is in use, so this is the case of a
-  full pool. Two calls that each catch a waiting check take the node out.
+  node its validity through a health check of the legacy check. A check that waits is failed
+  with the others and counts as a failed check, and the second failed check in a row marks
+  the node not valid. A check waits when every connection of the node is in use, so this is
+  the case of a full pool. Two calls that each catch a waiting check take the node out.
+- It fails no check of a node with a `healthCheck` block. Such a check asks on a connection
+  of its own and never waits in that queue, see
+  [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#the-check-connection).
 - A request that comes after the call waits again. A callback that asks for a connection
   again while it is being failed is not failed in the same call.
 

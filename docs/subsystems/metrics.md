@@ -79,7 +79,7 @@ and rates come from the count, errors from the `error.type` attribute.
 
 | Metric | One record per | Recorded in |
 |---|---|---|
-| `mysql_dynamic_cluster.operation.duration` | Query attempt in one pool. A transaction (`multiStatementQuery`) is one record. Health checks count too, since they run through `Pool.query`. | [src/pool/Pool.ts](../../src/pool/Pool.ts) |
+| `mysql_dynamic_cluster.operation.duration` | Query attempt in one pool. A transaction (`multiStatementQuery`) is one record. Health checks count too: the legacy check runs through `Pool.query`, and `Pool.checkQuery` records the attempt of a check on the check connection the same way. | [src/pool/Pool.ts](../../src/pool/Pool.ts) |
 | `mysql_dynamic_cluster.query.duration` | `GaleraCluster.query` call, including the cache lookup and every retry. | [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts) |
 | `mysql_dynamic_cluster.cache.lookup.duration` | Redis cache lookup on the normal query path. | [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts) |
 | `mysql_dynamic_cluster.health_check.duration` | Finished health check of one node, see [Health-check metric](#health-check-metric). | [src/pool/PoolStatus.ts](../../src/pool/PoolStatus.ts) |
@@ -96,9 +96,11 @@ dashboard that sums by metric name would count MySQL time twice.
 
 `mysql_dynamic_cluster.health_check.duration` has one record per finished
 health check of a node, made in `PoolStatus.checkStatus`. The duration is
-the whole check as the status times it. It includes the wait for a free
-connection, and it ends at the timeout of the check when the node does not
-answer. It is the value the status keeps as `queryTime`.
+the whole check as the status times it. For the legacy check it includes
+the wait for a free connection. For a node with a `healthCheck` block it
+includes opening the check connection, and a second attempt on a new
+connection when the one the node held was lost. It ends at the timeout of
+the check when the node does not answer. It is the value the status keeps as `queryTime`.
 
 `mysql_dynamic_cluster.health_check.result` says how that one check ended:
 
@@ -138,9 +140,12 @@ Two kinds of check record nothing:
   `disconnect()` or `stopTimerCheck()`. The status drops its result too.
 - A check that did not run because the status was not active.
 
-A health check shows in two metrics. It runs through `Pool.query`, so it is
-also one record of `mysql_dynamic_cluster.operation.duration`, as it was
-before this metric existed. There it has `db.operation.name` = `SHOW`.
+A health check shows in two metrics. Its status query is also one record
+of `mysql_dynamic_cluster.operation.duration`, as it was before this metric
+existed. There it has `db.operation.name` = `SHOW`. The legacy check runs
+through `Pool.query`, which records it. The check of a node with a
+`healthCheck` block asks on the check connection, and `Pool.checkQuery`
+records that attempt with the same attributes.
 
 - For the checks alone, read `mysql_dynamic_cluster.health_check.duration`.
 - For the queries without the checks, leave `SHOW` out of
@@ -157,7 +162,12 @@ before this metric existed. There it has `db.operation.name` = `SHOW`.
 - A check that hits its timeout is recorded as a health check at that
   moment. Its operation record is made when the query attempt itself ends.
   That is later, and never for an attempt that keeps waiting for a
-  connection.
+  connection. A check of a node with a `healthCheck` block that hits its
+  timeout drops its connection, so that attempt never ends and has no
+  operation record.
+- A check of a node with a `healthCheck` block that finds its connection
+  lost asks again on a new one. That is one health check and two operation
+  records, the first with the `error.type` of the loss.
 
 A check that cannot be recorded still ends as it would have. The first
 failure is logged at `warn`, as for the other records.
@@ -175,7 +185,10 @@ There is no timer.
 | `mysql_dynamic_cluster.connection.limit` | `{connection}` | `connectionLimit` of the node. No point for a node whose limit is `0`, which means no limit. |
 
 The values are the ones `cluster.getPoolStats()` returns, read from the same
-places. The counts come from `Pool.stats()` and the limit from the
+places. They are those of the mysql2 pool. The connection a node with a
+`healthCheck` block keeps for its health checks is not in them: such a node
+holds one connection of the server more than `idle` plus `used` shows, and
+its checks are never among the pending requests. The counts come from `Pool.stats()` and the limit from the
 `connectionLimit` of the pool. See
 [../node-api.md](../node-api.md#getpoolstats) for what each count holds:
 
@@ -261,7 +274,7 @@ to look.
 - An app that registers its SDK before `connect()` gets the metrics from the
   first collection.
 - An app that registers its SDK later gets them from the next record of any
-  metric. Every health check is a query through `Pool.query` and so a record.
+  metric. Every health check is a query that is recorded, and so a record.
   That makes it the next health check of any node at the latest, and no
   query of the app is needed. The time between two checks of a node is
   within `timerCheckRange`, 5 to 15 seconds by default, or

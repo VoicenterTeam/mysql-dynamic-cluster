@@ -144,10 +144,10 @@ What to know:
   takes a node down, or starts a check, when a query of the app cannot open a connection or
   loses one: down at once for a refused connection, a check for a lost one, a connect
   timeout or a missing route. Neither emits an event. The check it starts emits this event when it fails,
-  like any check, with the error of that check and not the one of the query. A check that
-  met one more lost connection and runs again emits it once per run, so the event can come
-  several times within a few ms for a node that stays up: `connectionLimit` times at most
-  and never more than 50. A check that finds no route itself emits it once and leaves the
+  like any check, with the error of that check and not the one of the query. A check whose
+  own connection was lost opens a new one and asks again inside the same check: it emits
+  the event once at most, with the error of the new connection, and not at all when it
+  passes there. A check that finds no route itself emits it once and leaves the
   node up, unless it is the `fall`th failed check in a row. See
   [health-and-scoring.md](./subsystems/health-and-scoring.md#passive-health).
 - A listener that throws does not stop the health checks. The next check is set before the
@@ -166,3 +166,4 @@ What to know:
 - `connected` is one-shot per process-cluster lifecycle (guarded by `this.connected`). If you `disconnect()` and `connect()` again, it will fire again because the flag is reset in `disconnect()`.
 - `hashing_created` only fires when `useClusterHashing` is enabled; see [configuration.md](./configuration.md) for that flag.
 - `connection`, `acquire`, `release` are high-frequency events tied to query throughput. Avoid heavy work in their handlers.
+- `connection`, `acquire` and `release` come from the mysql2 pool. A health check of the legacy check takes a connection of that pool, so each check emits `acquire` and `release`. A node with a `healthCheck` block is checked on a connection of its own, which is no connection of the pool: its checks emit none of the three.

@@ -44,7 +44,11 @@ A check of a node with a `healthCheck` block that the server answered by refusin
 
 ### Passive health
 
-What a node with a `healthCheck` block learns from the queries of the app between two checks, unless `passive` is `false`. A query, a transaction or a `getConnection()` whose connection the node refuses takes the node down at once. One that loses its connection, gets none within the connect timeout or finds no route starts a check at once, and that check takes the node down when it fails. A check that only meets one more lost connection runs again, and one that finds no route itself counts toward `fall`. An answer of the server never counts, a deadlock and a refused login included. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#passive-health).
+What a node with a `healthCheck` block learns from the queries of the app between two checks, unless `passive` is `false`. A query, a transaction or a `getConnection()` whose connection the node refuses takes the node down at once. One that loses its connection, gets none within the connect timeout or finds no route starts a check at once, and that check takes the node down when it fails. A check whose own connection was lost opens a new one and asks again, once, and one that finds no route itself counts toward `fall`. An answer of the server never counts, a deadlock and a refused login included. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#passive-health).
+
+### Check connection
+
+The one connection a node with a `healthCheck` block keeps for its health checks, next to the pool of the app and never part of it. A check asks there, so it does not wait in the queue of a pool that is at its limit. It is opened by the first check of `connect()`, logged out of by `disconnect()`, dropped when a check times out on it, and opened again, once, by a check that finds it lost. It counts against `max_connections` of the server and is in none of the pool counts. A node without the block has none. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#the-check-connection).
 
 ### Load factor
 
