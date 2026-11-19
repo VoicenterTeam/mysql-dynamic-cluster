@@ -237,8 +237,8 @@ one query every 50 ms.
 
 | | Check through the pool | Check connection |
 | --- | --- | --- |
-| The node was down | 7532 to 7545 ms of the 10 s, from about 2 s on | Never |
-| Queries rejected with `There is no pool that satisfies the parameters` | 151 of 199 | 0 |
+| The node was down | 7499 to 7545 ms of the 10 s, from about 2 s on | Never |
+| Queries rejected with `There is no pool that satisfies the parameters` | 150 or 151 of 199 | 0 |
 | Failed checks | 8 | 0 |
 | Checks the server answered | 11 | 19 |
 | Connections open at the server, at most | 2 | 3 |
@@ -656,15 +656,15 @@ forgot, three queries at once and then one every 100 ms through
 
 | | A check that drew from the pool and ran again | Check connection |
 | --- | --- | --- |
-| Queries rejected | 3 of 122 or 123 | 6 of 123 |
+| Queries rejected | 3 of 122 | 6 of 122 or 123 |
 | Nodes down | None | None |
 | Flows the proxy reset, per node | 6 | 7: the six of the pool and the check connection |
 
 The first column is the code as it was before the check connection, where
 a check that had to decide ran again and met one forgotten connection of
 the pool per run. That code was never released. A node behind a proxy that
-resets every connection, old and new, was down after 46 to 57 ms and 13 resets there, and
-is down after 18 to 28 ms and 4 resets with the check connection: the check lost the
+resets every connection, old and new, was down after 46 to 83 ms and 13 resets there, and
+is down after 12 to 25 ms and 4 resets with the check connection: the check lost the
 connection it held and the one it opened then (3 runs on each
 side).
 
@@ -811,7 +811,7 @@ an address this host has no route to, a new connection ends with
 | To both nodes, for 100 ms | No connection | Off | 4 of 74, 1 run | None |
 | To both nodes, for the 12 s of the run | One idle connection | On | 72 of 124 in each of 2 runs, 70 of them with no node left | Both, by `fall`, after about 5 s |
 | To both nodes, for the 12 s of the run | One idle connection | Off | 2 of 124, 1 run | None |
-| To both nodes, for the 12 s of the run | No connection | On | All 123 in each of 2 runs, 69 of them with no node left | Both, by `fall`, after about 5 s |
+| To both nodes, for the 12 s of the run | No connection | On | All of them, 123 or 124, in each of 2 runs, 69 or 70 of them with no node left | Both, by `fall`, after about 5 s |
 | To both nodes, for the 12 s of the run | No connection | Off | All 123, 1 run | None |
 | To one node, for the 12 s of the run | One idle connection | On | 0 of 124 in each of 2 runs | That node, by `fall`, after about 5 s |
 | To one node, for the 12 s of the run | No connection | On | 0 of 124 in each of 2 runs | That node, by `fall`, after about 5 s |
@@ -836,10 +836,10 @@ an address this host has no route to, a new connection ends with
 
 The code before the check connection, with a check through the pool, was
 measured by the same probe. With the route gone to both nodes for 100 ms:
-2 of 74 rejected and no node down, in 6 runs. For the 12 s of the run: 2 of
-124 rejected in 4 runs, and one of the two nodes down by `fall` after about
-5 s in each. With the route gone to one node: 0 of 124 in 4 runs, and that
-node down after about 5 s in each. Its check drew an idle connection of the
+2 of 74 rejected and no node down, in 6 runs. For the 12 s of the run: 2 or 3
+of 124 rejected in 4 runs, and one of the two nodes down by `fall` after
+about 5 s in each. With the route gone to one node: 0 of 124 in 4 runs, and
+that node down after about 5 s in 3 of them. Its check drew an idle connection of the
 pool when there was one and opened one when there was none. That code was
 never released, and its check of `connect()` left one idle connection in
 each pool, so the rows of a pool with no connection have no run of it.
