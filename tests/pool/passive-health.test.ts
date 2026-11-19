@@ -2165,6 +2165,8 @@ describe('passive health: the time a dead node takes to leave rotation', () => {
         ['no route, then checks that hang: 5000 ms, one timeout', {}, NO_ROUTE, 'hang', 5000],
         ['no route, and none for the checks, passive false: 9000 ms',
             { passive: false }, NO_ROUTE, NO_ROUTE, 9000],
+        ['no route, then checks that hang, passive false: 19000 ms',
+            { passive: false }, NO_ROUTE, 'hang', 19000],
         // A node that resets every connection, old and new: the check and ten more runs,
         // as the default connectionLimit of 10 allows, each 1 ms after the one before
         ['a lost connection, then every connection is reset: 10 ms', {}, RESET, RESET, 10],
