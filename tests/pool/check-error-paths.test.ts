@@ -342,15 +342,22 @@ describe('checkError of a pool over connect() and disconnect()', () => {
             expect(outcome).toStrictEqual({ recorded: true, checkError: DENIED });
         });
 
-        it('is of its own connect when two connect() calls overlap', async () => {
-            const pool = answering(makePool(), accessDenied(), []);
-            const [first, second]: any[] = [{}, {}];
-            const connects = [pool.connect(first), pool.connect(second)];
-            await Promise.all(connects.map(connect => connect.catch(() => undefined)));
+        // disconnect() stops the idle check interval of the last connect() only. The one of the
+        // first connect() would keep jest from exiting, so this test runs on fake timers
+        describe('of two connect() calls that overlap', () => {
+            beforeEach(() => jest.useFakeTimers());
+            afterEach(() => jest.useRealTimers());
 
-            expect(first).toStrictEqual({ recorded: true, checkError: DENIED });
-            expect(second).toStrictEqual({ recorded: true });
-            pool.disconnect();
+            it('is of its own connect when two connect() calls overlap', async () => {
+                const pool = answering(makePool(), accessDenied(), []);
+                const [first, second]: any[] = [{}, {}];
+                const connects = [pool.connect(first), pool.connect(second)];
+                await Promise.all(connects.map(connect => connect.catch(() => undefined)));
+
+                expect(first).toStrictEqual({ recorded: true, checkError: DENIED });
+                expect(second).toStrictEqual({ recorded: true });
+                pool.disconnect();
+            });
         });
     });
 });

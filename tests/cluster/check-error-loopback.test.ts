@@ -40,6 +40,8 @@ const STATUS = [
     { Variable_name: 'wsrep_local_recv_queue_avg', Value: '0' }
 ];
 const NOT_SYNCED = [{ Variable_name: 'wsrep_ready', Value: 'OFF' }, ...STATUS.slice(1)];
+// what the server answers the status query with when it refuses it
+const NOT_ALLOWED = { code: 1227, message: 'Access denied; you need the PROCESS privilege' };
 
 type Mode =
     | 'accepts'
@@ -49,8 +51,10 @@ type Mode =
     | 'is not synced'
     // takes the login and the change of database, and never answers the query
     | 'never answers the query'
-    // takes the login and the change of database, and closes the connection on the query
-    | 'hangs up on the query'
+    // answers the status query with error 1227, as a server does for a user that may not ask.
+    // It does not close the connection: mysql2 keeps the timer of a query whose connection is
+    // lost, two minutes here, and that would keep jest from exiting
+    | 'refuses the query'
     // takes the TCP connection and never sends its greeting
     | 'never greets'
     // closes the TCP connection as soon as it is open
@@ -97,8 +101,8 @@ const listen = async (mode: Mode): Promise<IServer> => {
         });
         connection.on('query', () => {
             if (mode === 'never answers the query') return;
-            if (mode === 'hangs up on the query') return connection.stream.destroy();
             connection.sequenceId = 1;
+            if (mode === 'refuses the query') return connection.writeError(NOT_ALLOWED);
             const rows = mode === 'is not synced' ? NOT_SYNCED : STATUS;
             connection.writeTextResult(rows, [column('Variable_name'), column('Value')]);
         });
@@ -239,17 +243,29 @@ describe('a refused login whose check ran to its end', () => {
         expect((await firstReady).map(checkErrorOf)).toStrictEqual([DENIED]);
     });
 
-    it('keeps its code on the results of the first of two connect() calls', async () => {
-        const server = await listen('refuses the login');
-        const cluster = makeCluster([server.port]);
-        const first = connectOf(cluster);
-        const [ready, firstReady] = [cluster.ready, cluster.firstReady];
-        const second = connectOf(cluster);
+    // disconnect() stops the idle check interval of the last connect() of a pool only. The one
+    // of the first of two connect() calls would keep jest from exiting, so the test stops
+    // every interval that was started in it
+    describe('with a second connect() while the first one is out', () => {
+        let intervals: jest.SpyInstance;
+        beforeEach(() => { intervals = jest.spyOn(global, 'setInterval'); });
+        afterEach(() => {
+            intervals.mock.results.forEach(started => clearInterval(started.value));
+            intervals.mockRestore();
+        });
 
-        expect([await first, await second]).toEqual([NOT_VALID, NOT_VALID]);
-        expect((await ready).map(checkErrorOf)).toStrictEqual([DENIED]);
-        expect((await firstReady).map(checkErrorOf)).toStrictEqual([DENIED]);
-        expect((await cluster.ready).map(checkErrorOf)).toStrictEqual([DENIED]);
+        it('keeps its code on the results of the first of two connect() calls', async () => {
+            const server = await listen('refuses the login');
+            const cluster = makeCluster([server.port]);
+            const first = connectOf(cluster);
+            const [ready, firstReady] = [cluster.ready, cluster.firstReady];
+            const second = connectOf(cluster);
+
+            expect([await first, await second]).toEqual([NOT_VALID, NOT_VALID]);
+            expect((await ready).map(checkErrorOf)).toStrictEqual([DENIED]);
+            expect((await firstReady).map(checkErrorOf)).toStrictEqual([DENIED]);
+            expect((await cluster.ready).map(checkErrorOf)).toStrictEqual([DENIED]);
+        });
     });
 });
 
@@ -384,15 +400,15 @@ describe('checkError over the life of a node', () => {
         const server = await listen('accepts');
         const cluster = makeCluster([server.port]);
         await connectOf(cluster);
-        server.become('hangs up on the query');
+        server.become('refuses the query');
         await cluster.pools[0].status.checkStatus();
         await cluster.disconnect();
         const connecting = connectOf(cluster);
         await disconnectFinally(cluster);
         await connecting;
 
-        const lost = { isValid: true, checkError: { code: 'PROTOCOL_CONNECTION_LOST' } };
-        expect(cluster.nodes()[0]).toMatchObject(lost);
+        const old = { isValid: true, checkError: { code: 'ER_SPECIFIC_ACCESS_DENIED_ERROR' } };
+        expect(cluster.nodes()[0]).toMatchObject(old);
         expect(await cluster.ready).toStrictEqual([{ nodeId: 1, ok: true }]);
     });
 
