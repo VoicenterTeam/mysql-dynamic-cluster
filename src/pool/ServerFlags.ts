@@ -82,13 +82,24 @@ export interface IServerProbe {
 const CLOSE_GRACE_MS = 2000;
 
 /**
- * Close a probe connection for good. mysql2's destroy() only ends the writing side of the socket
+ * Close a connection for good. mysql2's destroy() only ends the writing side of the socket
  * and clears its own connect timer: a server that never answers would keep the socket,
  * and with it the process, open
  */
-function drop(connection: any): void {
+export function drop(connection: any): void {
     connection.destroy();
     connection.stream?.destroy();
+}
+
+/**
+ * Log out of a connection: the logout is one packet, then the server closes. One that does
+ * not would keep the socket, so the connection is dropped after CLOSE_GRACE_MS
+ */
+export function logOut(connection: any): void {
+    connection.end();
+    const timer = setTimeout(() => drop(connection), CLOSE_GRACE_MS);
+    timer.unref();
+    connection.once('end', () => clearTimeout(timer));
 }
 
 /**
@@ -108,12 +119,7 @@ export function probeServer(options: IProbeOptions): IServerProbe {
             settled = true;
             // the two values only: the packet also holds the data the password was scrambled with
             resolve({ serverVersion: packet.serverVersion, capabilityFlags: packet.capabilityFlags });
-
-            connection.end();
-            // the logout is one packet, then the server closes. One that does not would keep the socket
-            const timer = setTimeout(() => drop(connection), CLOSE_GRACE_MS);
-            timer.unref();
-            connection.once('end', () => clearTimeout(timer));
+            logOut(connection);
         });
         // on, not once, and it stays after the greeting:
         // an error event without a listener would end the process
