@@ -226,7 +226,10 @@ leave the same way.
   one asks again on the new one.
 - **What else an app sees.** The pool of a node holds no connection after
   `connect()`, so the first query of the app to each node pays for a
-  login. A check emits no `connection`, `acquire` or `release`, and
+  login. No check keeps a connection of the pool in use any more, see
+  [A quiet app behind a path with an idle
+  timeout](#a-quiet-app-behind-a-path-with-an-idle-timeout).
+  A check emits no `connection`, `acquire` or `release`, and
   `getPoolStats()` and the connection gauges do not count the check
   connection. See [pool.md](pool.md#the-check-connection).
 
@@ -645,9 +648,9 @@ the queries of the app. Each such connection fails one attempt with
 for it: the first loss starts a check, which passes, and the losses after
 it in the same `interval` are kept for the check of the timer, which
 passes too. `cluster.query()` sends a query that failed to the next node,
-where it can meet one more of them. An app behind such a path sets
-`idleTimeout` below the idle timeout of the path, so the pool closes its
-idle connections first, see [../configuration.md](../configuration.md).
+where it can meet one more of them. What an app behind such a path sets
+is in [A quiet app behind a path with an idle
+timeout](#a-quiet-app-behind-a-path-with-an-idle-timeout).
 
 Measured with the real mysql2 on the loopback interface of one Linux host,
 behind a TCP proxy that forgets its flows, by a probe that is not part of
@@ -678,6 +681,64 @@ connection for its own forgotten one and passes, and no node goes down.
 The three forgotten connections that are left in a pool fail one query
 each, and the queries after those pass. A node behind a proxy that resets
 every connection is down after one check.
+
+#### A quiet app behind a path with an idle timeout
+
+**The check keeps no connection of the pool in use.** A check through the
+pool draws an idle connection of the pool each time it runs. The legacy
+check does, and so did the check of a node with the block in 4.6.0. So the
+connection that `minConnections: 1` keeps carried a query every `interval`,
+and a path with an idle timeout never forgot it. The check connection
+takes that away. While the app sends nothing the connections of the pool
+carry no byte, and the path forgets them. The check connection itself
+stays in use and is not forgotten.
+
+- **The first query after the pause fails with `ECONNRESET`**, on every
+  node whose pooled connection the path forgot. `cluster.query()` sends
+  it to the next node, where it can meet the same, and rejects when it
+  failed on all of them. No node goes down: the check that starts passes.
+- **`idleTimeout` alone does not help.** The timer that closes idle
+  connections keeps `minConnections` of them whatever their age, and the
+  default is 1.
+- **Set `minConnections: 0`, and keep `idleTimeout` plus
+  `idleCheckInterval` below the idle timeout of the path.** The timer
+  looks every `idleCheckInterval`, so an idle connection can live that
+  much longer than `idleTimeout`. With the defaults the two are 40 s
+  together. The pool then closes a connection before the path forgets it,
+  and the first query after a pause pays for a login.
+- **A node without the block is as it was.** Its check still asks through
+  the pool.
+
+Measured with the real mysql2 on the loopback interface of one Linux host,
+by a probe that is not part of the suite, 3 runs per row. Two nodes, each
+behind a TCP proxy that forgets a flow after 1500 ms without a byte and
+resets the next packet on it. `healthCheck: { interval: 500 }`, one query
+per node, then no query for the time in the second column, then five
+queries through `cluster.query()`.
+
+| Node and pool settings | Pause | First query after the pause | Pooled connections forgotten, per node |
+| --- | --- | --- | --- |
+| The check through the pool, before this change | 3 s | Answered | 0 |
+| Check connection, pool settings at their defaults | 3 s | Rejected with `ECONNRESET` after it failed on both nodes | 1 |
+| No block, `timerCheckRange` 400 to 600 | 3 s | Answered | 0 |
+| Check connection, `idleTimeout: 1000` | 3 s | Rejected | 1 |
+| Check connection, `idleTimeout: 500`, `idleCheckInterval: 250` | 3 s | Rejected | 1 |
+| Check connection, `minConnections: 0`, `idleTimeout: 1000` | 3 s | Rejected | 1 |
+| Check connection, `minConnections: 0`, `idleTimeout: 1000`, `idleCheckInterval: 1000` | 1.8 s | Rejected | 1 |
+| Check connection, `minConnections: 0`, `idleTimeout: 1000`, `idleCheckInterval: 250` | 1.8 s and 3 s | Answered | 0 |
+| Check connection, `minConnections: 0`, `idleTimeout: 500`, `idleCheckInterval: 250` | 3 s | Answered | 0 |
+
+Each row was the same in its 3 runs. The four queries after the first were
+answered in every run, and no node went down in any. In the sixth row
+`idleCheckInterval` is at its default of 10 s, so the timer did not look
+once during the pause. The review of this change ran the first four rows
+with a probe of its own and found the same, 2 or 3 runs per row. It also
+reports the first query answered with `minConnections: 0` and an
+`idleTimeout` below that of the path, in 2 runs, which this probe sees
+only with `idleCheckInterval` set as in the last two rows.
+
+The package does nothing more about it. Whether it should keep a pooled
+connection of a quiet node in use is an open question.
 
 #### A check after a call that could open no connection
 
