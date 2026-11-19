@@ -763,7 +763,8 @@ describe('the check connection: connect() and disconnect()', () => {
             await answer(last());
             await connecting;
 
-            await answerUser(old, closedState());
+            // a loss, which a check opens a new connection for when it is still current
+            await answerUser(old, lost());
 
             expect(last().changeUser).toHaveBeenCalledTimes(1);
             expect(results()).toEqual(['valid', 'valid']);
