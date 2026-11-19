@@ -1952,9 +1952,9 @@ describe('passive health: what stays as it was', () => {
 describe('passive health: the time a dead node takes to leave rotation', () => {
     // A node that passed three checks and stops right after the last of them: from here on
     // every request ends as `how` says. The first call of the app comes 1000 ms later
-    const dying = async (block: object, how: Step) => {
+    const dying = async (block: object, how: Step, pool: object = {}) => {
         fakeNode([PASS, PASS, PASS, how]);
-        await start({ healthCheck: block });
+        await start({ ...pool, healthCheck: block });
         await pass(10000);
         await pass(1000);
     };
@@ -2006,9 +2006,15 @@ describe('passive health: the time a dead node takes to leave rotation', () => {
         ['the same with fall 3: 5000 ms', { fall: 3 }, TIMED_OUT, 'hang', 5000],
         ['a connect timeout, then connections refused: 0 ms', {}, TIMED_OUT, REFUSED, 0],
         ['a connect timeout and checks that hang, passive false: 19000 ms',
-            { passive: false }, TIMED_OUT, 'hang', 19000]
-    ])('%s', async (_name, block, first, how, wanted) => {
-        await dying(block, first);
+            { passive: false }, TIMED_OUT, 'hang', 19000],
+        // A node that resets every connection, old and new: the check and ten more runs,
+        // as the default connectionLimit of 10 allows, each 1 ms after the one before
+        ['a lost connection, then every connection is reset: 10 ms', {}, RESET, RESET, 10],
+        ['the same with a connectionLimit of 3: 3 ms', { connectionLimit: 3 }, RESET, RESET, 3],
+        ['the same with passive false: 9000 ms', { passive: false }, RESET, RESET, 9000]
+    ])('%s', async (_name, settings, first, how, wanted) => {
+        const { connectionLimit, ...block } = settings as any;
+        await dying(block, first, connectionLimit === undefined ? {} : { connectionLimit });
         nodes['node-a'].plan = [first, how];
 
         // up after the call, whatever `wanted` is: only a check takes this node down
