@@ -895,6 +895,27 @@ describe('passive health: a check that meets one more lost connection', () => {
         });
     });
 
+    // connect() starts the count of the runs at 0, and the check of that connect() reads the
+    // count before it ends. With a connectionLimit of 1 a count of 1 left from before would
+    // let the check decide where it has a run left
+    it('a lost call while the check of a new connect() is out: that check has its run',
+        async () => {
+            const node = await lostThen(
+                [RESET, 'held', RESET, PASS, 'hang'], { connectionLimit: 1 });
+            // the check at once met a lost connection: one run is counted, and about to start
+            await pass(0);
+            await cluster.disconnect();
+            cluster.connect().catch((): void => undefined);
+            // the check of the new connect() is out. A call loses its connection, then
+            // that check meets a lost one as well
+            await failed(direct());
+            node.held[0](reset());
+            await pass(1);
+
+            // it ran again and passed. Were the old count kept, it would have decided
+            expect([valid(), node.asked.length]).toEqual([true, 6]);
+        });
+
     describe('is a failed check to the app', () => {
         it('each run sets checkError, and the answer clears it', async () => {
             const node = await lostThen([RESET, 'held', 'hang']);

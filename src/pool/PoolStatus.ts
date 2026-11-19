@@ -175,8 +175,9 @@ export class PoolStatus {
             // and what passive health kept of the life before
             this._holdOff = 0;
             this._decides = undefined;
-            // for a state that reads clean as well: the first check of this connect()
-            // sets it to 0 however it ends
+            // The check of this connect() reads the count before it ends: when a call of
+            // the app loses its connection while that check is out and the check then
+            // meets a lost one too, a count left from before would use up its runs
             this._reruns = 0;
         }
         this._timer.activate();
