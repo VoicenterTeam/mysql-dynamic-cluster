@@ -264,13 +264,14 @@ A node that fails here stays valid until its health check says otherwise. The ne
 without `exclude` may pick it again.
 
 A node with a `healthCheck` block is the exception, unless its `passive` is `false`. When
-the node gave no connection because none could be opened, with `fatal: true` and the `code`
-`ECONNREFUSED`, `EHOSTUNREACH` or `ENETUNREACH`, the node is not valid any more by the time
-the call rejects, and the next call picks another node. The rejection itself is the same.
-A connect timeout, `ETIMEDOUT`, leaves the node valid and starts a health check at once,
-which takes the node out when it fails. A refused login does neither, nor does a name that
-does not resolve, an error passed to `failWaiting()` or the abort of a signal. A connection that cannot be opened after the
-signal ended the call still takes the node down. The package does not see what happens on a
+the node gave no connection because it refused one, with `fatal: true` and the `code`
+`ECONNREFUSED`, the node is not valid any more by the time the call rejects, and the next
+call picks another node. The rejection itself is the same. A connect timeout, `ETIMEDOUT`,
+and a missing route, `EHOSTUNREACH` or `ENETUNREACH`, leave the node valid and start a
+health check at once, which takes the node out when it fails. A refused login does neither,
+nor does a name that does not resolve, an error passed to `failWaiting()` or the abort of a
+signal. A connection the node refuses after the signal ended the call still takes the node
+down. The package does not see what happens on a
 connection after it handed it to you. See
 [passive health](subsystems/health-and-scoring.md#passive-health).
 

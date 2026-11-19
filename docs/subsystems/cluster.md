@@ -244,8 +244,8 @@ The list of step 4 is made once per call, and each turn of the loop takes
 the next pool of it, so a retry never asks the pool that just failed. For a
 node with a `healthCheck` block, `Pool.query` tells a connection error to
 [passive health](health-and-scoring.md#passive-health) before it rejects. A
-node that refused the connection, or that no route led to, is not valid
-any more when the loop goes on, and step 4 of every later call leaves it
+node that refused the connection is not valid any more when the loop goes
+on, and step 4 of every later call leaves it
 out. The loop does not
 look at `isValid` again: a pool further down the list that went down in the
 meantime is still tried, as before.

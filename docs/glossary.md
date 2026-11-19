@@ -44,7 +44,7 @@ A check of a node with a `healthCheck` block that the server answered by refusin
 
 ### Passive health
 
-What a node with a `healthCheck` block learns from the queries of the app between two checks, unless `passive` is `false`. A query, a transaction or a `getConnection()` that cannot open a connection takes the node down at once. One that loses its connection, or gets none within the connect timeout, starts a check at once, and that check takes the node down when it fails. A check that only meets one more lost connection runs again. An answer of the server never counts, a deadlock and a refused login included. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#passive-health).
+What a node with a `healthCheck` block learns from the queries of the app between two checks, unless `passive` is `false`. A query, a transaction or a `getConnection()` whose connection the node refuses takes the node down at once. One that loses its connection, gets none within the connect timeout or finds no route starts a check at once, and that check takes the node down when it fails. A check that only meets one more lost connection runs again. An answer of the server never counts, a deadlock and a refused login included. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#passive-health).
 
 ### Load factor
 
