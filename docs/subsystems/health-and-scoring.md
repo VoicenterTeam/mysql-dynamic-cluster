@@ -961,6 +961,40 @@ connection too, and it stayed down to the end of the run: the connection
 it held went with the new one. With the check through the pool the node
 went down at the same moment and was back by `rise` 10 s later, in 2 runs.
 
+**Not rejected is not answered soon.** A third of those queries waited,
+some for minutes. The same probe with every query timed to its answer,
+399 queries in each run:
+
+| | Pools that hold no connection, 2 runs | One open connection in each pool, 1 run | The check through the pool, before this change, 1 run |
+| --- | --- | --- | --- |
+| Queries rejected | 0 | 0 | 0 |
+| Took longer than 10.5 s | 140 | 0 | 0 |
+| Without an answer when the last query was sent, at 40 s | 120 or 121 | 0 | 0 |
+| Without an answer at 52 s | 100 | 0 | 0 |
+| The slowest | 136 s | 55 ms | 10 s, and no other over 1 s |
+| The last answer, counted from the first query | 151 s | 40 s | 40 s |
+| The node behind that path | Down at 15.1 s, and still down at the end | Up | Down at 15.1 s, back by `rise` at 25.1 s |
+
+The queries wait in the queue of mysql2 at the node behind that path.
+Every query that was sent to the node in the 15 s before it went down
+needs a connection there, the pool opens `connectionLimit` of them at a
+time, and each attempt takes the 10 s of the connect timeout before the
+query moves to the other node. That goes on after the node is down. The
+package sets no limit on that wait, see
+[../node-api.md](../node-api.md#it-waits-without-limit), and
+`failWaiting()` is there for an app that will not wait.
+
+**The pool of a node with the block is in the state of the first column
+from `connect()` until its first query.** It holds no connection then.
+With the check through the pool it never was: the check of `connect()`
+left one connection in the pool, which is the third column. A pool whose
+connections are all in use has to open one for the next query in the same
+way, with or without this change.
+
+The review of this change timed the first column with a probe of its own,
+in 1 run: no query rejected of 399, 141 took longer than 10.5 s, 121 had
+no answer at 40 s and 101 at 52 s, and the slowest took 145 s.
+
 The rules are tests in
 [tests/cluster/passive-health-loopback.test.ts](../../tests/cluster/passive-health-loopback.test.ts).
 A route that is gone for a moment leaves both nodes up. Calls that go on
