@@ -1071,6 +1071,22 @@ describe('passive health: one check, however many calls fail', () => {
         expect([atOnce, valid(), askedAt(node)]).toEqual([true, false, [0, 5000, 5000]]);
     });
 
+    // An app that calls connect() on a connected cluster has two checks out for a while:
+    // the one of the timer and the one of the new connect()
+    it('a second connect() with a check out: no check starts while one of them is out',
+        async () => {
+            const node = fakeNode([PASS, 'held', PASS, RESET, 'hang']);
+            await start({ healthCheck: { fall: 3 } });
+            await pass(5000);
+            await connect();
+            await burst(1);
+            await pass(0);
+
+            // the check of the timer, still out, the check of the second connect(), which
+            // passed, and the call
+            expect(askedAt(node)).toEqual([0, 5000, 5000, 5000]);
+        });
+
     it('a lost connection while a check is out that passes: up, and nothing is kept', async () => {
         const node = fakeNode([PASS, 'held', RESET, REFUSED, 'hang']);
         await start({ healthCheck: { fall: 3 } });

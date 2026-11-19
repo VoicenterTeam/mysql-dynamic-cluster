@@ -64,8 +64,10 @@ export class PoolStatus {
     // check since got an answer that is no refusal. Only a node with a healthCheck block
     // ever has it set. See _unanswered()
     private _slowRetry: boolean = false;
-    // The run of the check that is out. No check is out when it is not the current run
-    private _checkOut?: number;
+    // How many checks of this run are out. More than one after a connect() on a pool that
+    // is connected: its check and the one of the timer. stopTimerCheck() starts it at 0,
+    // and a check from before that never counts down
+    private _checksOut: number = 0;
     // How many checks have to start before passive health may start one again: the one it
     // started and the next one of the timer. So it starts one check at most between two
     // checks of the timer, however many queries of the app fail
@@ -202,6 +204,7 @@ export class PoolStatus {
      */
     public stopTimerCheck() {
         this._checkRun++;
+        this._checksOut = 0;
         this._timer.dispose();
         Logger.info("Check status in pool stopped");
     }
@@ -218,10 +221,16 @@ export class PoolStatus {
         // true while the status query is out. Only what the query is rejected with can come
         // from mysql2, the socket or the server
         let asking = false;
+        // for passive health: this check is out, from here until it sets the next one
+        let out = false;
+        const over = () => {
+            if (out) this._checksOut--;
+            out = false;
+        };
         try {
             if (!this.active) return;
-            // for passive health: a check is out, and one more check started
-            this._checkOut = run;
+            this._checksOut++;
+            out = true;
             // a check that runs again is the same check to the hold-off
             if (this._holdOff > 0 && !this._reruns) this._holdOff--;
 
@@ -279,6 +288,7 @@ export class PoolStatus {
                 this._setValid(this._upAfter(passed), reason);
             }
 
+            over();
             this.nextCheckStatus()
             // the last step: nothing after it can fail and make this check count twice.
             // The result is what this check said: a down node that passed stays down
@@ -325,6 +335,7 @@ export class PoolStatus {
             this._queryTime = queryTimer.get();
 
             try {
+                over();
                 if (again) {
                     this._checkAgain();
                 } else {
@@ -537,7 +548,7 @@ export class PoolStatus {
         }
 
         // a check that is about to run again is out too
-        if (this._checkOut === this._checkRun || this._reruns > 0 || this._holdOff > 0) return;
+        if (this._checksOut > 0 || this._reruns > 0 || this._holdOff > 0) return;
         // the check this starts, and the next one of the timer
         this._holdOff = 2;
         Logger.debug("Pool " + this._pool.name + ": the app " + PoolStatus._ranInto[kind] +
@@ -574,7 +585,6 @@ export class PoolStatus {
      * @private
      */
     private _checkAgain() {
-        this._checkOut = undefined;
         this._reruns++;
         Logger.debug("Pool " + this._pool.name + ": the check met a connection that was " +
             "lost as well, it runs again now",
@@ -674,8 +684,6 @@ export class PoolStatus {
      * @private
      */
     private nextCheckStatus(downgrade: boolean = false, slow: boolean = false) {
-        // the check that sets its next one is over
-        this._checkOut = undefined;
         // A healthCheck block: the same wait after every check, but while the slow pace of
         // a refusal holds. Each new login can count against the account at the server, so
         // those checks wait authRetryInterval, as it is written: it may be shorter than
