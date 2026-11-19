@@ -322,7 +322,11 @@ away from the app. The rules of the check are in
   connection the node held and holds a new one. A check that was still
   logging in or asking on the old one asks again on the new one, so it is
   no failed check. After a `disconnect()` this is not done: a check from
-  before it is dropped.
+  before it is dropped. The timer that closes idle
+  connections is started again as well, and the one before it ends. The
+  mysql2 pool of the first `connect()` is not ended, as before: for a
+  node with the block it holds no connection unless a query of the app
+  opened one.
 - **`checkQuery(sql)`** sends one query of a check: a change of user to
   the database of the node first, as `query()` does, then the query, with
   no `timeout` of mysql2. It opens a connection when the node holds none
