@@ -48,7 +48,7 @@ What a node with a `healthCheck` block learns from the queries of the app betwee
 
 ### Check connection
 
-The one connection a node with a `healthCheck` block keeps for its health checks, next to the pool of the app and never part of it. A check asks there, so it does not wait in the queue of a pool that is at its limit. It is opened by the first check of `connect()`, logged out of by `disconnect()`, dropped when a check times out on it, and opened again, once, by a check that finds it lost. A check that has to decide after a call of the app found no route or got no connection in time logs out of it and asks on a new one, which the node then holds. It counts against `max_connections` of the server and is in none of the pool counts. A node without the block has none. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#the-check-connection).
+The one connection a node with a `healthCheck` block keeps for its health checks, next to the pool of the app and never part of it. A check asks there, so it does not wait in the queue of a pool that is at its limit. It is opened by the first check of `connect()`, logged out of by `disconnect()`, dropped when a check times out on it, and opened again, once, by a check that finds it lost. A check that has to decide after a call of the app found no route or got no connection in time asks on a new connection beside it. The new one takes its place once it logged in, and it stays when the new one finds no route. It counts against `max_connections` of the server and is in none of the pool counts. A node without the block has none. See [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#the-check-connection).
 
 ### Load factor
 
