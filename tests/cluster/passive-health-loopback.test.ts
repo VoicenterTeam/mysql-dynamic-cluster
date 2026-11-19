@@ -772,12 +772,13 @@ describe('nodes addressed by a name that this host has no route for', () => {
             expect([isUp(cluster), downs()]).toEqual([[false, true], ['fall']]);
         });
 
-    // A node that is gone together with its route: no route for a new connection, and no
-    // answer on the pooled one, which the check draws. It runs into its timeout of 200 ms
+    // A node that is gone when its route is back: no route for the call, and no answer for
+    // the check that starts then. It runs into its timeout of 200 ms
     it('no route for the call and no answer for its check: down, and says why', async () => {
         const { cluster, downs, servers } = await byName({ ...BLOCK, timeout: 200 });
 
         const seen = await openWithNoRoute(cluster, 0, true);
+        noRoute = false;
         servers[0].become('says nothing');
         await until(() => !isUp(cluster)[0], 'node 0 to go down', () => waitsOf(cluster, 0));
 
