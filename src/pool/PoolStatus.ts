@@ -75,7 +75,8 @@ export class PoolStatus {
     private _holdOff: number = 0;
     // Set when a call of the app lost its connection, got none within the connect timeout
     // or found no route, since the last check that got its answer: which of the three it
-    // was. The next check that fails takes the node down, whatever `fall` is
+    // was. The next check that fails takes the node down, whatever `fall` is, unless that
+    // check found no route itself. See _foundNoRoute()
     private _decides?: 'lost' | 'timeout' | 'unreachable';
     // How many times in a row the check that decides ran again, because it met a
     // connection that was lost itself. 0 outside such a row
@@ -311,21 +312,28 @@ export class PoolStatus {
             // check, whatever `fall` is, and the next check waits authRetryInterval. Any
             // other failure counts toward `fall`. One failed check is enough as well when
             // a call of the app lost its connection, got none in time or found no route,
-            // since the last check that got its answer. But for a check that only met one
-            // more connection that was lost: it says nothing about the node, counts toward
-            // nothing and runs again at once
+            // since the last check that got its answer. But for two checks that say nothing
+            // about the node. One only met one more connection that was lost: it counts
+            // toward nothing and runs again at once. The other found no route itself: it
+            // counts toward `fall` as any failed check and does not decide alone
             const refused = this._refused();
             const again = !refused && this._metLostConnection();
             if (!again) {
                 this._failedChecks++;
+                const undecided = !refused && this._decides !== undefined
+                    && this._foundNoRoute();
+                // Ahead of the line of a fall this check may reach. A node that is down
+                // already had nothing left to decide
+                if (undecided && this._isValid) this._logUndecided();
                 if (refused) {
                     this._setValid(false, 'refusal');
                 } else if (this._failedChecks >= this._fall) {
                     this._setValid(false, 'fall');
-                } else if (this._decides) {
+                } else if (this._decides && !undecided) {
                     this._setValid(false, PoolStatus._decided[this._decides]);
                 }
-                // a check that had to decide did: the checks after it count as any check
+                // The check that had to decide is over, whether it did or found no route:
+                // the checks after it count as any check
                 this._decides = undefined;
                 this._reruns = 0;
             }
@@ -362,7 +370,7 @@ export class PoolStatus {
      * the server refused, a validator that said no, the first pass since connect() or
      * `rise` passes in a row. From passive health: a connection the node refused the app,
      * or a failed check after a connection the app lost, did not get in time or found no
-     * route for
+     * route for. Never a check that found no route itself: it goes down by `fall`
      * @private
      */
     private _setValid(
@@ -399,7 +407,7 @@ export class PoolStatus {
                 "the check after that failed", { ...meta, code: this._passiveCode });
         } else if (reason === 'passive_unreachable') {
             Logger.warn(pool + " went down: the app found no route to it and the check " +
-                "after that found none either", { ...meta, code: this._passiveCode });
+                "after that failed", { ...meta, code: this._passiveCode });
         } else if (reason === 'first_pass') {
             Logger.info(pool + " is up: its first check since connect() passed", meta);
         } else {
@@ -543,7 +551,8 @@ export class PoolStatus {
      * Both start a check at once, in place of the one the timer was waiting for, unless a
      * check is out or passive health started one since the last check of the timer.
      * A check that has to decide and meets one more lost connection runs again, see
-     * _metLostConnection().
+     * _metLostConnection(). One that finds no route itself counts toward `fall` and does
+     * not decide alone, see _foundNoRoute().
      * It never brings a node up, sets no checkError and emits no event.
      * It starts no check during the slow pace of a refused login either: a node the server
      * refused is down, and stays down until a check got its answer, which ends that pace
@@ -599,6 +608,38 @@ export class PoolStatus {
     private _metLostConnection(): boolean {
         return this._decides !== undefined && this._reruns < this._rerunLimit
             && PoolStatus._lostCodes.has(this._checkError.code);
+    }
+
+    /**
+     * Whether the check that just failed found no route to the node: its error has one of
+     * the two codes of that kind, wherever in the check it came. A check finds none
+     * whenever it has to open a connection while this host has no route, and that is the
+     * moment a call of the app found none too: the pool had no idle connection for either.
+     * So the check repeats what the call said and adds nothing about the node. A route
+     * that is gone for a moment would take every node behind it down otherwise. Such a
+     * check does not decide alone: it counts toward `fall` as any failed check, and the
+     * next check is the one of the timer
+     * @private
+     */
+    private _foundNoRoute(): boolean {
+        return PoolStatus._unreachableCodes.has(this._checkError.code);
+    }
+
+    /**
+     * Tell that a check which had to decide for a node that is up found no route itself
+     * and so did not decide. One warn, since the node stays up and an operator has no
+     * other line with the code: `code` is what the call of the app ran into, `checkCode`
+     * what the check did
+     * @private
+     */
+    private _logUndecided() {
+        Logger.warn("Pool " + this._pool.name + ": the check after a failed call of the " +
+            "app found no route to the node. That is no proof the node is gone, so the " +
+            "check counts toward fall as any failed check", {
+            pool: this._pool.name, passive: this._decides, code: this._passiveCode,
+            checkCode: this._checkError.code, failedChecks: this._failedChecks,
+            fall: this._fall
+        });
     }
 
     /**

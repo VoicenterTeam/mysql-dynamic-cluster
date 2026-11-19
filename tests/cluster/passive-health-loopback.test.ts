@@ -11,7 +11,8 @@ import { Timer } from '../../src/utils/Timer';
 // the server and gives the pools ten connections, so a check can meet a pooled connection
 // the path forgot: there the errors are a real ECONNRESET and a real connect timeout.
 // The last part addresses the nodes by a name, and lets that name resolve to an address
-// this host has no route to: a real ENETUNREACH, with no packet that leaves the host.
+// this host has no route to: a real ENETUNREACH, with no packet that leaves the host,
+// for a call of the app and for the check that has to open a connection after it.
 // The checks of the timer are ten minutes apart, so a status query that reaches the server
 // after the one of connect() is a check passive health started. Passive health acts inside
 // the callback that fails the call, so a test reads the node as soon as its call rejected
@@ -623,9 +624,14 @@ describe('nodes addressed by a name that this host has no route for', () => {
         clusters.push(cluster);
         await cluster.connect();
         await cluster.ready;
+        // every check that failed, by node: the code it failed with
+        const failedChecks: string[][] = [[], []];
+        cluster.on('pool_check_failed', ([error, id]: [any, number]) => {
+            failedChecks[id - 1].push(error.code);
+        });
         const downs = (): string[] => logger.warn.mock.calls
             .filter(([, meta]) => meta && meta.reason).map(([, meta]) => meta.reason);
-        return { cluster, downs };
+        return { cluster, downs, failedChecks };
     };
     // A call of the app that has to open a connection while there is no route: the one
     // connection of the pool is held meanwhile. What the call was rejected with
@@ -657,18 +663,25 @@ describe('nodes addressed by a name that this host has no route for', () => {
         expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
     });
 
-    it('a check that finds no route either takes that node down, and says why', async () => {
-        const { cluster, downs } = await byName();
+    // The outage this rule is for. Each pool has no idle connection, so the check that
+    // starts has to open one, as the call did: no route for it either, at both nodes
+    it('a route that is gone for a moment: no check finds one, and both nodes stay up',
+        async () => {
+            const { cluster, downs, failedChecks } = await byName();
 
-        const seen = await openWithNoRoute(cluster, 0, false);
-        await until(() => !isUp(cluster)[0], 'node 0 to go down', () => waitsOf(cluster, 0));
+            const seen = [await openWithNoRoute(cluster, 0, false),
+                await openWithNoRoute(cluster, 1, false)];
+            await settled(cluster, 0);
+            await settled(cluster, 1);
 
-        expect(seen).toEqual(['ENETUNREACH', true, true, true]);
-        // one check. fall is 3
-        expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG]);
-        expect(cluster.nodes()[0].checkError.code).toBe('ENETUNREACH');
-        expect([isUp(cluster), downs()]).toEqual([[false, true], ['passive_unreachable']]);
-    });
+            const call = ['ENETUNREACH', true, true, true];
+            expect(seen).toEqual([call, call]);
+            // one check per node, the first of fall 3, then the wait of the timer
+            expect(failedChecks).toEqual([['ENETUNREACH'], ['ENETUNREACH']]);
+            expect([waitsOf(cluster, 0), waitsOf(cluster, 1)]).toEqual(
+                [[LONG, 0, LONG], [LONG, 0, LONG]]);
+            expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
+        });
 
     it('with passive false no check starts', async () => {
         const { cluster } = await byName({ ...BLOCK, passive: false });

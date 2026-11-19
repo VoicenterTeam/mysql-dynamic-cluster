@@ -21,6 +21,7 @@ export interface IHealthCheckSettings {
     // Passive health: a query or getConnection() of the app whose connection the node
     // refuses takes the node down at once. One that loses its connection, gets none within
     // the connect timeout or finds no route starts a check at once, and that check decides.
+    // A check that finds no route itself does not: it counts toward `fall`.
     // Left out: true
     passive?: boolean
 }

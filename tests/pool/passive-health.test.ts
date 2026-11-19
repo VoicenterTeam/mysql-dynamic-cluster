@@ -13,7 +13,8 @@ import { createPoolCluster } from '../../index';
 // of the app runs into moves the node between two checks. A connection the node refuses
 // takes the node down at once. A connection that was lost, one that was not there within
 // the connect timeout and one that no route led to start a check at once, and that check
-// takes the node down when it fails. Nothing else counts, and the check itself never does.
+// takes the node down when it fails. But for a check that finds no route itself: it counts
+// toward fall as any failed check. Nothing else counts, and the check itself never does.
 // Every number here is worked out by hand from the settings.
 // The cluster is the one an app gets from createPoolCluster. Only mysql2 is replaced, and
 // the clock is fake: a check that passive health starts is a request for a connection at
@@ -388,13 +389,13 @@ describe('passive health: a connection that did not come, and nobody refused it'
         expect([valid(), info().checkError]).toEqual([false, { code: 'ETIMEDOUT' }]);
     });
 
-    it.each(UNREACHABLE)('%s, and a check that finds no route either: the node is down',
+    it.each(UNREACHABLE)('%s, and a check that finds no route either: the node stays up',
         async (code, errno, syscall) => {
             const step = failure('open', network(code, errno, syscall));
-            await hit(step, 'query', { fall: 3 }, [step]);
+            await hit(step, 'query', { fall: 3 }, [step, 'hang']);
             await pass(0);
 
-            expect([valid(), info().checkError]).toEqual([false, { code, errno }]);
+            expect([valid(), info().checkError]).toEqual([true, { code, errno }]);
         });
 
     it('no route, and a check that hangs: down at its timeout of 1000', async () => {
@@ -420,6 +421,25 @@ describe('passive health: a connection that did not come, and nobody refused it'
         expect([askedAt(a), askedAt(b)]).toEqual([[0, 1000, 1000], [0, 1000, 1000]]);
         expect(changes().filter(([level]) => level === 'warn')).toEqual([]);
     });
+
+    // The same moment when the checks have to open a connection too, as they do when the
+    // pool has no idle one: no route for them either. The checks of the timer at 6000 pass
+    it('two healthy nodes, no route for the calls and none for their checks: both stay up',
+        async () => {
+            fakeNode([PASS, NO_ROUTE, NO_ROUTE, PASS], 'node-a');
+            fakeNode([PASS, NO_ROUTE, NO_ROUTE, PASS], 'node-b');
+            await start({ healthCheck: {} }, [{ host: 'node-a' }, { host: 'node-b' }]);
+            await pass(1000);
+            await Promise.all([failed(direct(0)), failed(direct(1))]);
+            await pass(0);
+            const during = [valid(0), valid(1), info(0).checkError, info(1).checkError];
+            await pass(5000);
+
+            expect(during).toEqual([true, true, NO_ROUTE_CHECK, NO_ROUTE_CHECK]);
+            expect([valid(0), valid(1), info(0).checkError, info(1).checkError]).toEqual(
+                [true, true, undefined, undefined]);
+            expect(changes().filter(([level]) => level === 'warn')).toEqual([]);
+        });
 
     it('a check that hangs takes the node down at its timeout of 1000', async () => {
         await hit(TIMED_OUT, 'query', { fall: 3, timeout: 1000 }, ['hang']);
@@ -737,18 +757,33 @@ describe('passive health: a check that meets one more lost connection', () => {
             expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000, 1001, 1002]]);
         });
 
-        it('after no route, such a run and a check that finds none either: down, and why',
+        it('after no route, such a run and a check that finds none either: up, the row is over',
             async () => {
-                fakeNode([PASS, NO_ROUTE, RESET, NO_ROUTE, 'hang']);
+                const node = fakeNode([PASS, NO_ROUTE, RESET, NO_ROUTE, 'hang']);
                 await start({ healthCheck: { fall: 3 } });
                 await pass(1000);
                 await failed(direct());
+                await pass(5000);
+                const before = askedAt(node);
                 await pass(1);
 
-                expect(info().checkError).toEqual(NO_ROUTE_CHECK);
-                expect(changes().slice(-1)).toEqual(
-                    [downBy('passive_unreachable', 'ENETUNREACH')]);
+                // no run at 1002: the next check is the one of the timer
+                expect([valid(), info().checkError]).toEqual([true, NO_ROUTE_CHECK]);
+                expect([before, askedAt(node).slice(-1)]).toEqual(
+                    [[0, 1000, 1000, 1001], [6001]]);
             });
+
+        it('after no route, such runs up to the bound: down, and why', async () => {
+            fakeNode([PASS, NO_ROUTE, RESET]);
+            await start({ connectionLimit: 1, healthCheck: { fall: 3 } });
+            await pass(1000);
+            await failed(direct());
+            await pass(1);
+
+            expect(info().checkError).toEqual(RESET_CHECK);
+            expect(changes().slice(-1)).toEqual(
+                [downBy('passive_unreachable', 'ENETUNREACH')]);
+        });
 
         it('a check of the timer that has to decide runs again as well', async () => {
             // the first lost connection starts a check, which passes. The second one, in
@@ -958,6 +993,261 @@ describe('passive health: a check that meets one more lost connection', () => {
             await pass(2);
 
             expect(changes()).toEqual([up1]);
+        });
+    });
+});
+
+describe('passive health: a check that has to decide and finds no route itself', () => {
+    // No route is what this host or a router says, to a check as to a call of the app, and
+    // a check finds none whenever it has to open a connection while the route is gone. It
+    // says nothing about the node, so it does not decide alone: it counts toward fall as
+    // any failed check, and the next check is the one of the timer. fall is 3 unless a
+    // test says otherwise
+    const BEFORE: [string, Step, string, string][] = [
+        ['a lost connection', RESET, 'lost', 'ECONNRESET'],
+        ['a connect timeout', TIMED_OUT, 'timeout', 'ETIMEDOUT'],
+        ['no route', NO_ROUTE, 'unreachable', 'ENETUNREACH']
+    ];
+    const FOUND: [string, Step, string, number][] = UNREACHABLE.flatMap(
+        ([code, errno, syscall]): [string, Step, string, number][] => {
+            const error = network(code, errno, syscall);
+            return [
+                [code + ' in place of a connection', failure('open', error), code, errno],
+                [code + ' under its status query', failure('query', error), code, errno]
+            ];
+        });
+    const ROWS = BEFORE.flatMap(([before, call, kind, appCode]) => FOUND.map(
+        ([found, check, code, errno]): [string, string, Step, Step, string[], number] => {
+            return [before, found, call, check, [kind, appCode, code], errno];
+        }));
+    // the call of the app at 1000 ends as `call` says, the requests after it as `checks` say
+    const after = async (
+        call: Step, checks: Step[], block: object = { fall: 3 }, limits: object = {}
+    ) => {
+        const node = fakeNode([PASS, call, ...checks]);
+        await start({ ...limits, healthCheck: block });
+        await pass(1000);
+        await failed(direct());
+        return node;
+    };
+    const downFall = ['warn', { pool, valid: false, reason: 'fall' }];
+    // the line of a check that found no route and so did not decide: its fields
+    const undecided = () => logger.warn.mock.calls.map(([, meta]) => meta)
+        .filter(meta => meta && meta.checkCode);
+
+    it.each(ROWS)('%s, then a check with %s: the node stays up',
+        async (_before, _found, call, check, [, , code], errno) => {
+            const node = await after(call, [check, 'hang']);
+            await pass(0);
+
+            expect([valid(), info().checkError]).toEqual([true, { code, errno }]);
+            expect(askedAt(node)).toEqual([0, 1000, 1000]);
+        });
+
+    it.each(ROWS)('%s, then a check with %s: the next check comes with the timer',
+        async (_before, _found, call, check) => {
+            const node = await after(call, [check, 'hang']);
+            await pass(4999);
+            const before = node.asked.length;
+            await pass(1);
+
+            expect([before, askedAt(node)]).toEqual([3, [0, 1000, 1000, 6000]]);
+        });
+
+    describe('counts toward fall as any failed check', () => {
+        it.each(BEFORE)('%s: it is the first of fall 2, and the next failed check the second',
+            async (_before, call) => {
+                await after(call, [NO_ROUTE, REFUSED, 'hang'], {});
+                await pass(4999);
+                const before = valid();
+                await pass(1);
+
+                expect([before, valid()]).toEqual([true, false]);
+                expect(changes()).toEqual([up1, downFall]);
+            });
+
+        it.each(BEFORE)('%s: with fall 3 the failed check after it leaves the node up',
+            async (_before, call) => {
+                // were that check still one that decides, the node would be down at 6000
+                const node = await after(call, [NO_ROUTE, REFUSED, 'hang']);
+                await pass(5000);
+
+                expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000, 6000]]);
+            });
+
+        it('fall 3: the third failed check in a row takes the node down, by fall', async () => {
+            await after(NO_ROUTE, [NO_ROUTE, REFUSED, REFUSED, 'hang']);
+            await pass(9999);
+            const before = valid();
+            await pass(1);
+
+            expect([before, valid(), changes()]).toEqual([true, false, [up1, downFall]]);
+        });
+
+        it('fall 1: the node goes down with that check, by fall', async () => {
+            await after(NO_ROUTE, [NO_ROUTE, 'hang'], { fall: 1 });
+            await pass(0);
+
+            expect([valid(), changes()]).toEqual([false, [up1, downFall]]);
+        });
+
+        it('a failed check of the timer before it counts too: fall 2 is reached', async () => {
+            fakeNode([PASS, REFUSED, NO_ROUTE, NO_ROUTE, 'hang']);
+            await start({ healthCheck: {} });
+            await pass(6000);
+            await failed(direct());
+            const atOnce = valid();
+            await pass(0);
+
+            expect([atOnce, valid(), changes()]).toEqual([true, false, [up1, downFall]]);
+        });
+
+        it('a pass after it starts the count again', async () => {
+            const node = await after(NO_ROUTE, [NO_ROUTE, PASS, REFUSED, 'hang'], {});
+            await pass(10000);
+
+            // the failed check at 11000 is the first of two
+            expect([valid(), info().checkError]).toEqual([true, REFUSED_CHECK]);
+            expect(askedAt(node)).toEqual([0, 1000, 1000, 6000, 11000]);
+        });
+    });
+
+    describe('next to the other rules', () => {
+        it('a call that fails after it starts no check before the one of the timer', async () => {
+            const node = await after(NO_ROUTE, [NO_ROUTE, NO_ROUTE, PASS, 'hang']);
+            await pass(1000);
+            await failed(direct());
+            await pass(3999);
+            const before = askedAt(node);
+            await pass(1);
+
+            expect(before).toEqual([0, 1000, 1000, 2000]);
+            expect(askedAt(node)).toEqual([0, 1000, 1000, 2000, 6000]);
+        });
+
+        it('a check of the timer that has to decide and finds no route: the same', async () => {
+            // the call at 2000 starts no check, so the check of the timer at 6000 decides
+            const node = await after(NO_ROUTE, [NO_ROUTE, NO_ROUTE, NO_ROUTE, 'hang']);
+            await pass(1000);
+            await failed(direct());
+            await pass(4000);
+
+            expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000, 2000, 6000]]);
+            expect(undecided().map(line => line.failedChecks)).toEqual([1, 2]);
+        });
+
+        it('calls that go on failing: fall 3 is reached by the check the third one starts',
+            async () => {
+                // checks at 1000, at 6000 by the timer, and at 7000 for the call at 7000
+                const node = await after(NO_ROUTE, [NO_ROUTE]);
+                await pass(1000);
+                await failed(direct());
+                await pass(5000);
+                const before = valid();
+                await failed(direct());
+                await pass(0);
+
+                expect([before, valid(), changes()]).toEqual([true, false, [up1, downFall]]);
+                expect(askedAt(node)).toEqual([0, 1000, 1000, 2000, 6000, 7000, 7000]);
+            });
+
+        it.each<[string, Step, object, object]>([
+            ['is refused', REFUSED, {}, REFUSED_CHECK],
+            ['gets no connection in time', TIMED_OUT, {}, { code: 'ETIMEDOUT' }],
+            ['meets a lost connection in its last run', RESET, { connectionLimit: 1 },
+                RESET_CHECK]
+        ])('after no route, a check that %s still decides alone',
+            async (_name, check, limits, checkError) => {
+                await after(NO_ROUTE, [check], { fall: 3 }, limits);
+                await pass(1);
+
+                expect([valid(), info().checkError]).toEqual([false, checkError]);
+                expect(changes().slice(-1)).toEqual([
+                    ['warn', { pool, valid: false, reason: 'passive_unreachable',
+                        code: 'ENETUNREACH' }]
+                ]);
+            });
+
+        it('it ends a row of runs: a new row gets the whole bound again', async () => {
+            // The check at 1000 meets a lost connection, its one more run finds no route.
+            // The call at 2000 starts no check, so the check of the timer at 6001 decides:
+            // it meets a lost connection too, and may run again
+            const checks: Step[] = [RESET, NO_ROUTE, RESET, RESET, PASS, 'hang'];
+            const node = await after(RESET, checks, { fall: 3 }, { connectionLimit: 1 });
+            await pass(1000);
+            await failed(direct());
+            await pass(4002);
+
+            expect([valid(), askedAt(node)]).toEqual(
+                [true, [0, 1000, 1000, 1001, 2000, 6001, 6002]]);
+        });
+
+        it('it is a failed check to the app: pool_check_failed with its code', async () => {
+            const seen: string[] = [];
+            await after(NO_ROUTE, [NO_ROUTE, 'hang']);
+            cluster.on('pool_check_failed', (args: any[]) => seen.push(args[0].code));
+            await pass(0);
+
+            expect(seen).toEqual(['ENETUNREACH']);
+        });
+    });
+
+    describe('the log', () => {
+        it.each(ROWS)('%s, then a check with %s: one warn with both codes and the count',
+            async (_before, _found, call, check, [passive, code, checkCode]) => {
+                await after(call, [check, 'hang']);
+                await pass(0);
+
+                expect(undecided()).toEqual(
+                    [{ pool, passive, code, checkCode, failedChecks: 1, fall: 3 }]);
+                // and no line about the state of the node, which did not change
+                expect(changes()).toEqual([up1]);
+            });
+
+        it('the check that reaches fall logs it too, ahead of the line of the fall', async () => {
+            await after(NO_ROUTE, [NO_ROUTE, 'hang'], { fall: 1 });
+            await pass(0);
+
+            const wanted = { pool, passive: 'unreachable', code: 'ENETUNREACH',
+                checkCode: 'ENETUNREACH', failedChecks: 1, fall: 1 };
+            // every warn that has fields, in order
+            const fields = logger.warn.mock.calls.map(([, meta]) => meta).filter(Boolean);
+            expect(fields).toEqual([wanted, downFall[1]]);
+        });
+
+        it('a check of the timer that finds no route and has nothing to decide: no such line',
+            async () => {
+                fakeNode([PASS, NO_ROUTE, 'hang']);
+                await start({ healthCheck: {} });
+                await pass(5000);
+
+                expect([info().checkError, undecided()]).toEqual([NO_ROUTE_CHECK, []]);
+            });
+
+        it('a node that a refused connection took down before the check: no such line',
+            async () => {
+                // both calls at 1000. The node is down, so the check has nothing to decide
+                const node = fakeNode([PASS, RESET, REFUSED, NO_ROUTE, 'hang']);
+                await start({ healthCheck: { fall: 3 } });
+                await pass(1000);
+                await failed(direct());
+                await failed(direct());
+                await pass(0);
+
+                expect([node.asked.length, info().checkError]).toEqual([4, NO_ROUTE_CHECK]);
+                expect(undecided()).toEqual([]);
+            });
+
+        it.each<[string, Step[], object]>([
+            ['a check that decides and fails another way', [RESET, REFUSED, 'hang'], {}],
+            ['a check that decides and runs again', [RESET, RESET, PASS, 'hang'], {}],
+            ['passive false and checks that find no route',
+                [NO_ROUTE, NO_ROUTE, 'hang'], { passive: false }]
+        ])('%s: no such line', async (_name, [call, ...checks], block) => {
+            await after(call, checks, block);
+            await pass(5000);
+
+            expect(undecided()).toEqual([]);
         });
     });
 });
@@ -1891,6 +2181,10 @@ describe('passive health: the log', () => {
             {}, [RESET], [failure('open', denied)], [up1, downRefusal]],
         ['a lost connection whose check is the fall-th failure: the line of the fall',
             {}, [REFUSED, RESET], [REFUSED], [up1, downFall]],
+        ['a call that found no route and whose check finds none either logs no line',
+            {}, [NO_ROUTE], [NO_ROUTE], [up1]],
+        ['the same, and the check of the timer finds none either: the line of the fall',
+            {}, [NO_ROUTE], [NO_ROUTE, NO_ROUTE], [up1, downFall]],
         ['down by a refused connection and back by rise: one line each',
             {}, [REFUSED], [PASS, PASS], [up1, down('passive_connect', 'ECONNREFUSED'), upRise]]
     ])('%s', async (_name, block, before, checks, wanted) => {
@@ -2159,12 +2453,16 @@ describe('passive health: the time a dead node takes to leave rotation', () => {
         ['a connect timeout, then connections refused: 0 ms', {}, TIMED_OUT, REFUSED, 0],
         ['a connect timeout and checks that hang, passive false: 19000 ms',
             { passive: false }, TIMED_OUT, 'hang', 19000],
-        // No route for the call. The check that starts finds none either, or it draws a
-        // pooled connection whose packets get no answer
-        ['no route, and none for the check: 0 ms, one check', {}, NO_ROUTE, NO_ROUTE, 0],
+        // No route for the call. The check that starts finds none either and does not
+        // decide alone: the check of the timer at 16000 is the second of fall 2. Or the
+        // check draws a pooled connection whose packets get no answer, and decides
+        ['no route, and none for the checks: 5000 ms, by fall', {}, NO_ROUTE, NO_ROUTE, 5000],
+        ['the same with fall 3: 10000 ms', { fall: 3 }, NO_ROUTE, NO_ROUTE, 10000],
         ['no route, then checks that hang: 5000 ms, one timeout', {}, NO_ROUTE, 'hang', 5000],
         ['no route, and none for the checks, passive false: 9000 ms',
             { passive: false }, NO_ROUTE, NO_ROUTE, 9000],
+        ['the same with fall 3 and passive false: 14000 ms',
+            { fall: 3, passive: false }, NO_ROUTE, NO_ROUTE, 14000],
         ['no route, then checks that hang, passive false: 19000 ms',
             { passive: false }, NO_ROUTE, 'hang', 19000],
         // A node that resets every connection, old and new: the check and ten more runs,
