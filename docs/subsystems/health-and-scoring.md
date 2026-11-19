@@ -11,6 +11,7 @@ query; see [cluster.md](cluster.md) for the routing side.
 
 Sources:
 [src/pool/PoolStatus.ts](../../src/pool/PoolStatus.ts),
+[src/pool/CheckConnection.ts](../../src/pool/CheckConnection.ts),
 [src/pool/Validator.ts](../../src/pool/Validator.ts),
 [src/pool/LoadFactor.ts](../../src/pool/LoadFactor.ts),
 [src/utils/Timer.ts](../../src/utils/Timer.ts).
@@ -30,7 +31,8 @@ the cluster is created.
 | --- | --- | --- |
 | Which node | A node whose settings hold no `healthCheck` block. That is every node of an app that does not set the block | A node whose settings hold the block, from `defaultPoolSettings` or from its host. An empty block is enough. Not in 4.6.0 or earlier |
 | Wait before the next check | Longer after an answered check, shorter after a failed one, inside `timerCheckRange`. See [Adaptive timer](#adaptive-timer) | `healthCheck.interval` after every check, but `healthCheck.authRetryInterval` after a check the server refused the login of, and after the checks that follow it without an answer |
-| Timeout of one check | `min(queryTimeout, timerCheckRange.end)` | `healthCheck.timeout` |
+| Where the check asks | Through the pool, like a query of the app. A pool at its limit makes it wait for a free connection | On one connection of its own, next to the pool. It never waits in the queue of the pool. See [The check connection](#the-check-connection) |
+| Timeout of one check | `min(queryTimeout, timerCheckRange.end)`, the wait for a connection of the pool included | `healthCheck.timeout`: opening the check connection when the node holds none, the change of user and the status query |
 | Down | At the second failed check in a row, or with one check a validator says no to | At the `fall`th failed check in a row, with one check a validator says no to, or with one check the server refuses the login of. By [passive health](#passive-health) also between two checks |
 | A refused login | A failed check like any other | Down at once and a slower next check, see [A login or account refusal](#a-login-or-account-refusal) |
 | A connection error of a query of the app | Changes nothing. Only a check moves the node | With `passive: true`, the default: a connection the node refuses takes the node down at once. One that was lost, was not there within the connect timeout or that no route led to starts a check at once, and that check decides. See [Passive health](#passive-health) |
@@ -39,10 +41,11 @@ the cluster is created.
 | A check that throws after its answer came | The node is already set to what the validators said | A failed check. A pass it held does not count, a no does |
 | `timerCheckRange` and `timerCheckMultiplier` | Used | Ignored. One `warn` per node when the app wrote one of them |
 
-The check itself is the same in both: one `SHOW GLOBAL STATUS` through
-`Pool.query`, the validators, the load factors, `checkError`, the
-`pool_check_failed` event and the metrics. Only the rule that moves `isValid`
-and the wait before the next check differ. `PoolStatus` keeps the block as
+What a check asks and what it does with the answer is the same in both: a
+change of user and one `SHOW GLOBAL STATUS`, the validators, the load
+factors, `checkError`, the `pool_check_failed` event and the metrics. Where
+it asks, the rule that moves `isValid` and the wait before the next check
+differ. `PoolStatus` keeps the block as
 `_healthCheck`. The constructor takes the timeout and `fall` from it,
 `startTimerCheck()` resets the runs for it, `checkStatus()` applies its rules
 and `nextCheckStatus()` waits its `interval`, or its `authRetryInterval`
@@ -53,8 +56,10 @@ The legacy check is pinned by
 [tests/pool/health-check-legacy.test.ts](../../tests/pool/health-check-legacy.test.ts),
 the check with the block by
 [tests/pool/health-check.test.ts](../../tests/pool/health-check.test.ts),
-and passive health by
-[tests/pool/passive-health.test.ts](../../tests/pool/passive-health.test.ts).
+passive health by
+[tests/pool/passive-health.test.ts](../../tests/pool/passive-health.test.ts),
+and the check connection by
+[tests/pool/check-connection.test.ts](../../tests/pool/check-connection.test.ts).
 The sections below describe the legacy check unless they say otherwise.
 
 ## The rules of a `healthCheck` block
@@ -69,10 +74,9 @@ Next to `isValid` three values make the state of a node:
 
 `startTimerCheck()` sets all three back, so every `connect()` starts with no
 run. It leaves `isValid` as it is. [Passive health](#passive-health) keeps
-three more values, which `startTimerCheck()` sets back as well: whether the
+two more values, which `startTimerCheck()` sets back as well: whether the
 app lost a connection, got none in time or found no route since the last
-check that got its answer, how often the check that decides ran again, and whether passive
-health may start a check.
+check that got its answer, and whether passive health may start a check.
 
 A check ends in one of four ways:
 
@@ -134,7 +138,8 @@ More on these rules:
   `fall`, one whose check the server refused as `refusal`. A check that
   passive health starts logs one `debug` line first, with the meta `pool`,
   `passive` as `connect`, `lost`, `timeout` or `unreachable`, and `code`. A check that
-  runs again logs one `debug` line with `pool`, `rerun` and `code`. A check
+  opens a new connection for one it lost logs one `debug` line with `pool`
+  and `code`. A check
   that had to decide and found no route itself logs one `warn` with no
   `reason`, see
   [A check that finds no route itself](#a-check-that-finds-no-route-itself).
@@ -158,6 +163,94 @@ More on these rules:
   validators gave it holds: the node goes down at once. The legacy check
   sets the node to what the validators said before the rest of the check
   runs, so there such a check can leave a node valid.
+
+### The check connection
+
+Not in 4.6.0 or earlier. The check of a node with a `healthCheck` block asks
+on one connection of its own, next to the pool of the app. The legacy check
+asks through the pool, like a query of the app.
+
+The reason is a pool at its limit. mysql2 queues the requests of such a
+pool, first in and first out, with no timeout. A check that asks through
+the pool waits there behind every request of the app and runs into its own
+timeout. After `fall` such checks a node that is busy and healthy leaves
+rotation, its traffic moves to the other nodes, and they can fill up and
+leave the same way.
+
+- **A check never waits in the queue of the pool** and takes no connection
+  of it. `failWaiting()` fails the requests of the app and no check.
+- **One connection per node, per process.** The first check of `connect()`
+  opens it with the options and the flags of the pool. It is kept between
+  the checks, and `disconnect()` logs out of it. It counts against
+  `max_connections` of the server, next to the connections of the pool.
+- **Every check is still a login.** The check sends a change of user ahead
+  of its status query, as every query of the package does. A server that
+  refuses the account refuses every check, on the connection the node
+  holds as on a new one. So the refusal list, `authRetryInterval`, the slow
+  pace and `checkError` mean what they meant.
+- **`timeout` covers the whole check and nothing else:** opening a
+  connection when the node holds none, the change of user and the status
+  query. No wait for a connection of the pool is in it.
+- **A check that times out drops its connection.** The status query has no
+  timeout of mysql2. The timer of the check ends it, and the connection is
+  destroyed with its socket. No late answer comes on it, and the next
+  check opens a new one.
+- **One turn of the event loop before a timeout counts.** Node runs a timer
+  that is due before it reads its sockets. After a process stood still for
+  longer than `timeout`, in a big JSON parse or a long GC pause, the timer
+  of a check that was out fires although the answer of the node waits in
+  the socket. So when its timer fires the check waits one `setImmediate`
+  first, and an answer that is read in that turn wins. An answer that is
+  not there by then does not: such a check fails as any check that timed
+  out. The legacy check has no such turn.
+- **A connection that was lost is opened again, once**, inside the same
+  check. See
+  [A check whose connection was lost](#a-check-whose-connection-was-lost).
+- **A check says the node answers on the connection it holds.** It does
+  not say a new connection can be opened. While only new connections fail,
+  for a missing route or a firewall that drops them, the check passes and
+  the node stays up, and the calls of the app that need a new connection
+  fail. A refused connection is the exception: it takes the node down at
+  once, see [Passive health](#passive-health). Measured in
+  [A check that finds no route itself](#a-check-that-finds-no-route-itself).
+- **mysql2 gives a login 10 s.** The check connection takes the
+  `connectTimeout` of mysql2, as the pool does. With a `timeout` above
+  10 s a login that hangs ends after those 10 s with `ETIMEDOUT`, and not
+  at the timeout of the check.
+- **A second `connect()` without a `disconnect()`** logs out of the
+  connection and holds a new one. A check that was still out on the old
+  one asks again on the new one.
+- **What else an app sees.** The pool of a node holds no connection after
+  `connect()`, so the first query of the app to each node pays for a
+  login. A check emits no `connection`, `acquire` or `release`, and
+  `getPoolStats()` and the connection gauges do not count the check
+  connection. See [pool.md](pool.md#the-check-connection).
+
+Measured with the real mysql2 against its own server class on the loopback
+interface of one Linux host, by a probe that is not part of the suite: 3
+runs of 10 s on each side. One node, `connectionLimit: 2`,
+`healthCheck: { interval: 500, timeout: 500 }`, which is the default block
+ten times faster, a server that takes 400 ms for a query of the app, and
+one query every 50 ms.
+
+| | Check through the pool | Check connection |
+| --- | --- | --- |
+| The node was down | 7511 to 7547 ms of the 10 s, from about 2 s on | Never |
+| Queries rejected with `There is no pool that satisfies the parameters` | 150 or 151 of 198 or 199 | 0 |
+| Failed checks | 8 | 0 |
+| Checks the server answered | 11 | 19 |
+| Connections open at the server, at most | 2 | 3 |
+
+The queue is not shorter for it. The pool is full on both sides, and with
+the check connection 154 or 155 of the queries still waited when a run
+ended. The package sets no queue limit and no timeout for a request that
+waits, see [../node-api.md](../node-api.md#it-waits-without-limit).
+
+The same case is a test with the real mysql2 on loopback, "a saturated
+pool: the check still passes and the node stays up", in
+[tests/cluster/passive-health-loopback.test.ts](../../tests/cluster/passive-health-loopback.test.ts).
+A process that sleeps past the timer of a check with the answer in the
+socket is a test there too.
 
 ### A login or account refusal
 
@@ -209,8 +302,8 @@ the last two those of the
 
   | Where the server refused | What mysql2 3.24.6 hands out |
   | --- | --- |
-  | At the login of a new connection, when the pool had no free one | The error packet with `errno`, `code` and `sqlState`, and no `fatal` |
-  | At the change of user on an open connection. Every query of the package sends one first, the check included | The same error with `fatal: true`. mysql2 marks every error of a change of user as fatal. The pool destroys that connection, so the next check sends its change of user on another free connection of the pool, or logs in on a new one when there is none |
+  | At the login of a new connection, when the node held no check connection | The error packet with `errno`, `code` and `sqlState`, and no `fatal` |
+  | At the change of user on the connection the node holds. Every query of the package sends one first, the check included | The same error with `fatal: true`. mysql2 marks every error of a change of user as fatal. The connection is dropped, so the next check logs in on a new one |
   | As the answer to the status query. The check does not ask where an errno came from | The error packet, and no `fatal` |
 
 - **A failure the package made is never a refusal.** Its `checkError` is
@@ -269,8 +362,8 @@ before each next check, for as long as its checks get no answer.
 | --- | --- | --- |
 | Another refusal | an errno of the list | `authRetryInterval`, the slow pace goes on |
 | The timeout of the check | `{}` | `authRetryInterval`, the slow pace goes on |
-| Another failure the package made, such as an error the app passed to `failWaiting()` | `{}` | `authRetryInterval`, the slow pace goes on |
-| An error of mysql2 that has no code: `Pool is closed.`, `Queue limit reached.`, `Can't add new command when connection is in closed state` | `{}` | `authRetryInterval`, the slow pace goes on |
+| Another failure the package made, such as `POOL_NOT_CONNECTED` | `{}` | `authRetryInterval`, the slow pace goes on |
+| An error of mysql2 that has no code: `Can't add new command when connection is in closed state` | `{}` | `authRetryInterval`, the slow pace goes on |
 | A connect timeout, from mysql2 or from the socket | `code: 'ETIMEDOUT'`, with or without an `errno` | `authRetryInterval`, the slow pace goes on |
 | A pass, or a validator that said no, also when the check then throws in the package | none, or `{}` when it threw | `interval`, the slow pace is over |
 | Any other error of mysql2, the socket or the server: a refused or a lost connection, 1040, 1226, an errno mysql2 has no name for, the query timeout of mysql2 `PROTOCOL_SEQUENCE_TIMEOUT` | a `code`, an `errno` or both | `interval`, the slow pace is over |
@@ -291,8 +384,8 @@ before each next check, for as long as its checks get no answer.
   than `timeout` sees timeouts only. It checks at `interval` until one
   refusal comes through.
 - **An empty `checkError` keeps the slow pace, whoever made the error.**
-  The rule reads the reduced error, so the three errors of mysql2 in the
-  table that have no code count as no answer, like the timeout of the
+  The rule reads the reduced error, so the error of mysql2 in the
+  table that has no code counts as no answer, like the timeout of the
   check.
 - **The state of the node is not touched by this.** A check that timed out
   counts toward `fall` and ends a run of passes like any failed check. Only
@@ -303,9 +396,9 @@ before each next check, for as long as its checks get no answer.
 
 #### Why the next check waits
 
-Every check is a login. A check that finds no free connection opens one,
-and a check on an open connection sends a change of user, which the server
-answers as it answers a login. A server counts refused logins, and what it
+Every check is a login. A check of a node that holds no check connection
+opens one, and a check on the connection the node holds sends a change of
+user, which the server answers as it answers a login. A server counts refused logins, and what it
 counts them toward does not pass by asking again:
 
 - MySQL 8.0.19 and later lock an account after `FAILED_LOGIN_ATTEMPTS`
@@ -427,15 +520,14 @@ router saying the same of the host. No packet reached the node, and the
 connections the pool holds go on working. A route that is gone for a moment
 is gone for every node behind it, so taking a node down for it would take
 all of them down at once. The check that starts decides instead. It passes
-on a pooled connection that still works, and it takes the node down when it
-gets no answer within its `timeout`.
+on its own connection, which a missing route for new connections does not
+touch, and it takes the node down when it gets no answer there within its
+`timeout`.
 
-**A check that finds no route itself is no proof either.** A call of the
-app opens a connection only when the pool has no idle one, and the check
-starts in the same moment. It draws a pooled connection when a query handed
-one back by then, or when the pool is at its limit and the check waits for
-one. Otherwise the check has to open a connection too, and while the route
-is still gone it finds none either. Such a check does not decide alone. It
+**A check that finds no route itself is no proof either.** The check asks
+on the connection the node holds, and has to open one only when the node
+holds none or the one it held was lost. While the route is still gone it
+then finds none, as the call did. Such a check does not decide alone. It
 counts toward `fall`, see
 [A check that finds no route itself](#a-check-that-finds-no-route-itself).
 
@@ -469,8 +561,9 @@ which it was. `getConnection()` only ever opens.
   none.
 - **One at a time.** While a check is out, no second one starts. The check
   that is out decides. After a lost connection, a connect timeout or a
-  missing route it takes the node down when it fails, but for the two kinds
-  of failed check that have a section of their own below. The status counts the checks that are
+  missing route it takes the node down when it fails, but for a check that
+  finds no route itself, which has a section of its own below. The status
+  counts the checks that are
   out: after a `connect()` on a cluster that is connected two are, the one
   of the timer and the one of that `connect()`, and none starts until both
   ended.
@@ -495,94 +588,102 @@ which it was. `getConnection()` only ever opens.
   start, the result of one that is out is dropped, and a call that fails
   later changes nothing. A new `connect()` forgets a lost connection from
   before.
-- **A pool at its limit makes this check wait** for a free connection, like
-  any check. A check that waits longer than `timeout` is a failed check,
-  and after a lost connection it takes the node down.
+- **A pool at its limit does not make this check wait.** It asks on
+  [the check connection](#the-check-connection), as every check of a node
+  with the block does.
 
-#### A check that meets one more lost connection
+#### A check whose connection was lost
 
 A balancer, a NAT or a firewall with an idle timeout forgets a flow and
 tells neither side. A node that came back after a hard stop has forgotten
 its flows too. mysql2 learns of it at its next write on that connection,
-which is answered with a reset. Every idle connection of a pool can be in
-that state at once, on a node that is healthy. The first query of the app
-that draws one loses its connection, and the check that then starts draws
-the next one from the same pool.
+which is answered with a reset. The check connection can be in that state
+on a node that is healthy, as every idle connection of the pool can.
 
-So a check that has to decide, after a lost connection, a connect timeout
-or a missing route, and itself fails with `PROTOCOL_CONNECTION_LOST`, `ECONNRESET` or
-`EPIPE` says nothing about the node:
+So a check that fails with `PROTOCOL_CONNECTION_LOST`, `ECONNRESET` or
+`EPIPE` on a connection the node held from before says nothing about the
+node yet:
 
-- **The node stays up, and the check runs again at once.** No `interval`
-  passes between two runs.
-- **It counts toward nothing.** Not toward `fall` either: two such runs
-  with `fall: 2` leave the node up.
-- **Each run uses one connection up.** mysql2 hands out the idle connection
-  it got back last, and `Pool` destroys a connection that failed with a
-  `fatal` error, which takes it out of the pool of mysql2. The run after
-  the last forgotten connection opens a new one, and that one gets an
-  answer of the node.
-- **The row of runs ends** with the first run that gets its answer, cannot
-  open a connection, is refused by the server or times out. Each ends as
-  for any check that has to decide. A pass leaves the node up. A validator
-  that says no, `ECONNREFUSED`, `ETIMEDOUT`
-  and the timeout of the check take it down, and a refused login takes it down with
-  [its own rule](#a-login-or-account-refusal). A run that finds no route,
-  `EHOSTUNREACH` or `ENETUNREACH`, ends the row as well and takes no node
-  down alone, see
+- **The check opens a new connection and asks again, once**, inside the
+  same check and inside its `timeout`. No timer runs in between.
+- **What it gets on the new connection is the result of the check.** A
+  pass is a pass, and no check failed. A failure counts as any failed
+  check: toward `fall`, or alone after a lost connection, a connect
+  timeout or a missing route of the app. A refused login follows
+  [its own rule](#a-login-or-account-refusal), and a new connection that
+  finds no route counts toward `fall` only, see
   [A check that finds no route itself](#a-check-that-finds-no-route-itself).
-- **It is bounded.** At most `connectionLimit` runs follow the check, and at
-  most 50, which is also the bound of a pool without a limit. A pool holds
-  no more than `connectionLimit` connections and the call of the app met
-  one of them, so with a limit of 50 or less forgotten connections alone
-  cannot reach the bound. A run that still fails this way after it decides,
-  and the node goes down with the reason `passive_lost`, `passive_timeout`
-  or `passive_unreachable`: it resets new connections too. With the default
-  limit of 10 that is the check and 10 more runs.
-- **Why 50.** Each run that finds no idle connection is a new login. A
-  MySQL or MariaDB server blocks a host after `max_connect_errors` logins
-  in a row that broke off, 100 by default, and answers it with 1129 until
-  someone flushes the host cache. 50 runs stay under half of that. The
-  price: a pool that holds more than 50 forgotten idle connections can lose
-  a healthy node, which then comes back by its `rise` passes. Whether a
-  server counts these runs was reasoned and not measured, since no real
-  server was used.
-- **To the app each run is a failed check.** It sets `checkError`, emits
-  `pool_check_failed`, is recorded in the metric as `error` and logs the
-  `error` line of a failed check. One `debug` line per run has `pool`,
-  `rerun`, the number of the run in its row, and the `code`.
-- **One check to the rules above.** The runs of a row are one check to
-  "one between two checks of the timer", and no call of the app that fails
-  between two runs starts a check of its own.
-- **Only a check that has to decide runs again.** A check with no failed
-  call of the app before it that meets such a connection counts toward
-  `fall` as any failed check, with a block and without, as in 4.6.0.
-- **A node that went down in the meantime is checked the same way.** When a
-  refused connection took the node down after the lost one and before the
-  check, the runs still go on until one of them decides. A pass among them
-  is the first of `rise`.
+- **Only a connection held from before is opened again.** A connection the
+  check opened itself, because the node held none, cannot be a flow the
+  path forgot, so a loss there is the result of the check. A node that
+  resets every new connection gets one connection attempt per check, and
+  two from the one check that still held a connection.
+- **Every check, not only one that has to decide.** A check of the timer
+  with no failed call of the app before it opens a new connection the same
+  way.
+- **One check to the app.** It emits `pool_check_failed` once at most,
+  with the error of the new connection, sets `checkError` once and is one
+  record of the health check metric. The loss of the old connection is one
+  `debug` line with `pool` and `code`. In
+  `mysql_dynamic_cluster.operation.duration` the two attempts are two
+  records, the first with the code of the loss.
+- **One check to the rules above.** The two connections are one check to
+  "one at a time" and to "one between two checks of the timer".
+- **Not after `disconnect()`.** A check that learns of the loss after it
+  opens nothing.
+- **The legacy check opens nothing again.** It asks through the pool, and a
+  lost connection there is a failed check, as in 4.6.0.
 
-Seen with the real mysql2 on the loopback interface, behind a TCP proxy
-that forgets its flows, in
-[tests/cluster/passive-health-loopback.test.ts](../../tests/cluster/passive-health-loopback.test.ts).
-Two healthy nodes, `connectionLimit: 10`, six idle connections each that
-the proxy forgot, three queries at once per node. The three queries are
-rejected with `ECONNRESET`. The check runs four times: three runs meet the
-connections that are left and the fourth opens a new one and passes. The
-proxy reset six flows per node and none after that, no node goes down, and
-the next 20 queries pass. A node behind a proxy that resets every
-connection, old and new, is down after the check and ten more runs, with no
-wait between them.
+**The check does not use up the forgotten connections of the pool.** It
+asks on its own connection, so what the path forgot in the pool waits for
+the queries of the app. Each such connection fails one attempt with
+`ECONNRESET`, as in 4.6.0 and as with `passive: false`. No node goes down
+for it: the first loss starts a check, which passes, and the losses after
+it in the same `interval` are kept for the check of the timer, which
+passes too. `cluster.query()` sends a query that failed to the next node,
+where it can meet one more of them. An app behind such a path sets
+`idleTimeout` below the idle timeout of the path, so the pool closes its
+idle connections first, see [../configuration.md](../configuration.md).
+
+Measured with the real mysql2 on the loopback interface of one Linux host,
+behind a TCP proxy that forgets its flows, by a probe that is not part of
+the suite: 3 runs of 12 s on each side. Two healthy nodes,
+`connectionLimit: 10`, six idle connections in each pool that the proxy
+forgot, three queries at once and then one every 100 ms through
+`cluster.query()`.
+
+| | A check that drew from the pool and ran again | Check connection |
+| --- | --- | --- |
+| Queries rejected | 3 of 122 in each run | 6 of 122 in each run |
+| Nodes down | None | None |
+| Flows the proxy reset, per node | 6 | 7: the six of the pool and the check connection |
+
+The first column is the code as it was before the check connection, where
+a check that had to decide ran again and met one forgotten connection of
+the pool per run. That code was never released. A node behind a proxy that
+resets every connection, old and new, was down after 47 to 56 ms and 13 resets there, and
+is down after 11 to 23 ms and 4 resets with the check connection: the check lost the
+connection it held and the one it opened then (3 runs on each
+side).
+
+The same is in
+[tests/cluster/passive-health-loopback.test.ts](../../tests/cluster/passive-health-loopback.test.ts),
+with the real mysql2 behind the same kind of proxy. Three queries at once
+per node are rejected with `ECONNRESET`, the check that starts opens a new
+connection for its own forgotten one and passes, and no node goes down.
+The three forgotten connections that are left in a pool fail one query
+each, and the queries after those pass. A node behind a proxy that resets
+every connection is down after one check.
 
 #### A check that finds no route itself
 
-A call of the app opens a connection only when the pool has no idle one.
-The check that starts in the same moment then has to open one too, and
-while the route is gone it finds none either. It repeats what the call said
-and adds nothing about the node. Were it to decide, a route that is gone
-for 100 ms would take every node behind it down, which is what the check
-was started to prevent. With `fall: 1` it still does: there every failed
-check takes its node down.
+The check asks on the connection the node holds. It has to open one when
+the node holds none, or when the one it held was lost, and while the route
+is gone it then finds none, as the call of the app did. It repeats what the
+call said and adds nothing about the node. Were it to decide, a route that
+is gone for 100 ms could take every node behind it down, which is what the
+check was started to prevent. With `fall: 1` it still does: there every
+failed check takes its node down.
 
 So a check that has to decide, after a lost connection, a connect timeout
 or a missing route, and itself fails with `EHOSTUNREACH` or `ENETUNREACH`
@@ -591,20 +692,20 @@ does not decide alone:
 - **The node stays up, and the check counts toward `fall`** as any failed
   check. It takes the node down when it is the `fall`th failed check in a
   row, and the reason is then `fall`. With `fall: 1` that is this check.
-- **It does not run again.** The next check is the one of the timer,
-  `interval` later. Passive health starts none before it, as after any
-  check it started.
+- **It opens no further connection.** The next check is the one of the
+  timer, `interval` later. Passive health starts none before it, as after
+  any check it started.
 - **What the call ran into is over with it.** The checks after it count as
   any check: with `fall: 3` the failed check after it leaves the node up. A
   call that fails later is kept again, and the next check then has to
   decide again.
 - **The place does not matter.** The code counts whether the check got it
-  in place of a connection or on one it drew from the pool.
+  in place of a connection or on the connection it held.
 - **Every other failed check still decides alone.** After a missing route
   the node goes down with `passive_unreachable` when its check is refused a
-  connection, gets none in time, runs into its `timeout` or still meets a
-  lost connection in its last run. A refused login and a validator that
-  says no follow their own rules.
+  connection, gets none in time, runs into its `timeout` or loses the
+  connection it opened. A refused login and a validator that says no
+  follow their own rules.
 - **It logs one `warn`** with the meta `pool`, `passive`, `code`,
   `checkCode`, `failedChecks` and `fall`. It has no `reason`, since the
   state of the node did not change. `passive` and `code` are the kind and
@@ -626,41 +727,76 @@ does not decide alone:
   of the app before it that finds no route counts toward `fall` as any
   failed check, with a block and without, as in 4.6.0.
 
-The price is a node that is gone together with its route, and whose pool
-holds no connection the check could draw. It leaves rotation by `fall`,
-where a check that decides would take it out with the call. With the
-defaults that is one `interval` after the first call: 5000 ms, against 9000
-without passive health, in the table of
+The price is a node that is gone together with its route, and whose check
+connection is gone as well. It leaves rotation by `fall`, where a check
+that decides would take it out with the call. With the defaults that is
+one `interval` after the first call: 5000 ms, against 9000 without passive
+health, in the table of
 [Time to leave rotation once a call of the app fails](#time-to-leave-rotation-once-a-call-of-the-app-fails).
+A node whose check connection still stands is asked there: a check that
+gets no answer runs into its `timeout` and decides.
 
-Measured with the real mysql2 on the loopback interface, by a probe that is
-not part of the suite. Two healthy nodes addressed by name, one pooled
-connection each, `healthCheck: {}`, four queries at once and then one every
-100 ms. While the name resolves to an address this host has no route to, a
-new connection ends with `ENETUNREACH` and the pooled connections go on
-working.
+**A node whose check connection stands passes its checks while no new
+connection reaches it.** The check asks on the connection it holds and
+says that the node answers there. It does not say that a new connection can
+be opened. So while the route is gone for new connections only, no check
+fails, the node stays up, and every call of the app that needs a new
+connection fails with the missing route. A check through the pool said the
+same while the pool had an idle connection for it, and failed when it had
+to open one.
 
-| New connections find no route | Passive health | Queries rejected | Nodes down |
+Measured with the real mysql2 on the loopback interface of one Linux host,
+by a probe that is not part of the suite. Two healthy nodes addressed by
+name, `healthCheck: {}`, `connectionLimit: 10`, four queries at once and
+then one every 100 ms through `cluster.query()`. While the name resolves to
+an address this host has no route to, a new connection ends with
+`ENETUNREACH`, and the connections that are open, the check connection
+among them, go on working. No check failed and no node was down in any of
+these runs.
+
+| New connections find no route | The pool of each node holds | Passive health | Queries rejected |
 | --- | --- | --- | --- |
-| For 100 ms | On, 10 runs of 7 s | 2 of 74 in each run | None |
-| For 100 ms | On, with a check that decides though it found no route, 10 runs of 7 s | 72 of 74 in each run | Both, from about 14 ms until the end of the run |
-| For 100 ms | Off, 1 run of 7 s | 2 of 74 | None |
-| For the whole run | On, 2 runs of 12 s | 2 of 124 in each run | One, by `fall` at about 5010 ms |
-| For the whole run | Off, 2 runs of 12 s | 3 of 124 in each run | None |
+| To both nodes, for 100 ms | One idle connection | On | 2 of 74 in each of 3 runs |
+| To both nodes, for 100 ms | One idle connection | Off | 2 of 74, 1 run |
+| To both nodes, for 100 ms | No connection | On | 4 of 73 in each of 3 runs |
+| To both nodes, for 100 ms | No connection | Off | 4 of 74, 1 run |
+| To both nodes, for the 12 s of the run | One idle connection | On | 2 of 124 in each of 2 runs |
+| To both nodes, for the 12 s of the run | One idle connection | Off | 2 of 124, 1 run |
+| To both nodes, for the 12 s of the run | No connection | On | 123 of 123 in each of 2 runs |
+| To both nodes, for the 12 s of the run | No connection | Off | 123 of 123, 1 run |
+| To one node, for the 12 s of the run | One idle connection | On | 0 of 124 in each of 2 runs |
+| To one node, for the 12 s of the run | No connection | On | 0 of 124 in each of 2 runs |
+| To one node, for the 12 s of the run | No connection | Off | 0 of 124, 1 run |
 
-In the fourth row each node failed the check that started at once. Five
-seconds later the check of the timer of one node met a pool whose one
-connection was out with a query. It had to open a connection, found no
-route and was the second of `fall`. The check of the other node drew its
-pooled connection and passed. In the last row a check of the timer failed
-the same way in one of the two runs, at about 10 s, and was the first of
-`fall`.
+- **A pool with an idle connection goes on serving.** One query at a time
+  needs no second connection. The two queries that were rejected are those
+  of the four at once that had to open one.
+- **A pool with no connection serves nothing**, and with the route gone to
+  both nodes every query is rejected for as long as it is gone. The pool of
+  a node holds no connection after `connect()`, see
+  [The check connection](#the-check-connection), and none after
+  `idleTimeout` closed the idle ones.
+- **With one node behind the missing route no query is lost.**
+  `cluster.query()` sends the query that failed there to the other node.
+  The node stays in rotation, so a query that tries it first pays for one
+  failed attempt. Here that was quick, the slowest query took 70 ms. A
+  connection that hangs in place of failing costs the connect timeout of
+  mysql2 per attempt, which was not measured.
 
-The same two moments are tests in
+The code before the check connection, with a check through the pool, was
+measured by the same probe: 2 of 74 and 2 of 124 rejected with the route
+gone to both nodes, in 6 and 4 runs, and 0 of 124 with one node, in 4 runs.
+There the check of a node failed with `ENETUNREACH` and did not decide, and
+with the route gone for the whole run a node was down by `fall` after about
+5 s in 7 of the 8 runs. That code was never released. Its check of
+`connect()` left one idle connection in each pool, so the rows of a pool
+with no connection have no run of it.
+
+The rule itself is a test in
 [tests/cluster/passive-health-loopback.test.ts](../../tests/cluster/passive-health-loopback.test.ts),
-with the pooled connection held so that every check has to open one. A
-route that is gone for a moment leaves both nodes up, and a route that
-stays gone takes the node down by `fall`.
+with the pooled connection held and the check connection dropped, so that
+every check has to open one. A route that is gone for a moment leaves both
+nodes up, and a route that stays gone takes the node down by `fall`.
 
 #### Coming back
 
@@ -698,13 +834,13 @@ check is the first of `fall`.
 | The abort of a `getConnection()` | The app gave the call up, whatever the reason of the signal reads like. A connection that then cannot be opened still counts, as the attempt was made |
 | An error on a connection the app took with `getConnection()` | The app owns that connection. The package does not see what it runs into |
 
-The status query of a check never counts either, though it runs through
-`Pool.query` like a query of the app. A failed check has rules of its own:
-`fall` and the refusal list. `PoolStatus` keeps the options object of each
-status query in a `WeakSet`, and `Pool.query` asks
-`PoolStatus.isCheckQuery(queryOptions)` before it copies the options. The
-object itself is what tells, not what it holds, so a query of the app with
-the same sql and the same options is a query of the app. The login that
+The status query of a check never counts either. A failed check has rules
+of its own: `fall` and the refusal list. The check of a node with the block
+asks on [the check connection](#the-check-connection) and never reaches
+`realFailure()`. A query of the app with the same sql is a query of the
+app: it goes through the pool. The check of a node without the block does
+run through `Pool.query`, and passive health does nothing for such a node.
+The login that
 reads the server version at `connect()` is not told to passive health
 either. The check of that `connect()` follows it at once.
 
@@ -737,10 +873,10 @@ right after a check that passed, and the call comes 1000 ms later.
 | Drops the connection of the call, then refuses connections | 0, with one check | 9000 |
 | Drops the connection of the call, then its checks hang | 5000, one `timeout` | 19000 |
 | Drops every packet: the call ends with the connect timeout, then its checks hang | 5000, one `timeout` | 19000 |
-| No route for the call, and none for its checks | 5000, by `fall` | 9000 |
+| No route for the call, and none for the connection its checks have to open | 5000, by `fall` | 9000 |
 | The same with `fall: 3` | 10000 | 14000 |
-| No route for the call, then its checks hang on a pooled connection | 5000, one `timeout` | 19000 |
-| Resets every connection, old and new | 10, the check and 10 more runs | 9000 |
+| No route for the call, then its checks hang on the check connection | 5000, one `timeout` | 19000 |
+| Resets every connection, old and new | 0, with one check | 9000 |
 
 - Without passive health the node is out at the `fall`th failed check,
   wherever the calls of the app fall: 10000 ms after it stopped with the
@@ -753,18 +889,17 @@ right after a check that passed, and the call comes 1000 ms later.
 - A lost connection costs one check. That check ends at once when the node
   refuses connections, and after `timeout` when it hangs: 1000 with
   `timeout: 1000`, and 5000 with `fall: 3` as well.
-- A missing route costs one check when that check draws a pooled connection
-  whose packets get no answer: the node is out after `timeout`. A check
+- A missing route costs one check when that check gets no answer on the
+  check connection: the node is out after `timeout`. A check
   that has to open a connection finds no route either and does not decide
   alone, so the node is out at the `fall`th failed check: the check of the
   timer one `interval` after the call with the defaults, and one more
   `interval` later with `fall: 3`. In return a route that is gone for a
   moment takes no healthy node down.
-- A node that resets every connection is out after the check and
-  `connectionLimit` more runs. Node gives a timer of 0 ms one ms, so the
-  fake clock shows 10 ms for the default limit and 3 ms for
-  `connectionLimit: 3`. On loopback, with a real reset per run, it took
-  65 ms in one run, and 9.9 s with `passive: false`.
+- A node that resets every connection is out with one check, which loses
+  the connection it held and the one it opens then: 0 ms on the fake
+  clock. On loopback, with real resets, see
+  [A check whose connection was lost](#a-check-whose-connection-was-lost).
 - A node that drops every packet is not seen by passive health on its open
   connections: a query that hangs ends with the query timeout, which never
   counts. A call that has to open a new connection to such a node ends with
@@ -790,8 +925,8 @@ right after a check that passed, and the call comes 1000 ms later.
   either. With `fall: 3` a route that stays gone takes the node down with
   the third check that finds none. The suite lets the waits of the check
   timer run out at once for that, so no clock is in it. A node that also
-  says nothing on its pooled connection is down with `passive_unreachable`
-  when the check that drew that connection runs into its `timeout`. The
+  says nothing on the check connection is down with `passive_unreachable`
+  when its check runs into its `timeout`. The
   address is the limited broadcast address, which Linux
   refuses for a TCP connection before a packet leaves the host. `EPIPE` and
   `EHOSTUNREACH` were not produced there. They are rows of the suite with
@@ -935,17 +1070,18 @@ Private members worth knowing about:
   is what `Pool` calls. `_decides` is `'lost'`, `'timeout'` or `'unreachable'`
   from a lost connection, a connect timeout or a missing route until a
   check decided: one that got its
-  answer, or one that failed and did not have to run again. `_reruns`
-  counts the runs of the check that decides in its row, and `_rerunLimit`
-  is their bound, `connectionLimit` and 50 at most. `_metLostConnection()`
-  says whether a failed check runs again. `_foundNoRoute()` says whether a
+  answer, or one that failed. `_foundNoRoute()` says whether a
   failed check found no route itself and so does not decide alone, and
   `_logUndecided()` writes its line. `_checksOut` counts the checks of
   the current run that are out, and `stopTimerCheck()` sets it to 0.
   `_holdOff` counts the checks that have to start before passive health may
   start one again: it is set to 2, for the check it started and the next
-  one of the timer. `_checkQueries` is the `WeakSet` of the options objects
-  of the status queries, and `isCheckQuery()` looks an object up in it.
+  one of the timer.
+- `_askNode()` sends the status query: through `Pool.query` for the legacy
+  check, through `_askOnCheckConnection()` for a node with the block. That
+  one reads `Pool.holdsCheckConnection` first, asks with
+  `Pool.checkQuery()`, and asks once more on a new connection when the one
+  the node held failed with a code of `_lostCodes`.
 - `_validator: Validator`, `_loadFactor: LoadFactor`, `_timer: Timer` —
   constructed once and reused for the lifetime of the pool
   ([PoolStatus.ts](../../src/pool/PoolStatus.ts)).
@@ -961,13 +1097,15 @@ Async, idempotent against the `active` flag. Sequence on every tick:
    ([PoolStatus.ts](../../src/pool/PoolStatus.ts)) — covers the window
    between `disconnect()` setting `active = false` and the timer
    actually firing.
-3. Run `await this._pool.query('SHOW GLOBAL STATUS;', { redis: false })`
-   ([PoolStatus.ts](../../src/pool/PoolStatus.ts)). `redis: false` is
-   important: the status poll must never go through the Redis cache
-   layer, or every pool would see the same cached snapshot. The options
-   object comes from `_checkOptions()`, which notes it so that `Pool.query`
-   knows this query is one of a check and tells none of its errors to
-   [passive health](#passive-health).
+3. Ask the node with `_askNode()`
+   ([PoolStatus.ts](../../src/pool/PoolStatus.ts)). The legacy check runs
+   `this._pool.query('SHOW GLOBAL STATUS;', { redis: false, timeout })`.
+   `redis: false` is important: the status poll must never go through the
+   Redis cache layer, or every pool would see the same cached snapshot. A
+   node with a `healthCheck` block runs
+   `this._pool.checkQuery('SHOW GLOBAL STATUS;')` on
+   [the check connection](#the-check-connection), which has no cache and
+   tells none of its errors to [passive health](#passive-health).
 4. End the timer and store it as `_queryTime` so the
    `query_time` custom validator key (below) can read it.
 5. `passed = this._validator.check(result)`. The legacy check sets
@@ -1031,8 +1169,14 @@ query's own timeout, so a hung connection is destroyed.
 
 For a node with a `healthCheck` block the timeout is `healthCheck.timeout`,
 which is its `interval` when left out: 5 s with the defaults of the block.
-`queryTimeout` and `timerCheckRange` have no part in it. The timer, the race
-and the timeout passed to the query work the same.
+`queryTimeout` and `timerCheckRange` have no part in it. The timer and the
+race work the same, with three differences. The check asks on
+[the check connection](#the-check-connection), so no wait for a connection
+of the pool is in the race. No timeout is passed to the query: when the
+timer fires the check waits one `setImmediate`, so an answer that is in the
+socket by then wins, and then it drops the check connection and fails. And
+a timer that fires after a `disconnect()` drops nothing, since the
+connection would be the one of a later `connect()`.
 
 A missing status key no longer throws: `Validator.check` logs the key by
 name and that validator fails, so the pool is marked invalid (see
