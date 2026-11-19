@@ -235,7 +235,7 @@ one query every 50 ms.
 
 | | Check through the pool | Check connection |
 | --- | --- | --- |
-| The node was down | 7528 to 7532 ms of the 10 s, from about 2 s on | Never |
+| The node was down | 7532 to 7545 ms of the 10 s, from about 2 s on | Never |
 | Queries rejected with `There is no pool that satisfies the parameters` | 151 of 199 | 0 |
 | Failed checks | 8 | 0 |
 | Checks the server answered | 11 | 19 |
@@ -654,15 +654,15 @@ forgot, three queries at once and then one every 100 ms through
 
 | | A check that drew from the pool and ran again | Check connection |
 | --- | --- | --- |
-| Queries rejected | 3 of 122 or 123 | 6 of 122 or 123 |
+| Queries rejected | 3 of 122 or 123 | 6 of 123 |
 | Nodes down | None | None |
 | Flows the proxy reset, per node | 6 | 7: the six of the pool and the check connection |
 
 The first column is the code as it was before the check connection, where
 a check that had to decide ran again and met one forgotten connection of
 the pool per run. That code was never released. A node behind a proxy that
-resets every connection, old and new, was down after 48 to 75 ms and 13 resets there, and
-is down after 11 to 34 ms and 4 resets with the check connection: the check lost the
+resets every connection, old and new, was down after 46 to 57 ms and 13 resets there, and
+is down after 18 to 28 ms and 4 resets with the check connection: the check lost the
 connection it held and the one it opened then (3 runs on each
 side).
 
@@ -758,11 +758,11 @@ these runs.
 | --- | --- | --- | --- |
 | To both nodes, for 100 ms | One idle connection | On | 2 of 74 in each of 3 runs |
 | To both nodes, for 100 ms | One idle connection | Off | 2 of 74, 1 run |
-| To both nodes, for 100 ms | No connection | On | 4 of 73 or 74 in each of 3 runs |
+| To both nodes, for 100 ms | No connection | On | 4 of 74 in each of 3 runs |
 | To both nodes, for 100 ms | No connection | Off | 4 of 74, 1 run |
 | To both nodes, for the 12 s of the run | One idle connection | On | 2 of 124 in each of 2 runs |
 | To both nodes, for the 12 s of the run | One idle connection | Off | 2 of 124, 1 run |
-| To both nodes, for the 12 s of the run | No connection | On | All of them, 123 and 124, in 2 runs |
+| To both nodes, for the 12 s of the run | No connection | On | All 123 in each of 2 runs |
 | To both nodes, for the 12 s of the run | No connection | Off | All 123, 1 run |
 | To one node, for the 12 s of the run | One idle connection | On | 0 of 124 in each of 2 runs |
 | To one node, for the 12 s of the run | No connection | On | 0 of 124 in each of 2 runs |
@@ -779,16 +779,17 @@ these runs.
 - **With one node behind the missing route no query is lost.**
   `cluster.query()` sends the query that failed there to the other node.
   The node stays in rotation, so a query that tries it first pays for one
-  failed attempt. Here that was quick, the slowest query took 73 ms. A
+  failed attempt. Here that was quick, the slowest query took 74 ms. A
   connection that hangs in place of failing costs the connect timeout of
   mysql2 per attempt, which was not measured.
 
 The code before the check connection, with a check through the pool, was
-measured by the same probe: 2 of 74 and 2 of 124 rejected with the route
-gone to both nodes, in 6 and 4 runs, and 0 of 124 with one node, in 4 runs.
+measured by the same probe: 2 of 74 and 2 or 3 of 124 rejected with the
+route gone to both nodes, in 6 and 4 runs, and 0 of 124 with one node, in 4
+runs.
 There the check of a node failed with `ENETUNREACH` and did not decide, and
 with the route gone for the whole run a node was down by `fall` after about
-5 s in each of the 8 runs. That code was never released. Its check of
+5 s in 7 of the 8 runs. That code was never released. Its check of
 `connect()` left one idle connection in each pool, so the rows of a pool
 with no connection have no run of it.
 
