@@ -143,7 +143,9 @@ What to know:
 - It never fires for a query of the app. Passive health of a node with a `healthCheck` block
   takes a node down, or starts a check, when a query of the app cannot open a connection or
   loses one. Neither emits an event. The check it starts emits this event when it fails,
-  like any check, with the error of that check and not the one of the query. See
+  like any check, with the error of that check and not the one of the query. A check that
+  met one more lost connection and runs again emits it once per run, so the event can come
+  several times within a few ms for a node that stays up. See
   [health-and-scoring.md](./subsystems/health-and-scoring.md#passive-health).
 - A listener that throws does not stop the health checks. The next check is set before the
   listeners run, and the thrown error is logged. Other listeners of the same event that were

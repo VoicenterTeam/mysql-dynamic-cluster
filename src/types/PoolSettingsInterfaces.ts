@@ -19,7 +19,8 @@ export interface IHealthCheckSettings {
     // Left out: the longer of 60000 and `interval`
     authRetryInterval?: number,
     // Passive health: a query or getConnection() of the app that cannot open a connection
-    // takes the node down at once, and one that loses its connection starts a check at once.
+    // takes the node down at once. One that loses its connection, or gets none within the
+    // connect timeout, starts a check at once, and that check decides.
     // Left out: true
     passive?: boolean
 }

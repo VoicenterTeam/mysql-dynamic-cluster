@@ -276,9 +276,8 @@ export class Pool {
                 settled = true;
                 queryTimer.end();
                 Metrics.recordOperation(queryTimer.get(), { ...poolMetricOption, error });
-                // Before the caller hears of it, so a retry of the cluster and every call
-                // after it see the node as it is now. Without a connection the error came
-                // instead of one
+                // Before the caller hears of it, so every call after this one sees the node
+                // as it is now. Without a connection the error came instead of one
                 if (real) this._status.realFailure(error, !conn);
                 Pool._handBack(conn, error);
                 reject(error);

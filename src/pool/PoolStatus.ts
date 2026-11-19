@@ -478,10 +478,10 @@ export class PoolStatus {
     /**
      * What a failed query or getConnection() of the app says about the node, if anything.
      * Only an error of the network does: `fatal` is true, the code is one of the two
-     * lists, the error has no errno of a server, and neither the package nor the app made
-     * it. Never by `fatal` alone: mysql2 marks a refused change of user, a TLS or
-     * auth plugin error and a protocol error as fatal too, and none of them says the node
-     * is gone. The place decides between the two kinds
+     * lists or the one of a timeout, the error has no errno of a server, and neither the
+     * package nor the app made it. Never by `fatal` alone: mysql2 marks a refused change
+     * of user, a TLS or auth plugin error and a protocol error as fatal too, and none of
+     * them says the node is gone. The place decides the kind as well
      * @param error what the call was rejected with
      * @param opening true when the error came instead of a connection, false when it came
      * on a connection the pool had handed out
