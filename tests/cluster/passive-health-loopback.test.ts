@@ -1,3 +1,4 @@
+import dns from 'dns';
 import mysql from 'mysql2';
 import net, { AddressInfo } from 'net';
 import { createPoolCluster } from '../../index';
@@ -9,6 +10,8 @@ import { Timer } from '../../src/utils/Timer';
 // the query, a deadlock and a refused login. The second half puts a TCP proxy in front of
 // the server and gives the pools ten connections, so a check can meet a pooled connection
 // the path forgot: there the errors are a real ECONNRESET and a real connect timeout.
+// The last part addresses the nodes by a name, and lets that name resolve to an address
+// this host has no route to: a real ENETUNREACH, with no packet that leaves the host.
 // The checks of the timer are ten minutes apart, so a status query that reaches the server
 // after the one of connect() is a check passive health started. Passive health acts inside
 // the callback that fails the call, so a test reads the node as soon as its call rejected
@@ -582,4 +585,97 @@ describe('a connect timeout of a call of the app', () => {
                 [[LONG, 0, LONG], [LONG, 0, LONG]]);
             expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
         });
+});
+
+// Two healthy nodes that the app addresses by name. The name resolves to the loopback
+// address, or to the limited broadcast address once `noRoute` is set: the kernel refuses a
+// TCP connection there with ENETUNREACH before any packet leaves, on Linux. The connections
+// a pool holds are not touched by that, as when a route is gone for a moment
+describe('nodes addressed by a name that this host has no route for', () => {
+    const NAMES = ['db-a.test', 'db-b.test'];
+    const NO_ROUTE = '255.255.255.255';
+    let noRoute: boolean;
+    let lookup: jest.SpyInstance;
+    beforeEach(() => {
+        noRoute = false;
+        const real = dns.lookup.bind(dns);
+        lookup = jest.spyOn(dns, 'lookup').mockImplementation(((name: string, ...rest: any[]) => {
+            return real(NAMES.includes(name) ? (noRoute ? NO_ROUTE : '127.0.0.1') : name, ...rest);
+        }) as any);
+    });
+    afterEach(() => lookup.mockRestore());
+
+    const byName = async (block: object = BLOCK) => {
+        const ports: number[] = [];
+        for (const _name of NAMES) ports.push((await listen('answers')).port);
+        const logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+        const cluster: any = createPoolCluster({
+            clusterName: 'test',
+            hosts: NAMES.map((host, i) => {
+                return { host, port: ports[i], id: i + 1, connectionLimit: POOLED };
+            }),
+            defaultPoolSettings: {
+                user: 'u', password: 'p', database: 'd', flags: [], healthCheck: block
+            },
+            useClusterHashing: false,
+            logger
+        } as any);
+        clusters.push(cluster);
+        await cluster.connect();
+        await cluster.ready;
+        const downs = (): string[] => logger.warn.mock.calls
+            .filter(([, meta]) => meta && meta.reason).map(([, meta]) => meta.reason);
+        return { cluster, downs };
+    };
+    // A call of the app that has to open a connection while there is no route: the one
+    // connection of the pool is held meanwhile. What the call was rejected with
+    const openWithNoRoute = async (cluster: any, index: number, giveBack: boolean) => {
+        const held = await cluster.pools[index].getConnection();
+        noRoute = true;
+        const error = await cluster.pools[index].getConnection()
+            .then((): any => undefined, (e: any) => e);
+        // Before the timer of the check that starts: the check draws this connection, which
+        // works, or it has to open one of its own
+        if (giveBack) held.release();
+        else closers.push(() => held.destroy());
+        return [error.code, error.errno < 0, error.fatal, isUp(cluster)[index]];
+    };
+
+    it('a call that finds no route leaves both nodes up: the check at once passes', async () => {
+        const { cluster, downs } = await byName();
+
+        const seen = [await openWithNoRoute(cluster, 0, true),
+            await openWithNoRoute(cluster, 1, true)];
+        await settled(cluster, 0);
+        await settled(cluster, 1);
+
+        // the code, an errno of the socket, fatal, and the node right after the call
+        const call = ['ENETUNREACH', true, true, true];
+        expect(seen).toEqual([call, call]);
+        expect([waitsOf(cluster, 0), waitsOf(cluster, 1)]).toEqual(
+            [[LONG, 0, LONG], [LONG, 0, LONG]]);
+        expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
+    });
+
+    it('a check that finds no route either takes that node down, and says why', async () => {
+        const { cluster, downs } = await byName();
+
+        const seen = await openWithNoRoute(cluster, 0, false);
+        await until(() => !isUp(cluster)[0], 'node 0 to go down', () => waitsOf(cluster, 0));
+
+        expect(seen).toEqual(['ENETUNREACH', true, true, true]);
+        // one check. fall is 3
+        expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG]);
+        expect(cluster.nodes()[0].checkError.code).toBe('ENETUNREACH');
+        expect([isUp(cluster), downs()]).toEqual([[false, true], ['passive_unreachable']]);
+    });
+
+    it('with passive false no check starts', async () => {
+        const { cluster } = await byName({ ...BLOCK, passive: false });
+
+        const seen = await openWithNoRoute(cluster, 0, false);
+
+        expect(seen).toEqual(['ENETUNREACH', true, true, true]);
+        expect([isUp(cluster), waitsOf(cluster, 0)]).toEqual([[true, true], [LONG]]);
+    });
 });
