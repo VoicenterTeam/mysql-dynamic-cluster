@@ -339,9 +339,17 @@ away from the app. The rules of the check are in
 - **`holdsCheckConnection`** is `true` while the node holds a connection:
   open, or logging in. `PoolStatus` reads it before a check asks, since
   only a connection held from before can be one the path forgot.
-- **`dropCheckConnection()`** destroys the connection and its socket, with
-  whatever was asked on it. `PoolStatus` calls it when a check ran into
-  its timeout, so no late answer comes on that connection.
+- **`checkQuery(sql, keeps, asked)`** fills `asked.drop` before it sends
+  anything: a function that destroys the connection this call went to,
+  with its socket and whatever was asked on it. `PoolStatus` calls it when
+  a check ran into its timeout, so no late answer comes on that
+  connection. It is the connection of that call and no other: after a
+  second `connect()` the node holds a new one, and a check that timed out
+  on the old one leaves the new one alone. A call that was asked again on
+  the connection of a second `connect()` gets the function for that one.
+- **`dropCheckConnection()`** destroys the connection the node holds at
+  that moment, with its socket. No code of the package calls it. The
+  loopback suite does, to leave a node without a connection.
 - **`checkQuery(sql, keeps)`**, with its second argument, sends the query
   on a new connection, opened beside the one the node holds. Once the new
   one logged in the node holds it and logs out of the old one. For a new
@@ -523,7 +531,7 @@ the waiting requests reject with it as before.
 | `stats()` | `() => { used, idle, pending }` | [`stats`](../../src/pool/Pool.ts) |
 | `checkError` | getter returning `INodeCheckError \| undefined` | [`checkError`](../../src/pool/Pool.ts) |
 | `holdsCheckConnection` | getter returning `boolean` | [`holdsCheckConnection`](../../src/pool/Pool.ts) |
-| `checkQuery<T>(sql, keeps?)` | `(sql: string, keeps?: (error: any) => boolean) => Promise<T>` | [`checkQuery`](../../src/pool/Pool.ts) |
+| `checkQuery<T>(sql, keeps?, asked?)` | `(sql: string, keeps?: (error: any) => boolean, asked?: { drop?: () => void }) => Promise<T>` | [`checkQuery`](../../src/pool/Pool.ts) |
 | `dropCheckConnection()` | `() => void` | [`dropCheckConnection`](../../src/pool/Pool.ts) |
 
 Consumers normally talk to `GaleraCluster`, not to `Pool` directly;

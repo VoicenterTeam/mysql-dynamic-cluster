@@ -194,7 +194,9 @@ leave the same way.
 - **A check that times out drops its connection.** The status query has no
   timeout of mysql2. The timer of the check ends it, and the connection is
   destroyed with its socket. No late answer comes on it, and the next
-  check opens a new one.
+  check opens a new one. It is the connection that check asked on. One the
+  node holds by then for another reason, after a second `connect()` whose
+  check already passed, is left alone.
 - **One turn of the event loop before a timeout counts.** Node runs a timer
   that is due before it reads its sockets. After a process stood still for
   longer than `timeout`, in a big JSON parse or a long GC pause, the timer
