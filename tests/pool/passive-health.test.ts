@@ -10,11 +10,11 @@ import { MeterProvider, MetricReader } from '@opentelemetry/sdk-metrics';
 import { createPoolCluster } from '../../index';
 
 // Passive health of a node that has a healthCheck block: what a query or a getConnection()
-// of the app runs into moves the node between two checks. A connection that cannot be
-// refused takes the node down at once. A connection that was lost, one that was not there
-// within the connect timeout and one that no route led to start a check at once, and that
-// check takes the node down when it fails. Nothing else counts, and the check itself never does. Every number
-// here is worked out by hand from the settings.
+// of the app runs into moves the node between two checks. A connection the node refuses
+// takes the node down at once. A connection that was lost, one that was not there within
+// the connect timeout and one that no route led to start a check at once, and that check
+// takes the node down when it fails. Nothing else counts, and the check itself never does.
+// Every number here is worked out by hand from the settings.
 // The cluster is the one an app gets from createPoolCluster. Only mysql2 is replaced, and
 // the clock is fake: a check that passive health starts is a request for a connection at
 // the fake time of the call that failed.

@@ -311,9 +311,9 @@ export class PoolStatus {
             // check, whatever `fall` is, and the next check waits authRetryInterval. Any
             // other failure counts toward `fall`. One failed check is enough as well when
             // a call of the app lost its connection, got none in time or found no route,
-            // since the last check that got its answer. But for a check that only met one more connection
-            // that was lost: it says nothing about the node, counts toward nothing and
-            // runs again at once
+            // since the last check that got its answer. But for a check that only met one
+            // more connection that was lost: it says nothing about the node, counts toward
+            // nothing and runs again at once
             const refused = this._refused();
             const again = !refused && this._metLostConnection();
             if (!again) {
@@ -538,8 +538,8 @@ export class PoolStatus {
      * - a connection the node refused takes the node down at once. It comes back as after
      *   any check that took it down: by `rise` passes, or its first pass since connect()
      * - a connection that was lost, one that was not there within the connect timeout and
-     *   one that no route led to leave the node up. The next check that fails takes it down, whatever `fall` is,
-     *   and a check that gets its answer ends that
+     *   one that no route led to leave the node up. The next check that fails takes it
+     *   down, whatever `fall` is, and a check that gets its answer ends that
      * Both start a check at once, in place of the one the timer was waiting for, unless a
      * check is out or passive health started one since the last check of the timer.
      * A check that has to decide and meets one more lost connection runs again, see
