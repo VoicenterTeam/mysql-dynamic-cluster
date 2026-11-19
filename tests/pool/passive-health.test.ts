@@ -11,9 +11,9 @@ import { createPoolCluster } from '../../index';
 
 // Passive health of a node that has a healthCheck block: what a query or a getConnection()
 // of the app runs into moves the node between two checks. A connection that cannot be
-// opened takes the node down at once. A connection that was lost starts a check at once,
-// and that check takes the node down when it fails. Nothing else counts, and the check
-// itself never does. Every number here is worked out by hand from the settings.
+// opened takes the node down at once. A connection that was lost, and one that was not
+// there within the connect timeout, start a check at once, and that check takes the node
+// down when it fails. Nothing else counts, and the check itself never does. Every number here is worked out by hand from the settings.
 // The cluster is the one an app gets from createPoolCluster. Only mysql2 is replaced, and
 // the clock is fake: a check that passive health starts is a request for a connection at
 // the fake time of the call that failed.
@@ -162,8 +162,6 @@ const failure = (at: string, error: () => any, then?: Failure): Failure => ({ at
 // The codes of a connection that could not be opened, with the errno of Linux
 const CONNECT: [string, number | undefined, string | undefined][] = [
     ['ECONNREFUSED', -111, 'connect'],
-    // the connect timeout of mysql2 itself: no errno
-    ['ETIMEDOUT', undefined, undefined],
     ['EHOSTUNREACH', -113, 'connect'],
     ['ENETUNREACH', -101, 'connect']
 ];
@@ -185,6 +183,9 @@ const LOST: [string, number | undefined, string | undefined][] = [
     ['ECONNRESET', -104, 'read'],
     ['EPIPE', -32, 'write']
 ];
+// the connect timeout of mysql2 itself: no errno. In place of a connection
+const timedOut = network('ETIMEDOUT');
+const TIMED_OUT = failure('open', timedOut);
 const refused = network('ECONNREFUSED', -111, 'connect');
 const reset = network('ECONNRESET', -104, 'read');
 const REFUSED = failure('open', refused);
@@ -295,15 +296,20 @@ describe('passive health: a connection that cannot be opened', () => {
         });
     });
 
-    // Told by the place too. A socket that timed out under a query has a code of this list,
-    // and is a lost connection: the node is up after the call, and down by the check
-    it.each(places(network('ETIMEDOUT', -110, 'read')))(
-        'ETIMEDOUT %s is a lost connection', async (_name, call, step) => {
-            const { node } = await hit(step, call, { fall: 3 }, [REFUSED]);
-            const atOnce = valid();
-            await pass(0);
+    // Told by the place too. A code of this list on a connection that was handed out, and
+    // a socket that timed out there, is a lost connection: the node is up after the call,
+    // and down by the check
+    describe.each([...CONNECT, ['ETIMEDOUT', -110, 'read']])(
+        '%s on a connection that was handed out', (code, errno, syscall) => {
+            it.each(places(network(code as string, errno as number, syscall as string)))(
+                '%s is a lost connection', async (_name, call, step) => {
+                    const { node } = await hit(step, call, { fall: 3 }, [REFUSED]);
+                    const atOnce = valid();
+                    await pass(0);
 
-            expect([atOnce, valid(), askedAt(node)]).toEqual([true, false, [0, 1000, 1000]]);
+                    expect([atOnce, valid(), askedAt(node)]).toEqual(
+                        [true, false, [0, 1000, 1000]]);
+                });
         });
 
     it('several addresses that all refuse: the code of the AggregateError counts', async () => {
@@ -325,6 +331,80 @@ describe('passive health: a connection that cannot be opened', () => {
         await direct().catch(() => { seen = valid(); });
 
         expect(seen).toBe(false);
+    });
+});
+
+describe('passive health: a connection that was not there in time', () => {
+    // The connect timeout of mysql2 has no errno, the one of the socket has. Nobody said
+    // the node is gone, so the node stays up and a check decides. fall is 3 throughout
+    const TIMEOUTS: [string, Step][] = [
+        ['the connect timeout of mysql2', TIMED_OUT],
+        ['the connect timeout of the socket',
+            failure('open', network('ETIMEDOUT', -110, 'connect'))]
+    ];
+    const ROWS = TIMEOUTS.flatMap(([name, step]) => {
+        return CALLS.map((call): [string, Call, Step] => [name, call, step]);
+    });
+
+    it.each(ROWS)('%s of %s leaves the node up and starts a check', async (_n, call, step) => {
+        const { node } = await hit(step, call, { fall: 3 }, ['hang']);
+        const atOnce = [valid(), askedAt(node)];
+        await pass(0);
+
+        expect(atOnce).toEqual([true, [0, 1000]]);
+        expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000]]);
+    });
+
+    it.each(ROWS)('%s of %s: one failed check takes the node down', async (_n, call, step) => {
+        await hit(step, call, { fall: 3 }, [REFUSED]);
+        await pass(0);
+
+        expect([valid(), info().checkError]).toEqual([false, REFUSED_CHECK]);
+    });
+
+    it.each(ROWS)('%s of %s: a check that passes leaves the node up', async (_n, call, step) => {
+        const { node } = await hit(step, call, { fall: 3 }, [PASS, 'hang']);
+        await pass(4999);
+
+        expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000]]);
+    });
+
+    it('a check that gets no connection in time either takes the node down', async () => {
+        await hit(TIMED_OUT, 'query', { fall: 3 }, [TIMED_OUT]);
+        await pass(0);
+
+        expect([valid(), info().checkError]).toEqual([false, { code: 'ETIMEDOUT' }]);
+    });
+
+    it('a check that hangs takes the node down at its timeout of 1000', async () => {
+        await hit(TIMED_OUT, 'query', { fall: 3, timeout: 1000 }, ['hang']);
+        await pass(999);
+        const before = valid();
+        await pass(1);
+
+        expect([before, valid(), info().checkError]).toEqual([true, false, {}]);
+    });
+
+    it('a pass ends it: the failed check after that is the first of three', async () => {
+        const { node } = await hit(TIMED_OUT, 'query', { fall: 3 }, [PASS, REFUSED, 'hang']);
+        await pass(5000);
+
+        expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000, 6000]]);
+    });
+
+    // What a process sees that stalled for longer than the connect timeout while its logins
+    // were out: a connect timeout for every node, though each of them answered
+    it('two healthy nodes and a connect timeout for each: both stay up', async () => {
+        const a = fakeNode([PASS, TIMED_OUT, PASS], 'node-a');
+        const b = fakeNode([PASS, TIMED_OUT, PASS], 'node-b');
+        await start({ healthCheck: {} }, [{ host: 'node-a' }, { host: 'node-b' }]);
+        await pass(1000);
+        await Promise.all([failed(direct(0)), failed(direct(1))]);
+        await pass(0);
+
+        expect([valid(0), valid(1)]).toEqual([true, true]);
+        expect([askedAt(a), askedAt(b)]).toEqual([[0, 1000, 1000], [0, 1000, 1000]]);
+        expect(changes().filter(([level]) => level === 'warn')).toEqual([]);
     });
 });
 
@@ -521,6 +601,7 @@ describe('passive health: the check itself never counts', () => {
             return [code + ' at its request for a connection',
                 failure('open', network(code, errno, syscall))];
         }),
+        ['ETIMEDOUT at its request for a connection', TIMED_OUT],
         ...LOST.map(([code, errno, syscall]): [string, Step] => {
             return [code + ' under its status query',
                 failure('query', network(code, errno, syscall))];
@@ -846,12 +927,11 @@ describe('passive health: next to the slow pace of a refused login', () => {
             // the high bits: the low ones of such a generator repeat after a few draws
             return list[Math.floor(seed / 65536) % list.length];
         };
-        const timedOut = failure('open', network('ETIMEDOUT'));
         const checks: Step[] = [PASS, PASS, NO, REFUSED, RESET, 'hang', DENIED, DENIED_OPEN,
-            timedOut, failure('open', tooMany), failure('query', limit)];
+            TIMED_OUT, failure('open', tooMany), failure('query', limit)];
         // half of the calls of the app pass
         const calls: Step[] = [PASS, PASS, PASS, PASS, PASS, REFUSED, RESET, DENIED,
-            failure('query', deadlock), timedOut];
+            failure('query', deadlock), TIMED_OUT];
         const node = fakeNode([PASS]);
         await start({ healthCheck: { rise: 1 } });
         const seen = { slow: 0, up: 0, upAndSlow: 0 };
@@ -1259,7 +1339,16 @@ describe('passive health: the log', () => {
             expect(changes()).toEqual([up1, down('passive_lost', code)]);
         });
 
+    it('a connect timeout and a failed check: one warn with the reason passive_timeout',
+        async () => {
+            await hit(TIMED_OUT, 'query', { fall: 3 }, [REFUSED]);
+            await pass(0);
+
+            expect(changes()).toEqual([up1, down('passive_timeout', 'ETIMEDOUT')]);
+        });
+
     it.each<[string, object, Step[], Step[], any[]]>([
+        ['a connect timeout whose check passes logs no line', {}, [TIMED_OUT], [PASS], [up1]],
         ['a lost connection whose check passes logs no line', {}, [RESET], [PASS], [up1]],
         ['a lost connection whose check a validator says no to: the line of the validator',
             {}, [RESET], [NO], [up1, ['warn', { pool, valid: false, reason: 'validator' }]]],
@@ -1293,6 +1382,7 @@ describe('passive health: the log', () => {
 
     it.each<[string, Step, object]>([
         ['a refused connection', REFUSED, { pool, passive: 'connect', code: 'ECONNREFUSED' }],
+        ['a connect timeout', TIMED_OUT, { pool, passive: 'timeout', code: 'ETIMEDOUT' }],
         ['a lost connection', RESET, { pool, passive: 'lost', code: 'ECONNRESET' }]
     ])('%s: one debug line for the check that starts', async (_name, step, wanted) => {
         await debugStart([step, PASS]);
@@ -1470,22 +1560,32 @@ describe('passive health: the time a dead node takes to leave rotation', () => {
         expect(await outAfter(wanted)).toEqual([wanted > 0, false, wanted]);
     });
 
-    // The connection the call was handed is lost, and from then on the node is as `how`
-    // says. One check decides: 0 ms when it is refused, its timeout when it hangs
-    it.each<[string, object, Step, number]>([
-        ['a lost connection, then connections refused: 0 ms', {}, REFUSED, 0],
-        ['a lost connection, then checks that hang: 5000 ms, one timeout', {}, 'hang', 5000],
-        ['the same with timeout 1000: 1000 ms', { timeout: 1000 }, 'hang', 1000],
-        ['the same with fall 3: 5000 ms', { fall: 3 }, 'hang', 5000],
+    // The connection the call was handed is lost, or the call gets none within the connect
+    // timeout, and from then on the node is as `how` says. One check decides: 0 ms when it
+    // is refused, its timeout when it hangs. A node that drops every packet is the connect
+    // timeout and checks that hang: the call itself waited the 10 s of mysql2 before this
+    it.each<[string, object, Step, Step, number]>([
+        ['a lost connection, then connections refused: 0 ms', {}, RESET, REFUSED, 0],
+        ['a lost connection, then checks that hang: 5000 ms, one timeout',
+            {}, RESET, 'hang', 5000],
+        ['the same with timeout 1000: 1000 ms', { timeout: 1000 }, RESET, 'hang', 1000],
+        ['the same with fall 3: 5000 ms', { fall: 3 }, RESET, 'hang', 5000],
         // without passive health: the checks at 15000 and 20000
         ['a lost connection, then connections refused, passive false: 9000 ms',
-            { passive: false }, REFUSED, 9000],
+            { passive: false }, RESET, REFUSED, 9000],
         // without passive health: the checks at 15000 and 25000, each hangs for 5000
         ['a lost connection and checks that hang, passive false: 19000 ms',
-            { passive: false }, 'hang', 19000]
-    ])('%s', async (_name, block, how, wanted) => {
-        await dying(block, RESET);
-        nodes['node-a'].plan = [RESET, how];
+            { passive: false }, RESET, 'hang', 19000],
+        ['a connect timeout, then checks that hang: 5000 ms, one timeout',
+            {}, TIMED_OUT, 'hang', 5000],
+        ['the same with timeout 1000: 1000 ms', { timeout: 1000 }, TIMED_OUT, 'hang', 1000],
+        ['the same with fall 3: 5000 ms', { fall: 3 }, TIMED_OUT, 'hang', 5000],
+        ['a connect timeout, then connections refused: 0 ms', {}, TIMED_OUT, REFUSED, 0],
+        ['a connect timeout and checks that hang, passive false: 19000 ms',
+            { passive: false }, TIMED_OUT, 'hang', 19000]
+    ])('%s', async (_name, block, first, how, wanted) => {
+        await dying(block, first);
+        nodes['node-a'].plan = [first, how];
 
         // up after the call, whatever `wanted` is: only a check takes this node down
         expect(await outAfter(wanted)).toEqual([true, false, wanted]);

@@ -19,6 +19,9 @@ import { INodeCheckError } from "../types/NodeInterfaces";
 import Metrics from "../metrics/Metrics";
 import { HealthCheckResult } from "../types/MetricsInterfaces";
 
+// why passive health took a node down, as the log names it
+type PassiveReason = 'passive_connect' | 'passive_lost' | 'passive_timeout';
+
 export class PoolStatus {
     public active: boolean;
     // Connections that can still be handed out, read from the pool
@@ -67,9 +70,10 @@ export class PoolStatus {
     // started and the next one of the timer. So it starts one check at most between two
     // checks of the timer, however many queries of the app fail
     private _holdOff: number = 0;
-    // Whether a query of the app lost its connection since the last check that got its
-    // answer. The next check that fails takes the node down, whatever `fall` is
-    private _lostConnection: boolean = false;
+    // Set when a call of the app lost its connection, or got none within the connect
+    // timeout, since the last check that got its answer: which of the two it was. The next
+    // check that fails takes the node down, whatever `fall` is
+    private _decides?: 'lost' | 'timeout';
     // The code of the last connection error of the app that passive health acted on, for
     // the log
     private _passiveCode?: string;
@@ -158,7 +162,7 @@ export class PoolStatus {
             this._slowRetry = false;
             // and what passive health kept of the life before
             this._holdOff = 0;
-            this._lostConnection = false;
+            this._decides = undefined;
         }
         this._timer.activate();
         Logger.debug("Check status in pool started");
@@ -255,8 +259,8 @@ export class PoolStatus {
             this._loadScore = this._loadFactor.check(result);
             Logger.debug("Load score by checking status in host " + this._pool.host + " is " + this._loadScore);
             this._failedChecks = 0;
-            // the node answered: a connection the app lost before says nothing any more
-            this._lostConnection = false;
+            // the node answered: what a call of the app ran into before says nothing any more
+            this._decides = undefined;
             if (this._healthCheck) {
                 // read before _upAfter() marks the pass
                 const reason = this._passedSinceStart ? 'rise' : 'first_pass';
@@ -281,14 +285,16 @@ export class PoolStatus {
             // With a healthCheck block a refused login takes the node down with this one
             // check, whatever `fall` is, and the next check waits authRetryInterval. Any
             // other failure counts toward `fall`. One failed check is enough as well when
-            // a query of the app lost its connection since the last check ended
+            // a call of the app lost its connection, or got none in time, since the last
+            // check that got its answer
             const refused = this._refused();
             if (refused) {
                 this._setValid(false, 'refusal');
             } else if (this._failedChecks >= this._fall) {
                 this._setValid(false, 'fall');
-            } else if (this._lostConnection) {
-                this._setValid(false, 'passive_lost');
+            } else if (this._decides) {
+                this._setValid(false,
+                    this._decides === 'timeout' ? 'passive_timeout' : 'passive_lost');
             }
             // The slow pace starts with a refusal and holds over the failed checks after
             // it that got no answer: a server can hold its refusal back for longer than a
@@ -317,12 +323,12 @@ export class PoolStatus {
      * @param reason what moved the node: `fall` failed checks in a row, a login or account
      * the server refused, a validator that said no, the first pass since connect() or
      * `rise` passes in a row. From passive health: a connection the app could not open, or
-     * one it lost and a failed check after it
+     * a failed check after a connection it lost or one it did not get in time
      * @private
      */
     private _setValid(
-        valid: boolean, reason: 'fall' | 'refusal' | 'validator' | 'first_pass' | 'rise'
-            | 'passive_connect' | 'passive_lost'
+        valid: boolean,
+        reason: 'fall' | 'refusal' | 'validator' | 'first_pass' | 'rise' | PassiveReason
     ) {
         const changed = valid !== this._isValid;
         this._isValid = valid;
@@ -349,6 +355,9 @@ export class PoolStatus {
         } else if (reason === 'passive_lost') {
             Logger.warn(pool + " went down: the app lost a connection to it and the check " +
                 "after that failed", { ...meta, code: this._passiveCode });
+        } else if (reason === 'passive_timeout') {
+            Logger.warn(pool + " went down: the app got no connection to it in time and " +
+                "the check after that failed", { ...meta, code: this._passiveCode });
         } else if (reason === 'first_pass') {
             Logger.info(pool + " is up: its first check since connect() passed", meta);
         } else {
@@ -407,18 +416,29 @@ export class PoolStatus {
     }
 
     // The codes of a connection that could not be opened: nothing listens on the port, no
-    // answer within the connect timeout of mysql2, no route to the host or to its network.
+    // route to the host or to its network. The node, or the path to it, said so itself.
     // ENOTFOUND is not here, and neither is EAI_AGAIN: a name lookup is shared by every
     // node the app addresses by name, so a resolver that fails for a moment says nothing
     // about one node
     private static readonly _connectCodes: ReadonlySet<string> = new Set([
-        'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH'
+        'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH'
     ]);
+    // No answer in time: the connect timeout of mysql2, or the one of the socket. Nobody
+    // said the node is gone. The timer of mysql2 covers the whole login and is due as well
+    // after this process stalled for that long, whatever the node answered
+    private static readonly _timeoutCode = 'ETIMEDOUT';
     // The codes of a connection that was lost: closed by the server as mysql2 reports it,
     // reset, and written to after the other side closed it
     private static readonly _lostCodes: ReadonlySet<string> = new Set([
         'PROTOCOL_CONNECTION_LOST', 'ECONNRESET', 'EPIPE'
     ]);
+
+    // what a call of the app ran into, for the debug line of the check that starts
+    private static readonly _ranInto = {
+        connect: "could not open a connection",
+        timeout: "got no connection in time",
+        lost: "lost a connection"
+    };
 
     /**
      * What a failed query or getConnection() of the app says about the node, if anything.
@@ -430,14 +450,14 @@ export class PoolStatus {
      * @param error what the call was rejected with
      * @param opening true when the error came instead of a connection, false when it came
      * on a connection the pool had handed out
-     * @returns 'connect' for a code of the first list while a connection was being opened.
-     * 'lost' for a code of either list on a connection that was handed out, and for a code
-     * of the second list while one was being opened. Otherwise undefined
+     * @returns 'connect' for a code of the first list while a connection was being opened,
+     * and 'timeout' for ETIMEDOUT there. 'lost' for any of those codes on a connection that
+     * was handed out, and for a code of the second list at either place. Otherwise undefined
      * @private
      */
     private static _connectionFailure(
         error: any, opening: boolean
-    ): 'connect' | 'lost' | undefined {
+    ): 'connect' | 'timeout' | 'lost' | undefined {
         try {
             if (Object(error) !== error || PoolStatus._ownErrors.has(error)) return undefined;
             // read all three before any is used, as _reduce() does
@@ -446,8 +466,10 @@ export class PoolStatus {
             // Node gives an error of a socket a negative errno. A positive one is a server's
             if (Number.isInteger(errno) && errno > 0) return undefined;
             const connect = PoolStatus._connectCodes.has(code);
+            const timeout = code === PoolStatus._timeoutCode;
             if (opening && connect) return 'connect';
-            return connect || PoolStatus._lostCodes.has(code) ? 'lost' : undefined;
+            if (opening && timeout) return 'timeout';
+            return connect || timeout || PoolStatus._lostCodes.has(code) ? 'lost' : undefined;
         } catch (unreadable) {
             return undefined;
         }
@@ -461,8 +483,9 @@ export class PoolStatus {
      * - a connection that could not be opened takes the node down at once. It comes back
      *   as after any check that took it down: by `rise` passes, or its first pass since
      *   connect()
-     * - a connection that was lost leaves the node up. The next check that fails takes it
-     *   down, whatever `fall` is, and a check that gets its answer ends that
+     * - a connection that was lost, and one that was not there within the connect timeout,
+     *   leave the node up. The next check that fails takes it down, whatever `fall` is,
+     *   and a check that gets its answer ends that
      * Both start a check at once, in place of the one the timer was waiting for, unless a
      * check is out or passive health started one since the last check of the timer.
      * It never brings a node up, sets no checkError and emits no event.
@@ -484,14 +507,13 @@ export class PoolStatus {
             this._passedChecks = 0;
             this._setValid(false, 'passive_connect');
         } else {
-            this._lostConnection = true;
+            this._decides = kind;
         }
 
         if (this._checkOut === this._checkRun || this._holdOff > 0) return;
         // the check this starts, and the next one of the timer
         this._holdOff = 2;
-        Logger.debug("Pool " + this._pool.name + ": the app " +
-            (kind === 'connect' ? "could not open a connection" : "lost a connection") +
+        Logger.debug("Pool " + this._pool.name + ": the app " + PoolStatus._ranInto[kind] +
             ", the next check starts now", { pool: this._pool.name, passive: kind, code });
         // In place of the pending check. It does nothing once stopTimerCheck() ran
         this._timer.start(0);
