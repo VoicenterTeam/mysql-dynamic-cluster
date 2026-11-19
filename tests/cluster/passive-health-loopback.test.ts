@@ -202,6 +202,7 @@ const clusters: any[] = [];
 afterEach(() => clusters.splice(0).forEach(cluster => cluster.disconnect()));
 
 // every wait the check timer of a node was started with, in order
+const timerStart = Timer.prototype.start;
 let started: jest.SpyInstance;
 beforeEach(() => {
     started = jest.spyOn(Timer.prototype, 'start');
@@ -633,6 +634,15 @@ describe('nodes addressed by a name that this host has no route for', () => {
             .filter(([, meta]) => meta && meta.reason).map(([, meta]) => meta.reason);
         return { cluster, downs, failedChecks };
     };
+    // The next `count` waits of ten minutes that a check timer is started with are over at
+    // once, so a test gets that many checks of the timer without a clock. The spy records
+    // the wait as it was asked for. Every wait after them is ten minutes again
+    const timerDue = (count: number) => {
+        let left = count;
+        started.mockImplementation(function (this: Timer, ms: number) {
+            return timerStart.call(this, ms === LONG && left-- > 0 ? 0 : ms);
+        });
+    };
     // A call of the app that has to open a connection while there is no route: the one
     // connection of the pool is held meanwhile. What the call was rejected with
     const openWithNoRoute = async (cluster: any, index: number, giveBack: boolean) => {
@@ -681,6 +691,35 @@ describe('nodes addressed by a name that this host has no route for', () => {
             expect([waitsOf(cluster, 0), waitsOf(cluster, 1)]).toEqual(
                 [[LONG, 0, LONG], [LONG, 0, LONG]]);
             expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
+        });
+
+    it('once the route is back the queries pass, at both nodes', async () => {
+        const { cluster } = await byName();
+        await openWithNoRoute(cluster, 0, false);
+        await openWithNoRoute(cluster, 1, false);
+        await settled(cluster, 0);
+        await settled(cluster, 1);
+
+        noRoute = false;
+        const later = [await burst(cluster, 0, 3), await burst(cluster, 1, 3)];
+
+        const passed: string[] = [undefined, undefined, undefined];
+        expect([later, isUp(cluster)]).toEqual([[passed, passed], [true, true]]);
+    });
+
+    it('a route that stays gone: down by fall, with the third check that finds none',
+        async () => {
+            const { cluster, downs, failedChecks } = await byName();
+            // the two checks of the timer after the one passive health starts
+            timerDue(2);
+
+            const seen = await openWithNoRoute(cluster, 0, false);
+            await until(() => !isUp(cluster)[0], 'node 0 to go down', () => waitsOf(cluster, 0));
+
+            expect(seen).toEqual(['ENETUNREACH', true, true, true]);
+            expect(failedChecks[0]).toEqual(['ENETUNREACH', 'ENETUNREACH', 'ENETUNREACH']);
+            expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG, LONG, LONG]);
+            expect([isUp(cluster), downs()]).toEqual([[false, true], ['fall']]);
         });
 
     it('with passive false no check starts', async () => {
