@@ -74,6 +74,11 @@ export class PoolStatus {
     // timeout, since the last check that got its answer: which of the two it was. The next
     // check that fails takes the node down, whatever `fall` is
     private _decides?: 'lost' | 'timeout';
+    // How many times in a row the check that decides ran again, because it met a
+    // connection that was lost itself. 0 outside such a row
+    private _reruns: number = 0;
+    // The most of them. See _metLostConnection()
+    private readonly _rerunLimit: number;
     // The code of the last connection error of the app that passive health acted on, for
     // the log
     private _passiveCode?: string;
@@ -133,6 +138,10 @@ export class PoolStatus {
         this._fall = 2;
         // complete as well: Settings.mixSettings filled in every key the app left out
         this._healthCheck = settings.healthCheck as IHealthCheck | undefined;
+        // mysql2: a connectionLimit of 0 means no limit
+        this._rerunLimit = Math.min(
+            settings.connectionLimit || PoolStatus._mostReruns, PoolStatus._mostReruns
+        );
         if (this._healthCheck) {
             this._checkTimeout = this._healthCheck.timeout;
             this._fall = this._healthCheck.fall;
@@ -163,6 +172,7 @@ export class PoolStatus {
             // and what passive health kept of the life before
             this._holdOff = 0;
             this._decides = undefined;
+            this._reruns = 0;
         }
         this._timer.activate();
         Logger.debug("Check status in pool started");
@@ -212,7 +222,8 @@ export class PoolStatus {
             if (!this.active) return;
             // for passive health: a check is out, and one more check started
             this._checkOut = run;
-            if (this._holdOff > 0) this._holdOff--;
+            // a check that runs again is the same check to the hold-off
+            if (this._holdOff > 0 && !this._reruns) this._holdOff--;
 
             Logger.debug("checking pool status in host: " + this._pool.host);
             queryTimer.start();
@@ -261,6 +272,7 @@ export class PoolStatus {
             this._failedChecks = 0;
             // the node answered: what a call of the app ran into before says nothing any more
             this._decides = undefined;
+            this._reruns = 0;
             if (this._healthCheck) {
                 // read before _upAfter() marks the pass
                 const reason = this._passedSinceStart ? 'rise' : 'first_pass';
@@ -281,20 +293,28 @@ export class PoolStatus {
             Logger.error("Something wrong while checking status in host: " + this._pool.host +
                 ".\n Message: " + PoolStatus._errorText(err));
             this._passedChecks = 0;
-            this._failedChecks++;
             // With a healthCheck block a refused login takes the node down with this one
             // check, whatever `fall` is, and the next check waits authRetryInterval. Any
             // other failure counts toward `fall`. One failed check is enough as well when
             // a call of the app lost its connection, or got none in time, since the last
-            // check that got its answer
+            // check that got its answer. But for a check that only met one more connection
+            // that was lost: it says nothing about the node, counts toward nothing and
+            // runs again at once
             const refused = this._refused();
-            if (refused) {
-                this._setValid(false, 'refusal');
-            } else if (this._failedChecks >= this._fall) {
-                this._setValid(false, 'fall');
-            } else if (this._decides) {
-                this._setValid(false,
-                    this._decides === 'timeout' ? 'passive_timeout' : 'passive_lost');
+            const again = !refused && this._metLostConnection();
+            if (!again) {
+                this._failedChecks++;
+                if (refused) {
+                    this._setValid(false, 'refusal');
+                } else if (this._failedChecks >= this._fall) {
+                    this._setValid(false, 'fall');
+                } else if (this._decides) {
+                    this._setValid(false,
+                        this._decides === 'timeout' ? 'passive_timeout' : 'passive_lost');
+                }
+                // a check that had to decide did: the checks after it count as any check
+                this._decides = undefined;
+                this._reruns = 0;
             }
             // The slow pace starts with a refusal and holds over the failed checks after
             // it that got no answer: a server can hold its refusal back for longer than a
@@ -305,7 +325,11 @@ export class PoolStatus {
             this._queryTime = queryTimer.get();
 
             try {
-                this.nextCheckStatus(true, this._slowRetry)
+                if (again) {
+                    this._checkAgain();
+                } else {
+                    this.nextCheckStatus(true, this._slowRetry)
+                }
                 this._emitCheckFailed(err);
             } finally {
                 // the last step here too, after the next check is set and the app was told.
@@ -488,6 +512,8 @@ export class PoolStatus {
      *   and a check that gets its answer ends that
      * Both start a check at once, in place of the one the timer was waiting for, unless a
      * check is out or passive health started one since the last check of the timer.
+     * A check that has to decide and meets one more lost connection runs again, see
+     * _metLostConnection().
      * It never brings a node up, sets no checkError and emits no event.
      * It starts no check during the slow pace of a refused login either: a node the server
      * refused is down, and stays down until a check got its answer, which ends that pace
@@ -510,12 +536,49 @@ export class PoolStatus {
             this._decides = kind;
         }
 
-        if (this._checkOut === this._checkRun || this._holdOff > 0) return;
+        // a check that is about to run again is out too
+        if (this._checkOut === this._checkRun || this._reruns > 0 || this._holdOff > 0) return;
         // the check this starts, and the next one of the timer
         this._holdOff = 2;
         Logger.debug("Pool " + this._pool.name + ": the app " + PoolStatus._ranInto[kind] +
             ", the next check starts now", { pool: this._pool.name, passive: kind, code });
         // In place of the pending check. It does nothing once stopTimerCheck() ran
+        this._timer.start(0);
+    }
+
+    // The most times a check that decides runs again. A pool with no limit, or with a
+    // larger one, stops here: each run is a new login when no idle connection is left
+    private static readonly _mostReruns = 100;
+
+    /**
+     * Whether the check that just failed has to decide and only met another connection
+     * that was lost: its error has a code of the lost kind. A path that forgot its idle
+     * flows resets every pooled connection at its next use, the one of the check as the
+     * one of the app, and none of those resets says the node is gone. mysql2 hands out
+     * the idle connection it got back last and drops a broken one from the pool, so each
+     * run uses one of them up, and the run after the last opens a new connection, which
+     * gets an answer of the node. A pool holds connectionLimit connections at most and
+     * the app's own call met one of them, so that many runs are more than enough. A
+     * check that still fails this way after them decides: the node resets new
+     * connections too
+     * @private
+     */
+    private _metLostConnection(): boolean {
+        return this._decides !== undefined && this._reruns < this._rerunLimit
+            && PoolStatus._lostCodes.has(this._checkError.code);
+    }
+
+    /**
+     * Run the check that decides once more, at once: the run that just failed met a
+     * connection that was lost. The checks of the timer go on after the run that ends it
+     * @private
+     */
+    private _checkAgain() {
+        this._checkOut = undefined;
+        this._reruns++;
+        Logger.debug("Pool " + this._pool.name + ": the check met a connection that was " +
+            "lost as well, it runs again now",
+            { pool: this._pool.name, rerun: this._reruns, code: this._checkError.code });
         this._timer.start(0);
     }
 

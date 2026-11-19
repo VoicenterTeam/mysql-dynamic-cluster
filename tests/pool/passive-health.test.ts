@@ -13,7 +13,8 @@ import { createPoolCluster } from '../../index';
 // of the app runs into moves the node between two checks. A connection that cannot be
 // opened takes the node down at once. A connection that was lost, and one that was not
 // there within the connect timeout, start a check at once, and that check takes the node
-// down when it fails. Nothing else counts, and the check itself never does. Every number here is worked out by hand from the settings.
+// down when it fails. Nothing else counts, and the check itself never does. Every number
+// here is worked out by hand from the settings.
 // The cluster is the one an app gets from createPoolCluster. Only mysql2 is replaced, and
 // the clock is fake: a check that passive health starts is a request for a connection at
 // the fake time of the call that failed.
@@ -455,6 +456,374 @@ describe('passive health: a connection that was lost', () => {
         await pass(0);
 
         expect([atOnce, valid(), askedAt(node)]).toEqual([true, false, [0, 1000, 1000]]);
+    });
+});
+
+describe('passive health: a check that meets one more lost connection', () => {
+    // A path that forgot its idle flows resets every pooled connection at its next use.
+    // The check that decides draws on the same pool, so its error can be one more of them.
+    // It says nothing about the node: the check runs again, at once.
+    // The fake clock gives a timer of 0 ms that was set inside a timer 1 ms, as Node does
+    // for every timer of 0 ms: here each run comes 1 ms after the run before it
+    const MET: [string, Step][] = LOST.flatMap(([code, errno, syscall]): [string, Step][] => {
+        const error = network(code, errno, syscall);
+        return [
+            [code + ' at its change of user', failure('changeUser', error)],
+            [code + ' under its status query', failure('query', error)],
+            [code + ' in place of a connection', failure('open', error)]
+        ];
+    });
+    // the call of the app at 1000 loses its connection, then the checks end as `checks` say
+    const lostThen = async (checks: Step[], pool: object = {}, block: object = { fall: 3 }) => {
+        const node = fakeNode([PASS, RESET, ...checks]);
+        await start({ ...pool, healthCheck: block });
+        await pass(1000);
+        await failed(direct());
+        return node;
+    };
+    const downBy = (reason: string, code: string) => {
+        return ['warn', { pool, valid: false, reason, code }];
+    };
+
+    it.each(MET)('%s: the node stays up and the check runs again at once', async (_n, step) => {
+        const node = await lostThen([step, 'hang']);
+        await pass(1);
+
+        // the call, the check at once and its second run
+        expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000, 1001]]);
+    });
+
+    it.each(MET)('%s, then an answer: up, and the next check comes when due', async (_n, step) => {
+        const node = await lostThen([step, step, PASS, 'hang']);
+        await pass(5001);
+        const before = askedAt(node);
+        await pass(1);
+
+        // one interval after the run that got its answer, at 1002
+        expect([valid(), before]).toEqual([true, [0, 1000, 1000, 1001, 1002]]);
+        expect(askedAt(node).slice(-1)).toEqual([6002]);
+    });
+
+    // how the row of runs ends. Each run before the last met a lost connection
+    const refusedLogin = { code: 'ER_ACCESS_DENIED_ERROR', errno: 1045, sqlState: '28000' };
+    it.each<[string, Step, boolean, object | undefined, number]>([
+        ['a pass', PASS, true, undefined, 5000],
+        ['a validator that says no', NO, false, undefined, 5000],
+        ['a connection that cannot be opened', REFUSED, false, REFUSED_CHECK, 5000],
+        ['a connect timeout', TIMED_OUT, false, { code: 'ETIMEDOUT' }, 5000],
+        ['a login the server refuses', DENIED, false, refusedLogin, 60000]
+    ])('two such runs, then %s', async (_name, last, isUp, checkError, wait) => {
+        const node = await lostThen([RESET, RESET, last, 'hang']);
+        await pass(2 + wait - 1);
+        const before = askedAt(node);
+        await pass(1);
+
+        expect([valid(), info().checkError]).toEqual([isUp, checkError]);
+        expect(before).toEqual([0, 1000, 1000, 1001, 1002]);
+        expect(askedAt(node).slice(-1)).toEqual([1002 + wait]);
+    });
+
+    it('two such runs, then a check that hangs: down at its timeout of 1000', async () => {
+        await lostThen([RESET, RESET, 'hang'], {}, { fall: 3, timeout: 1000 });
+        await pass(1001);
+        const before = valid();
+        await pass(1);
+
+        expect([before, valid(), info().checkError]).toEqual([true, false, {}]);
+    });
+
+    describe('counts toward nothing', () => {
+        it('fall 2 and two such runs: the node is still up', async () => {
+            const node = await lostThen([RESET, RESET, 'hang'], {}, {});
+            await pass(2);
+
+            expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000, 1001, 1002]]);
+        });
+
+        it('fall 2, one such run, then a refused connection: down by the check that decided',
+            async () => {
+                await lostThen([RESET, REFUSED, 'hang'], {}, {});
+                await pass(1);
+
+                // not by the count of failed checks: this was the first that counts
+                expect(changes()).toEqual([up1, downBy('passive_lost', 'ECONNRESET')]);
+            });
+
+        it('fall 2: after the row ended with a pass, one failed check leaves the node up',
+            async () => {
+                const node = await lostThen([RESET, RESET, PASS, REFUSED, 'hang'], {}, {});
+                await pass(5002);
+
+                expect([valid(), askedAt(node)]).toEqual(
+                    [true, [0, 1000, 1000, 1001, 1002, 6002]]);
+            });
+    });
+
+    describe('is bounded by the connections the pool may hold', () => {
+        // every check meets a lost connection: a node that resets each new connection too
+        it.each<[string, object, number]>([
+            ['a connectionLimit of 3: the check and 3 more runs', { connectionLimit: 3 }, 4],
+            ['the default limit of 10: the check and 10 more runs', {}, 11],
+            ['a connectionLimit of 1: the check and 1 more run', { connectionLimit: 1 }, 2],
+            ['a pool without a limit: the check and 100 more runs', { connectionLimit: 0 }, 101],
+            ['a connectionLimit of 500: the check and 100 more runs',
+                { connectionLimit: 500 }, 101]
+        ])('%s, then the node is down', async (_name, limits, runs) => {
+            const node = await lostThen([RESET], limits);
+            await pass(runs - 2);
+            const before = valid();
+            await pass(5000);
+
+            // up until the last run, 1 ms after the one before it. No run follows it:
+            // the next check is the one of the timer, an interval later
+            expect([before, valid(), info().checkError]).toEqual([true, false, RESET_CHECK]);
+            expect(askedAt(node)).toEqual(
+                [0, 1000, ...Array.from({ length: runs }, (_, i) => 1000 + i)]);
+            expect(changes().slice(-1)).toEqual([downBy('passive_lost', 'ECONNRESET')]);
+        });
+
+        it('a connectionLimit of 3 and 3 such runs, then a pass: the node is up', async () => {
+            const node = await lostThen(
+                [RESET, RESET, RESET, PASS, 'hang'], { connectionLimit: 3 });
+            await pass(3);
+
+            expect([valid(), askedAt(node)]).toEqual(
+                [true, [0, 1000, 1000, 1001, 1002, 1003]]);
+        });
+
+        it('the checks after the one that decided come at the interval again', async () => {
+            const node = await lostThen([RESET], { connectionLimit: 1 });
+            await pass(10001);
+
+            // the node is down: a check that fails the same way runs once per interval
+            expect(askedAt(node)).toEqual([0, 1000, 1000, 1001, 6001, 11001]);
+        });
+
+        it('a new row gets the whole bound again', async () => {
+            // down after 2 runs, back by the passes at 6001 and 11001. Then one more lost
+            // connection: the check at once meets one too, and its second run passes
+            const checks: Step[] = [RESET, RESET, PASS, PASS, RESET, RESET, PASS, 'hang'];
+            const node = await lostThen(checks, { connectionLimit: 1 }, {});
+            await pass(10001);
+            const back = valid();
+            await failed(direct());
+            await pass(1);
+
+            expect([back, valid()]).toEqual([true, true]);
+            expect(askedAt(node).slice(6)).toEqual([11001, 11001, 11002]);
+        });
+    });
+
+    describe('next to the other rules', () => {
+        it('after a connect timeout the check runs again the same way', async () => {
+            const node = fakeNode([PASS, TIMED_OUT, RESET, RESET, PASS, 'hang']);
+            await start({ healthCheck: { fall: 3 } });
+            await pass(1000);
+            await failed(direct());
+            await pass(2);
+
+            expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000, 1001, 1002]]);
+        });
+
+        it('after a connect timeout, such a run and a check that hangs: down, and why',
+            async () => {
+                fakeNode([PASS, TIMED_OUT, RESET, 'hang']);
+                await start({ healthCheck: { fall: 3 } });
+                await pass(1000);
+                await failed(direct());
+                await pass(5001);
+
+                expect(changes().slice(-1)).toEqual([downBy('passive_timeout', 'ETIMEDOUT')]);
+            });
+
+        it('a check of the timer that has to decide runs again as well', async () => {
+            // the first lost connection starts a check, which passes. The second one, in
+            // the same interval, starts none: the check of the timer at 6000 decides
+            const node = await lostThen([PASS, RESET, RESET, RESET, PASS, 'hang']);
+            await pass(1000);
+            await failed(direct());
+            await pass(4002);
+
+            expect([valid(), askedAt(node)]).toEqual(
+                [true, [0, 1000, 1000, 2000, 6000, 6001, 6002]]);
+        });
+
+        it('the runs are one check to the hold-off: the next lost connection starts none',
+            async () => {
+                const node = await lostThen([RESET, RESET, PASS, RESET, 'hang']);
+                await pass(1000);
+                await failed(direct());
+                await pass(1);
+
+                expect(askedAt(node)).toEqual([0, 1000, 1000, 1001, 1002, 2000]);
+            });
+
+        it('a lost connection of the app between two runs starts no check of its own',
+            async () => {
+                // As above: the check of the timer at 6000 decides, and the hold-off has
+                // run down by then. A listener of the app loses a connection after the
+                // first run, while the second one is about to start
+                fakeNode([PASS, RESET, PASS, RESET, RESET, RESET, PASS, 'hang']);
+                cluster = createPoolCluster({
+                    ...settingsOf({ healthCheck: { fall: 3 } }), logs: { level: 'debug' }
+                });
+                await connect();
+                let calls = 0;
+                cluster.on('pool_check_failed', () => {
+                    if (!calls++) direct().catch((): void => undefined);
+                });
+                for (const ms of [1000, 1000]) {
+                    await pass(ms);
+                    await failed(direct());
+                }
+                await pass(4001);
+
+                // one line of a check that passive health started: the one at 1000
+                const lines = logger.debug.mock.calls.map(([, meta]) => meta)
+                    .filter(meta => meta && meta.passive);
+                expect([valid(), calls, lines.length]).toEqual([true, 1, 1]);
+            });
+
+        it('a lost connection of the app while a run is out starts no check', async () => {
+            const node = await lostThen([RESET, 'held', RESET, 'hang']);
+            await pass(1);
+            await failed(direct());
+            await pass(1);
+            const during = askedAt(node);
+            node.held[0](null, PASS);
+            await pass(1);
+
+            expect([valid(), during]).toEqual([true, [0, 1000, 1000, 1001, 1001]]);
+            expect(askedAt(node)).toEqual(during);
+        });
+
+        it('without a call of the app that failed, such a check counts as any other', async () => {
+            const node = fakeNode([PASS, RESET, RESET, 'hang']);
+            await start({ healthCheck: {} });
+            await pass(10000);
+
+            // two failed checks, each when it was due: down by fall
+            expect([valid(), askedAt(node)]).toEqual([false, [0, 5000, 10000]]);
+            expect(changes().slice(-1)).toEqual(
+                [['warn', { pool, valid: false, reason: 'fall' }]]);
+        });
+
+        it('once the check decided, the next one that fails the same way waits its turn',
+            async () => {
+                const node = await lostThen([REFUSED, RESET, 'hang']);
+                await pass(9999);
+
+                expect([valid(), askedAt(node)]).toEqual([false, [0, 1000, 1000, 6000]]);
+            });
+
+        it('a refused connection of the app is no reason to run a check again', async () => {
+            const { node } = await hit(REFUSED, 'query', {}, [RESET, 'hang']);
+            await pass(4999);
+
+            expect([valid(), askedAt(node)]).toEqual([false, [0, 1000, 1000]]);
+        });
+
+        it('an error that reads as both: the refusal of the server wins', async () => {
+            const both = () => Object.assign(reset(), { errno: 1045 });
+            const node = await lostThen([failure('changeUser', both), 'hang']);
+            await pass(59999);
+            const before = askedAt(node);
+            await pass(1);
+
+            expect([valid(), before]).toEqual([false, [0, 1000, 1000]]);
+            expect(askedAt(node)).toEqual([0, 1000, 1000, 61000]);
+        });
+
+        it.each<[string, object]>([
+            ['passive false', { healthCheck: { passive: false } }],
+            ['no block', { timerCheckRange: { start: 5000, end: 5000 } }]
+        ])('%s: a check that meets a lost connection never runs again', async (_n, settings) => {
+            const node = fakeNode([PASS, RESET, RESET, RESET, 'hang']);
+            await start(settings);
+            await pass(1000);
+            await failed(direct());
+            await pass(9000);
+
+            expect([valid(), askedAt(node)]).toEqual([false, [0, 1000, 5000, 10000]]);
+        });
+
+        it('a disconnect() before the next run: no run, the node is kept', async () => {
+            const node = await lostThen([RESET, 'hang']);
+            await pass(0);
+            await cluster.disconnect();
+            await pass(60000);
+
+            expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000]]);
+        });
+
+        it('a disconnect() while a run is out: its failure is dropped', async () => {
+            const node = await lostThen([RESET, 'held', 'hang']);
+            await pass(1);
+            await cluster.disconnect();
+            node.held[0](reset());
+            await pass(60000);
+
+            expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000, 1001]]);
+        });
+
+        it('a new connect() starts the count of the runs again', async () => {
+            // One run, then a disconnect() and a connect(), whose check passes. The next
+            // lost connection: the check and one more run, as the limit of 1 allows
+            const node = await lostThen(
+                [RESET, 'held', PASS, RESET, RESET, RESET, 'hang'], { connectionLimit: 1 });
+            await pass(1);
+            await cluster.disconnect();
+            await connect();
+            await failed(direct());
+            await pass(1);
+
+            expect([valid(), node.asked.length]).toEqual([false, 8]);
+        });
+    });
+
+    describe('is a failed check to the app', () => {
+        it('each run sets checkError, and the answer clears it', async () => {
+            const node = await lostThen([RESET, 'held', 'hang']);
+            await pass(1);
+            const during = info().checkError;
+            node.held[0](null, PASS);
+            await pass(0);
+
+            expect([during, info().checkError]).toEqual([RESET_CHECK, undefined]);
+        });
+
+        it('each run emits pool_check_failed', async () => {
+            const seen: string[] = [];
+            const broken = failure('changeUser', network('EPIPE', -32, 'write'));
+            await lostThen([RESET, broken, PASS, 'hang']);
+            cluster.on('pool_check_failed', (args: any[]) => seen.push(args[0].code));
+            await pass(2);
+
+            expect(seen).toEqual(['ECONNRESET', 'EPIPE']);
+        });
+
+        it('each run logs one debug line with its number and the code', async () => {
+            fakeNode([PASS, RESET, RESET, RESET, PASS, 'hang']);
+            cluster = createPoolCluster({
+                ...settingsOf({ healthCheck: {} }), logs: { level: 'debug' }
+            });
+            await connect();
+            await failed(direct());
+            await pass(2);
+
+            const lines = logger.debug.mock.calls.map(([, meta]) => meta)
+                .filter(meta => meta && meta.rerun);
+            expect(lines).toEqual([
+                { pool, rerun: 1, code: 'ECONNRESET' }, { pool, rerun: 2, code: 'ECONNRESET' }
+            ]);
+        });
+
+        it('no line about the state of a node that stayed up', async () => {
+            await lostThen([RESET, RESET, PASS, 'hang']);
+            await pass(2);
+
+            expect(changes()).toEqual([up1]);
+        });
     });
 });
 
