@@ -1,12 +1,14 @@
 import mysql from 'mysql2';
-import { AddressInfo } from 'net';
+import net, { AddressInfo } from 'net';
 import { createPoolCluster } from '../../index';
 import { Timer } from '../../src/utils/Timer';
 
 // The cluster of createPoolCluster and the real mysql2 against mysql2's own server class on
 // the loopback interface. It shows what passive health does with the errors mysql2 really
 // hands a query of the app: a refused connection, a connection the server dropped under
-// the query, a deadlock and a refused login.
+// the query, a deadlock and a refused login. The second half puts a TCP proxy in front of
+// the server and gives the pools ten connections, so a check can meet a pooled connection
+// the path forgot: there the errors are a real ECONNRESET and a real connect timeout.
 // The checks of the timer are ten minutes apart, so a status query that reaches the server
 // after the one of connect() is a check passive health started. Passive health acts inside
 // the callback that fails the call, so a test reads the node as soon as its call rejected
@@ -114,6 +116,71 @@ const listen = async (mode: Mode): Promise<IServer> => {
         hangUp,
         logins: () => seen.logins,
         checks: () => seen.checks
+    };
+};
+
+// What the path to a server does. 'passes' hands every byte on. 'resets' answers a new
+// connection with a reset. 'swallows' takes a new connection and never says a word on it,
+// as a path that drops packets does
+type Path = 'passes' | 'resets' | 'swallows';
+interface IProxy {
+    port: number,
+    // Forget the open flows without telling either side, as a balancer or a firewall does
+    // after its idle timeout. The next bytes of the client on such a flow get a reset, or
+    // no answer when the path swallows. New connections go on as the path says
+    forget: () => void,
+    // change the path, and forget the open flows
+    become: (next: Path) => void,
+    // how many connections this proxy reset
+    resets: () => number
+}
+const proxyTo = async (target: number): Promise<IProxy> => {
+    let path: Path = 'passes';
+    let resets = 0;
+    const flows = new Set<{ client: net.Socket, upstream?: net.Socket, forgotten: boolean }>();
+    // a reset, not a close: mysql2 drops a pooled connection that was closed, before any use
+    const reset = (client: net.Socket) => {
+        resets++;
+        (client as any).resetAndDestroy();
+    };
+    const server = net.createServer(client => {
+        client.on('error', () => undefined);
+        if (path === 'resets') return reset(client);
+        const flow = { client, upstream: undefined as net.Socket, forgotten: false };
+        flows.add(flow);
+        client.on('close', () => {
+            flows.delete(flow);
+            flow.upstream?.destroy();
+        });
+        client.on('data', data => {
+            if (!flow.forgotten) return flow.upstream?.write(data);
+            if (path !== 'swallows') reset(client);
+        });
+        if (path === 'swallows') return;
+        flow.upstream = net.connect(target, '127.0.0.1');
+        flow.upstream.on('error', () => undefined);
+        flow.upstream.on('data', data => client.write(data));
+        flow.upstream.on('close', () => {
+            if (!flow.forgotten) client.destroy();
+        });
+    });
+    const forget = () => flows.forEach(flow => {
+        flow.forgotten = true;
+        flow.upstream?.destroy();
+    });
+    closers.push(() => {
+        server.close();
+        flows.forEach(flow => flow.client.destroy());
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    return {
+        port: (server.address() as AddressInfo).port,
+        forget,
+        become: (next: Path) => {
+            path = next;
+            forget();
+        },
+        resets: () => resets
     };
 };
 
@@ -309,4 +376,210 @@ describe('a healthCheck node whose server answers a query of the app with an err
         // up, no check started and none reached the server but the one of connect()
         expect([node(cluster), timerWaits(), server.checks()]).toEqual([UP, [LONG], 1]);
     });
+});
+
+// Two nodes, each behind a proxy of its own, with ten connections per pool as the default
+// is. fall is 3 and the checks of the timer are ten minutes apart, so a node that goes down
+// here went down by passive health
+const POOLED = 10;
+const behindProxies = async (block: object = BLOCK) => {
+    const proxies: IProxy[] = [];
+    for (let i = 0; i < 2; i++) proxies.push(await proxyTo((await listen('answers')).port));
+    const logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    const cluster: any = createPoolCluster({
+        clusterName: 'test',
+        hosts: proxies.map(({ port }, i) => {
+            return { host: '127.0.0.1', port, id: i + 1, connectionLimit: POOLED };
+        }),
+        defaultPoolSettings: {
+            user: 'u', password: 'p', database: 'd', flags: [], healthCheck: block
+        },
+        useClusterHashing: false,
+        logger
+    } as any);
+    clusters.push(cluster);
+    await cluster.connect();
+    // connect() is over with the first node that passed its check. This waits for both
+    await cluster.ready;
+    // every check that failed, by node: the code it failed with
+    const failedChecks: string[][] = [[], []];
+    cluster.on('pool_check_failed', ([error, id]: [any, number]) => {
+        failedChecks[id - 1].push(error.code);
+    });
+    // the reason of every line a node logged about going down
+    const downs = (): string[] => logger.warn.mock.calls
+        .filter(([, meta]) => meta && meta.reason).map(([, meta]) => meta.reason);
+    return { cluster, proxies, failedChecks, downs };
+};
+// open `count` connections in every pool and hand them back, so they sit idle in the pool
+const idle = async (cluster: any, count: number) => {
+    for (const pool of cluster.pools) {
+        const held = await Promise.all(Array.from({ length: count }, () => pool.getConnection()));
+        held.forEach((connection: any) => connection.release());
+    }
+    expect(cluster.getPoolStats().map((stats: any) => stats.idle)).toEqual([count, count]);
+};
+// the waits the check timer of one node was started with
+const waitsOf = (cluster: any, index: number): number[] => {
+    const timer = cluster.pools[index].status._timer;
+    return started.mock.calls.filter((_call, i) => started.mock.instances[i] === timer)
+        .map(([ms]) => ms);
+};
+const isUp = (cluster: any): boolean[] => cluster.nodes().map((info: any) => info.isValid);
+// `count` queries of the app at once, straight to the pool of one node. What each was
+// rejected with, by code, or undefined for a query that passed
+const burst = (cluster: any, index: number, count: number): Promise<string[]> => {
+    return Promise.all(Array.from({ length: count }, () => {
+        return cluster.pools[index].query(APP_SQL, { timeout: 0 })
+            .then((): any => undefined, (error: any) => error.code);
+    }));
+};
+// the check timer of a node waits for its interval again: no check is out or about to run
+const settled = (cluster: any, index: number) => {
+    const waits = () => waitsOf(cluster, index);
+    return until(() => waits().length > 1 && waits().slice(-1)[0] === LONG,
+        'the checks of node ' + index + ' to settle', waits);
+};
+
+describe('two healthy nodes whose idle pooled connections the path forgot', () => {
+    // six idle connections per pool, forgotten. Three queries at once take three of them
+    const stale = async () => {
+        const rig = await behindProxies();
+        await idle(rig.cluster, 6);
+        rig.proxies.forEach(proxy => proxy.forget());
+        return rig;
+    };
+
+    it('lose the queries that met such a connection, and no node goes down', async () => {
+        const { cluster, downs } = await stale();
+
+        const rejected = [await burst(cluster, 0, 3), await burst(cluster, 1, 3)];
+        await settled(cluster, 0);
+        await settled(cluster, 1);
+
+        const reset = ['ECONNRESET', 'ECONNRESET', 'ECONNRESET'];
+        expect(rejected).toEqual([reset, reset]);
+        expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
+    });
+
+    it('the check runs again for each one that is left, then gets its answer', async () => {
+        const { cluster, proxies, failedChecks } = await stale();
+
+        await burst(cluster, 0, 3);
+        await settled(cluster, 0);
+
+        // three for the queries. The check at once met the other three, one per run, and
+        // its fourth run opened a new connection
+        expect(failedChecks[0]).toEqual(['ECONNRESET', 'ECONNRESET', 'ECONNRESET']);
+        expect(waitsOf(cluster, 0)).toEqual([LONG, 0, 0, 0, 0, LONG]);
+        expect([proxies[0].resets(), cluster.nodes()[0].checkError]).toEqual([6, undefined]);
+    });
+
+    it('every broken connection left the pool: the queries after it all pass', async () => {
+        const { cluster, proxies } = await stale();
+        await burst(cluster, 0, 3);
+        await settled(cluster, 0);
+
+        const later = await burst(cluster, 0, 2 * POOLED);
+
+        expect(later.filter(code => code !== undefined)).toEqual([]);
+        // the pool holds what those queries opened, and no flow was reset since
+        expect([cluster.getPoolStats()[0].idle, proxies[0].resets()]).toEqual([POOLED, 6]);
+    });
+
+    it('through cluster.query: no node goes down, and the queries after it pass', async () => {
+        const { cluster, downs } = await stale();
+        const ask = () => cluster.query(APP_SQL, undefined, { timeout: 0 })
+            .then(() => 'passed', () => 'rejected');
+
+        // each of the three meets a forgotten connection, at one node or at both
+        await Promise.all([ask(), ask(), ask()]);
+        await settled(cluster, 0);
+        await settled(cluster, 1);
+        const later: string[] = [];
+        for (let i = 0; i < 20; i++) later.push(await ask());
+
+        expect(later).toEqual(Array(20).fill('passed'));
+        expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
+    });
+
+    it('with passive false no check starts, as before', async () => {
+        const rig = await behindProxies({ ...BLOCK, passive: false });
+        await idle(rig.cluster, 6);
+        rig.proxies.forEach(proxy => proxy.forget());
+
+        const rejected = await burst(rig.cluster, 0, 3);
+
+        expect(rejected).toEqual(['ECONNRESET', 'ECONNRESET', 'ECONNRESET']);
+        expect([isUp(rig.cluster), waitsOf(rig.cluster, 0)]).toEqual([[true, true], [LONG]]);
+    });
+});
+
+describe('a node that is dead for real behind its proxy', () => {
+    it('resets every connection: down after one run per connection the pool may hold',
+        async () => {
+            const { cluster, proxies, failedChecks, downs } = await behindProxies();
+            await idle(cluster, 6);
+            proxies[0].become('resets');
+
+            const rejected = await burst(cluster, 0, 1);
+            await until(() => !isUp(cluster)[0], 'node 0 to go down', () => waitsOf(cluster, 0));
+
+            // The check and ten more runs, no wait between them: five met the idle
+            // connections that were left, six a new connection that was reset
+            expect(rejected).toEqual(['ECONNRESET']);
+            expect(failedChecks[0]).toEqual(Array(POOLED + 1).fill('ECONNRESET'));
+            expect(waitsOf(cluster, 0)).toEqual([LONG, ...Array(POOLED + 1).fill(0), LONG]);
+            expect([isUp(cluster), downs()]).toEqual([[false, true], ['passive_lost']]);
+        });
+});
+
+// mysql2 gives a new connection 10 s for its login. 300 ms here, set where the pool is made
+const CONNECT_TIMEOUT = 300;
+
+describe('a connect timeout of a call of the app', () => {
+    let createPool: jest.SpyInstance;
+    beforeEach(() => {
+        const real = mysql.createPool.bind(mysql);
+        createPool = jest.spyOn(mysql, 'createPool').mockImplementation(((options: any) => {
+            return real({ ...options, connectTimeout: CONNECT_TIMEOUT });
+        }) as any);
+    });
+    afterEach(() => createPool.mockRestore());
+
+    it('a path that swallows every packet: down when the check at once times out', async () => {
+        const { cluster, proxies, downs } = await behindProxies({ ...BLOCK, timeout: 200 });
+        // the call holds the one connection of the pool, so the next one has to open its own
+        const held = await cluster.pools[0].getConnection();
+        proxies[0].become('swallows');
+
+        const error = await cluster.pools[0].getConnection()
+            .then((): any => undefined, (e: any) => e);
+        const atOnce = isUp(cluster)[0];
+        await until(() => !isUp(cluster)[0], 'node 0 to go down', () => waitsOf(cluster, 0));
+        held.destroy();
+
+        expect([error.code, error.fatal, atOnce]).toEqual(['ETIMEDOUT', true, true]);
+        // one check, which got no connection within its 200 ms. fall is 3
+        expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG]);
+        expect([isUp(cluster), downs()]).toEqual([[false, true], ['passive_timeout']]);
+    });
+
+    it('a process that stalls past the timer while a login is out: no node goes down',
+        async () => {
+            const { cluster, downs } = await behindProxies();
+            // Two queries per node: the second has to open a connection. Then this thread
+            // sleeps past the connect timer, which is due before the answer is read
+            const calls = [0, 0, 1, 1].map(index => burst(cluster, index, 1));
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, CONNECT_TIMEOUT + 100);
+            const rejected = (await Promise.all(calls)).map(([code]) => code);
+            await settled(cluster, 0);
+            await settled(cluster, 1);
+
+            expect(rejected).toEqual([undefined, 'ETIMEDOUT', undefined, 'ETIMEDOUT']);
+            // one check at once per node, which passed
+            expect([waitsOf(cluster, 0), waitsOf(cluster, 1)]).toEqual(
+                [[LONG, 0, LONG], [LONG, 0, LONG]]);
+            expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
+        });
 });
