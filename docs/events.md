@@ -147,7 +147,8 @@ What to know:
   like any check, with the error of that check and not the one of the query. A check that
   met one more lost connection and runs again emits it once per run, so the event can come
   several times within a few ms for a node that stays up: `connectionLimit` times at most
-  and never more than 50. See
+  and never more than 50. A check that finds no route itself emits it once and leaves the
+  node up, unless it is the `fall`th failed check in a row. See
   [health-and-scoring.md](./subsystems/health-and-scoring.md#passive-health).
 - A listener that throws does not stop the health checks. The next check is set before the
   listeners run, and the thrown error is logged. Other listeners of the same event that were

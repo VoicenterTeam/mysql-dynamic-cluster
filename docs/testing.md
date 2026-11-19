@@ -36,7 +36,7 @@ tests/
     check-error.test.ts          # checkError over fake pools: nodes(), the results of ready and firstReady
     check-error-loopback.test.ts # checkError with the real mysql2 on loopback: refused login, timeouts, reconnect
     health-check-refusal-loopback.test.ts # A healthCheck node whose login the real mysql2 sees refused on loopback: down at once, the next login after authRetryInterval, a refusal held back past the timeout
-    passive-health-loopback.test.ts # Passive health with the real mysql2 on loopback: a refused connection, a connection dropped under a query, a deadlock, a refused login. Behind a TCP proxy, with ten connections per pool: idle connections the path forgot, a path that resets or swallows everything, a process that stalls past the connect timer. By name: a name that resolves to an address with no route, for a real ENETUNREACH
+    passive-health-loopback.test.ts # Passive health with the real mysql2 on loopback: a refused connection, a connection dropped under a query, a deadlock, a refused login. Behind a TCP proxy, with ten connections per pool: idle connections the path forgot, a path that resets or swallows everything, a process that stalls past the connect timer. By name: a name that resolves to an address with no route, for a real ENETUNREACH of a call and of the check after it
     query.test.ts                # GaleraCluster.query() shapes: no values, scalar, array, named, timeout (stale)
   configs/
     settings.test.ts             # Settings schema: defaults, strict validation, mixSettings, no env reading
@@ -67,7 +67,7 @@ tests/
     reconnect-checks.test.ts     # A pool connected, disconnected and connected again is checked again
     health-check-legacy.test.ts  # Health check as 4.6.0 runs it: waits, timeout, down and up, time to leave rotation
     health-check.test.ts         # Health check with a healthCheck block: interval, timeout, fall, rise, refused logins, authRetryInterval and its slow pace, settings, timing
-    passive-health.test.ts       # Passive health of a healthCheck node: the four kinds of error from query, transaction and getConnection, the check that runs again on a lost connection and its bound, what never counts, one check at a time, fall and rise, passive false, the legacy check, timing
+    passive-health.test.ts       # Passive health of a healthCheck node: the four kinds of error from query, transaction and getConnection, the check that runs again on a lost connection and its bound, the check that finds no route itself and counts toward fall, what never counts, one check at a time, fall and rise, passive false, the legacy check, timing
     node-api.test.ts             # Pool.getConnection, failWaiting and stats over a mocked mysql2 pool
     get-connection-signal.test.ts # Pool.getConnection with a signal over a mocked mysql2 pool: queue, login, listener, reason
   toolchain/
