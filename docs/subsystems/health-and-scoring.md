@@ -1030,7 +1030,7 @@ check is the first of `fall`.
 | A name that does not resolve, `ENOTFOUND`. A resolver that does not answer, `EAI_AGAIN` | A name lookup is shared by every node the app addresses by name. A resolver that fails for a moment says nothing about one node, and the connections the pools hold keep working. Not counted at either place |
 | `EADDRNOTAVAIL`, `ECONNABORTED`, `EHOSTDOWN`, `ENETDOWN` | Not among the codes above. The set is closed: a code of the network that is not named there changes nothing |
 | A refused login: 1045 and the rest of the [refusal list](#a-login-or-account-refusal) | The node answered. mysql2 marks it `fatal` when it comes at the change of user that every query sends first, so `fatal` alone decides nothing. The next check gets the same answer and applies its own rule |
-| Too many connections, 1040. An account at its limit, 1226. A node that is not ready, 1047 | The node answered. The check and the validators decide |
+| Too many connections, 1040. An account at its limit, 1226. A node that is not ready, 1047 | The node answered. The check and the validators decide. For 1040 that means the node stays up: the check passes on the connection it holds, and only a check that has to open a connection sees 1040. See below |
 | The query timeout of mysql2, `PROTOCOL_SEQUENCE_TIMEOUT` | The app stopped waiting. A slow query is not a dead node, and the error is not `fatal` |
 | `HANDSHAKE_NO_SSL_SUPPORT`, `HANDSHAKE_SSL_ERROR`, `AUTH_SWITCH_PLUGIN_ERROR`, `PROTOCOL_ERROR` | `fatal` in mysql2, but about the settings of the connection or one packet. A check that runs into the same error counts it toward `fall` |
 | `Can't add new command when connection is in closed state` | `fatal`, with no code. The connection was closed on this side |
@@ -1038,6 +1038,21 @@ check is the first of `fall`.
 | `POOL_NOT_CONNECTED`, the timeout of the package around the change of database, an error passed to `failWaiting()` | The package or the app made it, whatever `code` and `fatal` it carries |
 | The abort of a `getConnection()` | The app gave the call up, whatever the reason of the signal reads like. A connection that then cannot be opened still counts, as the attempt was made |
 | An error on a connection the app took with `getConnection()` | The app owns that connection. The package does not see what it runs into |
+
+**A server at its connection limit stays in rotation.** The server
+refuses every new connection with 1040 and goes on answering on the ones
+that are open, the check connection among them. So the checks pass, the
+node is up, and every call that has to open a connection is rejected with
+1040. Measured with the real mysql2 on loopback, by a probe that is not
+part of the suite, 3 runs per side: one node whose server answers every
+new connection with 1040 from one moment on,
+`healthCheck: { interval: 500 }`, a pool that holds no connection, 20
+queries 150 ms apart. All 20 were rejected, the server answered 5 checks
+in that time, no check failed, the node was up and `checkError` unset.
+With the check through the pool, before this change, the check of
+`connect()` had left one connection in the pool: 1 or 2 of the 20 were
+rejected, one check failed with 1040, and the node was up as well. The
+review of this change measured the same with a probe of its own.
 
 The status query of a check never counts either. A failed check has rules
 of its own: `fall` and the refusal list. The check of a node with the block
