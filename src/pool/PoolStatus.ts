@@ -485,14 +485,16 @@ export class PoolStatus {
      * @param error what the call was rejected with
      * @param opening true when the error came instead of a connection, false when it came
      * on a connection the pool had handed out
-     * @returns 'connect' for a code of the first list while a connection was being opened,
-     * and 'timeout' for ETIMEDOUT there. 'lost' for any of those codes on a connection that
-     * was handed out, and for a code of the second list at either place. Otherwise undefined
+     * @returns the kind, and the code it was told by, read once: a second read of a field
+     * of the error could throw. The kind is 'connect' for a code of the first list while a
+     * connection was being opened, and 'timeout' for ETIMEDOUT there. 'lost' for any of
+     * those codes on a connection that was handed out, and for a code of the second list
+     * at either place. Otherwise undefined
      * @private
      */
     private static _connectionFailure(
         error: any, opening: boolean
-    ): 'connect' | 'timeout' | 'lost' | undefined {
+    ): { kind: 'connect' | 'timeout' | 'lost', code: string } | undefined {
         try {
             if (Object(error) !== error || PoolStatus._ownErrors.has(error)) return undefined;
             // read all three before any is used, as _reduce() does
@@ -502,9 +504,10 @@ export class PoolStatus {
             if (Number.isInteger(errno) && errno > 0) return undefined;
             const connect = PoolStatus._connectCodes.has(code);
             const timeout = code === PoolStatus._timeoutCode;
-            if (opening && connect) return 'connect';
-            if (opening && timeout) return 'timeout';
-            return connect || timeout || PoolStatus._lostCodes.has(code) ? 'lost' : undefined;
+            if (opening && connect) return { kind: 'connect', code };
+            if (opening && timeout) return { kind: 'timeout', code };
+            const lost = connect || timeout || PoolStatus._lostCodes.has(code);
+            return lost ? { kind: 'lost', code } : undefined;
         } catch (unreadable) {
             return undefined;
         }
@@ -534,10 +537,10 @@ export class PoolStatus {
     public realFailure(error: unknown, opening: boolean): void {
         const block = this._healthCheck;
         if (!block || !block.passive || !this.active || !this._isValid) return;
-        const kind = PoolStatus._connectionFailure(error, opening);
-        if (!kind) return;
+        const failure = PoolStatus._connectionFailure(error, opening);
+        if (!failure) return;
 
-        const code: string = (error as any).code;
+        const { kind, code } = failure;
         this._passiveCode = code;
         if (kind === 'connect') {
             // the passes before this do not count toward `rise`

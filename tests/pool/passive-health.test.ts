@@ -1899,6 +1899,45 @@ describe('passive health: what stays as it was', () => {
         expect(await cluster.firstReady).toEqual([{ nodeId: 0, ok: true }]);
     });
 
+    // mysql2 builds no such errors. A throw out of passive health would come between the
+    // mark that the call settled and its rejection, and the call would never settle
+    it('the code of an error is read once: a second read that throws is never made', async () => {
+        let reads = 0;
+        const forged = {
+            fatal: true,
+            get code() {
+                if (reads++) throw new Error('second read');
+                return 'ECONNRESET';
+            }
+        };
+        const node = fakeNode([PASS, 'hang']);
+        await start({ healthCheck: {} });
+
+        // as Pool tells it of a call that failed on a connection it was handed
+        cluster.pools[0].status.realFailure(forged, false);
+        await pass(0);
+
+        // a lost connection as any other: the check at once
+        expect([reads, valid(), node.asked.length]).toEqual([1, true, 2]);
+    });
+
+    it('an error whose code throws at every read reaches the app, and changes nothing',
+        async () => {
+            const forged = {
+                fatal: true,
+                get code(): string { throw new Error('unreadable'); }
+            };
+            const node = fakeNode([PASS, failure('query', () => forged), REFUSED]);
+            await start({ healthCheck: {} });
+            await pass(1000);
+            // straight to the pool, which rejects with what mysql2 handed it
+            const error = await failed(direct());
+            await pass(0);
+
+            expect(error === forged).toBe(true);
+            expect([valid(), askedAt(node)]).toEqual([true, [0, 1000]]);
+        });
+
     it('the error of the call reaches the app as it did', async () => {
         fakeNode([PASS, REFUSED, PASS]);
         await start({ healthCheck: { passive: false } });
