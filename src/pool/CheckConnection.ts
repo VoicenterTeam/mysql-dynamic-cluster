@@ -75,15 +75,23 @@ export class CheckConnection {
     }
 
     /**
+     * Log out of the connection that is held, so the next query opens a new one. A query
+     * that is out on it gets its answer first
+     */
+    public renew(): void {
+        const held = this._held;
+        this._held = undefined;
+        if (held) logOut(held.connection);
+    }
+
+    /**
      * Log out and open no connection again. A query that is out gets its answer first
      * @param replacedBy the connection that takes the place of this one, if any
      */
     public close(replacedBy?: CheckConnection): void {
         this._closed = true;
         this._replacedBy = replacedBy;
-        const held = this._held;
-        this._held = undefined;
-        if (held) logOut(held.connection);
+        this.renew();
     }
 
     private _open() {

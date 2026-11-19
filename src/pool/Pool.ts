@@ -736,6 +736,14 @@ export class Pool {
     }
 
     /**
+     * Log out of the check connection, so the check that asks next opens a new one and
+     * finds out whether a new connection reaches the node
+     */
+    public renewCheckConnection(): void {
+        this._check?.renew();
+    }
+
+    /**
      * Count a connect() call, and tell its caller that no health check of that call is recorded
      * yet. The first check of the call says so when it is recorded. A call that is given up
      * before its check, or whose check is dropped, leaves it at that

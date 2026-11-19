@@ -137,9 +137,14 @@ const makeNode = (steps: Step[]) => {
             };
             connection.destroy = jest.fn();
             connection.stream = { destroy: jest.fn() };
-            connection.end = () => later(() => connection.emit('end'));
+            connection.end = () => {
+                node.loggedOut++;
+                later(() => connection.emit('end'));
+            };
             return connection;
         },
+        // how many check connections the node logged out of
+        loggedOut: 0,
         // the fake time of every request for a connection: the checks and the app's own
         asked: [] as number[],
         // every sql that reached a connection of this node
@@ -777,32 +782,75 @@ describe('passive health: a check whose kept connection was lost', () => {
     });
 
     describe('next to the other rules', () => {
-        it.each<[string, Step, string, string]>([
+        // The connection the node holds answers although no new one reaches the node. So
+        // after a call that could open none the check does not ask there: it logs out of
+        // it and asks on a new one, which is then the one connection of the node
+        const NONE_OPENED: [string, Step, string, string][] = [
             ['a connect timeout', TIMED_OUT, 'passive_timeout', 'ETIMEDOUT'],
             ['a call that found no route', NO_ROUTE, 'passive_unreachable', 'ENETUNREACH']
-        ])('after %s the check opens a new connection the same way', async (_n, call) => {
-            const node = fakeNode([PASS, call, stale(RESET, PASS), 'hang']);
+        ];
+        it.each(NONE_OPENED)('after %s the check logs out of the one it held and asks on a ' +
+            'new one', async (_n, call) => {
+            const node = fakeNode([PASS, call, PASS, 'hang']);
             await start({ healthCheck: { fall: 3 } });
+            const before = opened();
             await pass(1000);
             await failed(direct());
             await pass(0);
 
+            expect([opened() - before, node.loggedOut]).toEqual([1, 1]);
             expect([valid(), askedAt(node), changes()]).toEqual([true, [0, 1000, 1000], [up1]]);
         });
 
-        it.each<[string, Step, string, string]>([
-            ['a connect timeout', TIMED_OUT, 'passive_timeout', 'ETIMEDOUT'],
-            ['a call that found no route', NO_ROUTE, 'passive_unreachable', 'ENETUNREACH']
-        ])('after %s, lost on both: down, and why', async (_n, call, reason, code) => {
-            fakeNode([PASS, call, RESET, 'hang']);
+        it('after a lost connection the check asks on the one the node holds', async () => {
+            const node = await lostThen([PASS, 'hang']);
+            const before = opened();
+            await pass(0);
+
+            expect([opened() - before, node.loggedOut]).toEqual([0, 0]);
+            expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000]]);
+        });
+
+        // the second call comes while passive health holds off: its check is the timer's
+        it.each(NONE_OPENED)('after %s a check of the timer that has to decide opens a new ' +
+            'one as well', async (_n, call) => {
+            const node = fakeNode([PASS, call, PASS, call, PASS, 'hang']);
             await start({ healthCheck: { fall: 3 } });
+            const before = opened();
             await pass(1000);
             await failed(direct());
             await pass(0);
+            await failed(direct());
+            await pass(5000);
 
-            expect(info().checkError).toEqual(RESET_CHECK);
-            expect(changes().slice(-1)).toEqual([downBy(reason, code)]);
+            expect([opened() - before, node.loggedOut]).toEqual([2, 2]);
+            expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000, 1000, 6000]]);
         });
+
+        it.each(NONE_OPENED)('after %s a check of the timer with nothing to decide asks on ' +
+            'the new one', async (_n, call) => {
+            const node = fakeNode([PASS, call, PASS]);
+            await start({ healthCheck: { fall: 3 } });
+            const before = opened();
+            await pass(1000);
+            await failed(direct());
+            await pass(5000);
+
+            expect([opened() - before, node.loggedOut]).toEqual([1, 1]);
+            expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 1000, 6000]]);
+        });
+
+        it.each(NONE_OPENED)('after %s, a new connection that is lost: down, and why',
+            async (_n, call, reason, code) => {
+                fakeNode([PASS, call, RESET, 'hang']);
+                await start({ healthCheck: { fall: 3 } });
+                await pass(1000);
+                await failed(direct());
+                await pass(0);
+
+                expect(info().checkError).toEqual(RESET_CHECK);
+                expect(changes().slice(-1)).toEqual([downBy(reason, code)]);
+            });
 
         it('fall 2: after such a check passed, one failed check leaves the node up',
             async () => {

@@ -372,12 +372,18 @@ export class PoolStatus {
      * opens a new one and asks again, once: a path that forgot the idle flow resets it at
      * its next use, and that says nothing about the node. A connection this check opened
      * itself is no such flow, so what the second attempt fails with is the result of the
-     * check, and so is a loss on a connection that was not held before
+     * check, and so is a loss on a connection that was not held before.
+     * A check that has to decide after a call of the app found no route or got no
+     * connection in time asks on a new connection: the one the node holds answers although
+     * no new one reaches the node. The held one is logged out of, so the node keeps one
      * @private
      */
     private async _askOnCheckConnection(): Promise<GlobalStatusResult[]> {
         const sql = `SHOW GLOBAL STATUS;`;
         const run = this._checkRun;
+        if (this._decides === 'unreachable' || this._decides === 'timeout') {
+            this._pool.renewCheckConnection();
+        }
         // read before the query, which opens a connection when none is held
         const held = this._pool.holdsCheckConnection;
         try {
