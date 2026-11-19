@@ -576,8 +576,11 @@ export class PoolStatus {
     }
 
     // The most times a check that decides runs again. A pool with no limit, or with a
-    // larger one, stops here: each run is a new login when no idle connection is left
-    private static readonly _mostReruns = 100;
+    // larger one, stops here: each run is a new login when no idle connection is left,
+    // and a server blocks a host after max_connect_errors logins in a row that broke off,
+    // 100 by default. 50 stays under half of that. A pool that holds more forgotten
+    // connections than this can lose a healthy node until its checks pass again
+    private static readonly _mostReruns = 50;
 
     /**
      * Whether the check that just failed has to decide and only met another connection

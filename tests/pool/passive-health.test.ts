@@ -609,9 +609,14 @@ describe('passive health: a check that meets one more lost connection', () => {
             ['a connectionLimit of 3: the check and 3 more runs', { connectionLimit: 3 }, 4],
             ['the default limit of 10: the check and 10 more runs', {}, 11],
             ['a connectionLimit of 1: the check and 1 more run', { connectionLimit: 1 }, 2],
-            ['a pool without a limit: the check and 100 more runs', { connectionLimit: 0 }, 101],
-            ['a connectionLimit of 500: the check and 100 more runs',
-                { connectionLimit: 500 }, 101]
+            // never more than 50, half of what a server lets one host fail to connect
+            ['a pool without a limit: the check and 50 more runs', { connectionLimit: 0 }, 51],
+            ['a connectionLimit of 500: the check and 50 more runs',
+                { connectionLimit: 500 }, 51],
+            ['a connectionLimit of 51: the check and 50 more runs',
+                { connectionLimit: 51 }, 51],
+            ['a connectionLimit of 49: the check and 49 more runs',
+                { connectionLimit: 49 }, 50]
         ])('%s, then the node is down', async (_name, limits, runs) => {
             const node = await lostThen([RESET], limits);
             await pass(runs - 2);
