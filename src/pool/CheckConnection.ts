@@ -53,7 +53,21 @@ export class CheckConnection {
      */
     public async query<T>(sql: string): Promise<T> {
         if (this._closed) throw new Error("the check connection is closed");
-        return this._ask<T>(this._held || this._open(), sql);
+        const held = this._held || this._open();
+        const connection = await held.ready;
+        return new Promise<T>((resolve, reject) => {
+            const fail = (error: any) => {
+                // as the pool does with its own: a broken connection is not used again
+                if (error?.fatal) this._drop(held);
+                reject(error);
+            };
+            connection.changeUser({ database: this._database }, (errorU: any) => {
+                if (errorU) return fail(errorU);
+                connection.query({ sql }, (errorQ: any, result: T) => {
+                    return errorQ ? fail(errorQ) : resolve(result);
+                });
+            });
+        });
     }
 
     /**
@@ -77,26 +91,9 @@ export class CheckConnection {
             this._settle(keeps(error));
             throw error;
         }
+        // the new one is the connection that is held now
         this._settle(false);
-        if (this._closed) throw new Error("the check connection is closed");
-        return this._ask<T>(opened, sql);
-    }
-
-    private async _ask<T>(held: { connection: any, ready: Promise<any> }, sql: string) {
-        const connection = await held.ready;
-        return new Promise<T>((resolve, reject) => {
-            const fail = (error: any) => {
-                // as the pool does with its own: a broken connection is not used again
-                if (error?.fatal) this._drop(held);
-                reject(error);
-            };
-            connection.changeUser({ database: this._database }, (errorU: any) => {
-                if (errorU) return fail(errorU);
-                connection.query({ sql }, (errorQ: any, result: T) => {
-                    return errorQ ? fail(errorQ) : resolve(result);
-                });
-            });
-        });
+        return this.query<T>(sql);
     }
 
     /**
