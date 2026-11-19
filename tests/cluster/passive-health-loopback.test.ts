@@ -62,18 +62,28 @@ type Mode =
     // answers every new login with error 1045
     | 'refuses the login'
     // takes what it is sent and answers nothing, to the app and to a check alike
-    | 'says nothing';
+    | 'says nothing'
+    // keeps every query of the app until answerHeld(), and answers a check at once
+    | 'holds the app';
 
 interface IServer {
     port: number, become: (next: Mode) => void,
     // drop the open connections, and with `forGood` take no new one either
     hangUp: (forGood?: boolean) => void,
-    logins: () => number, checks: () => number
+    logins: () => number, checks: () => number,
+    // how many connections are open at the server right now
+    open: () => number,
+    // answer the queries of the app that 'holds the app' kept, and answer from now on
+    answerHeld: () => void,
+    // run this once, right after the answer to the next status query was written
+    afterNextCheck: (hook: () => void) => void
 }
 const listen = async (mode: Mode): Promise<IServer> => {
     const server: any = (mysql as any).createServer();
     const connections: any[] = [];
-    const seen = { logins: 0, checks: 0 };
+    const seen = { logins: 0, checks: 0, open: 0 };
+    const held: any[] = [];
+    let afterCheck: (() => void) | undefined;
     let listening = true;
     const hangUp = (forGood: boolean = false) => {
         if (forGood && listening) server.close();
@@ -82,8 +92,14 @@ const listen = async (mode: Mode): Promise<IServer> => {
     };
     closers.push(() => hangUp(true));
     const refuse = { message: "Access denied for user 'u'@'127.0.0.1'", code: 1045 };
+    const answer = (connection: any) => {
+        connection.sequenceId = 1;
+        connection.writeTextResult(STATUS, [column('Variable_name'), column('Value')]);
+    };
     server.on('connection', (connection: any) => {
         connections.push(connection);
+        seen.open++;
+        connection.stream.on('close', () => seen.open--);
         connection.on('error', () => undefined);
         connection.serverHandshake({
             protocolVersion: 10,
@@ -109,11 +125,15 @@ const listen = async (mode: Mode): Promise<IServer> => {
             const isCheck = sql !== APP_SQL;
             if (isCheck) seen.checks++;
             if (!isCheck && mode === 'hangs up') return connection.stream.destroy();
+            if (!isCheck && mode === 'holds the app') return held.push(connection);
             connection.sequenceId = 1;
             if (!isCheck && mode === 'deadlocks') {
                 return connection.writeError({ message: 'Deadlock found', code: 1213 });
             }
             connection.writeTextResult(STATUS, [column('Variable_name'), column('Value')]);
+            const hook = isCheck ? afterCheck : undefined;
+            if (hook) afterCheck = undefined;
+            hook?.();
         });
         connection.on('quit', () => connection.close());
     });
@@ -123,7 +143,13 @@ const listen = async (mode: Mode): Promise<IServer> => {
         become: (next: Mode) => { mode = next; },
         hangUp,
         logins: () => seen.logins,
-        checks: () => seen.checks
+        checks: () => seen.checks,
+        open: () => seen.open,
+        answerHeld: () => {
+            mode = 'answers';
+            held.splice(0).forEach(answer);
+        },
+        afterNextCheck: (hook: () => void) => { afterCheck = hook; }
     };
 };
 
@@ -767,5 +793,192 @@ describe('nodes addressed by a name that this host has no route for', () => {
 
         expect(seen).toEqual(['ENETUNREACH', true, true, true]);
         expect([isUp(cluster), waitsOf(cluster, 0)]).toEqual([[true, true], [LONG]]);
+    });
+});
+
+// The check of a node with a healthCheck block runs on a connection of its own, next to the
+// pool of the app. One node, no proxy unless a test says so. The pool takes `limit`
+// connections, and the logger is kept: a node that went down logged a warn with a reason
+describe('the check connection of a healthCheck node', () => {
+    // The code of every check that failed, undefined for a failure the package made. The
+    // events of every cluster go through one emitter, so the first cluster adds the listener
+    let failedChecks: (string | undefined)[];
+    let listening = false;
+    beforeEach(() => {
+        failedChecks = [];
+    });
+    const apart = async (port: number, block: object, limit: number = 1) => {
+        const logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+        const cluster: any = createPoolCluster({
+            clusterName: 'test',
+            hosts: [{ host: '127.0.0.1', port, id: 1, connectionLimit: limit }],
+            defaultPoolSettings: {
+                user: 'u', password: 'p', database: 'd', flags: [], healthCheck: block
+            },
+            useClusterHashing: false,
+            logger
+        } as any);
+        clusters.push(cluster);
+        if (!listening) {
+            cluster.on('pool_check_failed', ([error]: [any]) => failedChecks.push(error.code));
+        }
+        listening = true;
+        await cluster.connect();
+        const downs = (): string[] => logger.warn.mock.calls
+            .filter(([, meta]) => meta && meta.reason).map(([, meta]) => meta.reason);
+        return { cluster, downs };
+    };
+    // the connections of the pool of the app, by what they do
+    const pooled = (cluster: any) => {
+        const { used, idle, pending } = cluster.getPoolStats()[0];
+        return { used, idle, pending };
+    };
+    // run one check of the node by hand, as its timer would
+    const check = (cluster: any): Promise<void> => cluster.pools[0].status.checkStatus();
+    // this thread sleeps, and with it the event loop: no busy loop
+    const stall = (ms: number) => {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    };
+
+    // The outage of a pool at its limit. Two connections, both held by a query the server
+    // keeps, three more queries in the queue of mysql2. The checks of the timer come every
+    // 100 ms and give up after 200 ms, and the queries are held until three checks got
+    // their answer, so for longer than a check waits
+    it('a saturated pool: the check still passes and the node stays up', async () => {
+        const server = await listen('answers');
+        const { cluster, downs } = await apart(server.port, { interval: 100, timeout: 200 }, 2);
+        server.become('holds the app');
+        const calls = Array.from({ length: 5 }, () => appQuery(cluster));
+        const full = { used: 2, idle: 0, pending: 3 };
+        await until(() => pooled(cluster).pending === 3, 'a full pool', () => pooled(cluster));
+        const before = server.checks();
+
+        // every state of the node between here and the third answered check
+        const states: boolean[] = [];
+        await until(() => {
+            states.push(node(cluster).isValid);
+            return server.checks() >= before + 3 || !node(cluster).isValid;
+        }, 'three checks of a full pool', () => [server.checks() - before, failedChecks]);
+
+        expect([pooled(cluster), states.includes(false)]).toEqual([full, false]);
+        expect([node(cluster), failedChecks, downs()]).toEqual([UP, [], []]);
+        server.answerHeld();
+        expect(await Promise.all(calls)).toEqual(Array(5).fill(undefined));
+    });
+
+    it('is the one connection a connected node holds, and the pool holds none', async () => {
+        const server = await listen('answers');
+        const { cluster } = await apart(server.port, BLOCK);
+
+        // the check of connect() passed on it. The pool opens its first with a query
+        expect([server.open(), server.logins(), server.checks()]).toEqual([1, 1, 1]);
+        expect(pooled(cluster)).toEqual({ used: 0, idle: 0, pending: 0 });
+    });
+
+    it('connect, disconnect, connect leaves exactly one check connection open, and ' +
+        'disconnect leaves none', async () => {
+        const server = await listen('answers');
+        const { cluster } = await apart(server.port, BLOCK);
+        // the connections open at the server, and those of them the pool of the app holds
+        const open = () => [server.open(), pooled(cluster).idle];
+        const connected: number[][] = [open()];
+
+        cluster.disconnect();
+        await until(() => server.open() === 0, 'no connection after a disconnect', server.open);
+        await cluster.connect();
+        connected.push(open());
+        cluster.disconnect();
+        await until(() => server.open() === 0, 'no connection after a disconnect', server.open);
+
+        // one login per connect()
+        expect([connected, server.logins()]).toEqual([[[1, 0], [1, 0]], 2]);
+    });
+
+    it('two connect() calls of a node at once leave one check connection open', async () => {
+        const server = await listen('answers');
+        const { cluster } = await apart(server.port, BLOCK);
+        const pool = cluster.pools[0];
+
+        await Promise.all([pool.connect(), pool.connect()]);
+        await until(() => server.open() === 1, 'one open connection', server.open);
+
+        // The one of the cluster, and one per call: the first two were closed again. The
+        // check of the first call asked on the connection of the second
+        expect([server.logins(), server.open(), failedChecks]).toEqual([3, 1, []]);
+    });
+
+    it('a check connection the server closed while it was idle ends no process: the next ' +
+        'check logs in again and passes', async () => {
+        const server = await listen('answers');
+        const { cluster } = await apart(server.port, BLOCK);
+
+        server.hangUp();
+        await until(() => !cluster.pools[0].holdsCheckConnection,
+            'the node to drop its check connection', server.open);
+        await check(cluster);
+
+        expect([node(cluster), failedChecks, server.logins()]).toEqual([UP, [], 2]);
+    });
+
+    // open item 4 of the passive health task: no call of the app failed before this check
+    it('a check of the timer that meets a connection the path forgot opens a new one and ' +
+        'passes', async () => {
+        const server = await listen('answers');
+        const proxy = await proxyTo(server.port);
+        const { cluster } = await apart(proxy.port, BLOCK);
+        proxy.forget();
+
+        await check(cluster);
+
+        // one reset, of the check connection, and the login of the one after it
+        expect([node(cluster), failedChecks]).toEqual([UP, []]);
+        expect([proxy.resets(), server.logins(), server.checks()]).toEqual([1, 2, 2]);
+    });
+
+    it('a path that resets every connection: only a check that held one asks twice', async () => {
+        const server = await listen('answers');
+        const proxy = await proxyTo(server.port);
+        const { cluster } = await apart(proxy.port, BLOCK);
+        proxy.become('resets');
+
+        await check(cluster);
+        const first = proxy.resets();
+        await check(cluster);
+
+        // The first check lost the connection it held and the one it opened then. The
+        // second held none: the reset of the one it opened is its result. fall is 3
+        expect([first, proxy.resets(), failedChecks]).toEqual([2, 3, ['ECONNRESET', 'ECONNRESET']]);
+        const reset = { code: 'ECONNRESET', errno: -104 };
+        expect(node(cluster)).toEqual({ isValid: true, checkError: reset });
+    });
+
+    it('a check that got no answer in time drops its connection: the next one logs in ' +
+        'again', async () => {
+        const server = await listen('answers');
+        const { cluster } = await apart(server.port, { ...BLOCK, timeout: 200 });
+        server.become('says nothing');
+
+        await check(cluster);
+        const afterTimeout = node(cluster);
+        await until(() => server.open() === 0, 'the check connection to close', server.open);
+        server.become('answers');
+        await check(cluster);
+
+        // the timeout is a failure the package made: no code. fall is 3
+        expect(afterTimeout).toEqual({ isValid: true, checkError: {} });
+        expect([node(cluster), failedChecks, server.logins()]).toEqual([UP, [undefined], 2]);
+    });
+
+    // The server wrote its answer, and then this thread sleeps for longer than the check
+    // waits. The timer of the check is due before the socket is read
+    it('a process that stalls past the check timer with the answer in the socket: the ' +
+        'check passes', async () => {
+        const server = await listen('answers');
+        const { cluster } = await apart(server.port, { ...BLOCK, timeout: 200 });
+        server.afterNextCheck(() => stall(300));
+
+        await check(cluster);
+
+        expect([node(cluster), failedChecks, server.checks()]).toEqual([UP, [], 2]);
     });
 });
