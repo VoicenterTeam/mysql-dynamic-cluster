@@ -341,8 +341,13 @@ away from the app. The rules of the check are in
   only a connection held from before can be one the path forgot.
 - **`dropCheckConnection()`** destroys the connection and its socket, with
   whatever was asked on it. `PoolStatus` calls it when a check ran into
-  its timeout, so no late answer comes on that connection, and before it
-  opens a new connection for one that was lost.
+  its timeout, so no late answer comes on that connection.
+- **`renewCheckConnection()`** logs out of the connection, so the check
+  that asks next opens a new one. `PoolStatus` calls it for a check that
+  has to decide after a call of the app found no route or got no
+  connection within the connect timeout: the connection the node holds
+  says nothing about a new one. See
+  [A check after a call that could open no connection](health-and-scoring.md#a-check-after-a-call-that-could-open-no-connection).
 - **Kept or dropped as the pool does it.** A `fatal` error drops the
   connection, which every error of a change of user is. An error packet
   under the status query keeps it.
@@ -370,11 +375,10 @@ What it costs and what an app sees:
   connection.
 - The warn of a slow query and the `debug` lines of `query()` do not come
   for the status query of a node with the block.
-- A check says the node answers on the connection it holds, not that a new
-  one can be opened. While only new connections fail, for a missing route
-  or a firewall that drops them, the node stays up and the calls of the
-  app that need a new connection fail on it. See
-  [A check that finds no route itself](health-and-scoring.md#a-check-that-finds-no-route-itself).
+- A check after a call of the app that found no route or got no connection
+  in time is one more login: it asks on a new connection. A node with
+  `passive: false` is told of no call. Its checks ask on the connection it
+  holds, which answers also while no new connection reaches the node.
 
 Pinned by
 [tests/pool/check-connection.test.ts](../../tests/pool/check-connection.test.ts)
@@ -518,6 +522,7 @@ the waiting requests reject with it as before.
 | `holdsCheckConnection` | getter returning `boolean` | [`holdsCheckConnection`](../../src/pool/Pool.ts) |
 | `checkQuery<T>(sql)` | `(sql: string) => Promise<T>` | [`checkQuery`](../../src/pool/Pool.ts) |
 | `dropCheckConnection()` | `() => void` | [`dropCheckConnection`](../../src/pool/Pool.ts) |
+| `renewCheckConnection()` | `() => void` | [`renewCheckConnection`](../../src/pool/Pool.ts) |
 
 Consumers normally talk to `GaleraCluster`, not to `Pool` directly;
 the cluster picks a healthy pool via its routing logic and then
