@@ -151,10 +151,13 @@ const makeNode = (steps: Step[]) => {
         plan: steps,
         // the status queries that wait for the test to answer them
         held: [] as Cb[],
+        // a pool at its limit: every request for one of its connections waits in the queue
+        full: false,
         mysqlPool: {
             on: jest.fn(), end: jest.fn(),
             _allConnections: [], _freeConnections: [], _connectionQueue: [] as Cb[],
             getConnection: (cb: Cb) => {
+                if (node.full) return node.mysqlPool._connectionQueue.push(cb);
                 const step = take();
                 if (step === 'refused' || step === 'denied') return cb(errors[step]());
                 if (step === 'waits') return node.mysqlPool._connectionQueue.push(cb);
@@ -602,18 +605,20 @@ describe('health check with a healthCheck block: a login or account refusal', ()
     // A check asks on its own connection, so it is never among the requests that wait
     // in the queue of mysql2: failWaiting() fails the request of the app and no check
     it('failWaiting() fails no check: a full pool leaves the check its answer', async () => {
-        const node = fakeNode([PASS, 'waits', PASS]);
+        const node = fakeNode([PASS]);
         await start({ healthCheck: {} });
+        node.full = true;
         const waiting = cluster.getConnection().then((): any => undefined, (e: any) => e);
         await nextCheck(node);
 
+        // the one request in the queue is the one of the app: the check that was due at
+        // 5000 asked on its own connection and got its answer
         const leaving = Object.assign(new Error('leaving'), DENIED);
         expect(cluster.failWaiting(0, leaving)).toBe(1);
 
         expect(await waiting).toBe(leaving);
         expect([valid(), info().checkError]).toEqual([true, undefined]);
-        // the request of the app at 0, the check when it was due
-        expect(askedAt(node)).toEqual([0, 0, 5000]);
+        expect(askedAt(node)).toEqual([0, 5000]);
     });
 
     it.each<[string, object, string, string]>([
