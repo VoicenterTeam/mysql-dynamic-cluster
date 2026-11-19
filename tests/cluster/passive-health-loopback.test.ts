@@ -49,7 +49,8 @@ const STATUS = [
     { Variable_name: 'wsrep_local_recv_queue_avg', Value: '0' }
 ];
 
-// What the server does with a query of the app. It always answers the status query
+// What the server does with a query of the app. It answers the status query in every mode
+// but the last
 type Mode =
     | 'answers'
     // closes the connection under the query, as a server that is killed does
@@ -59,7 +60,9 @@ type Mode =
     // answers the change of user ahead of the query with error 1045
     | 'refuses the change of user'
     // answers every new login with error 1045
-    | 'refuses the login';
+    | 'refuses the login'
+    // takes what it is sent and answers nothing, to the app and to a check alike
+    | 'says nothing';
 
 interface IServer {
     port: number, become: (next: Mode) => void,
@@ -96,12 +99,13 @@ const listen = async (mode: Mode): Promise<IServer> => {
         });
         // the pool changes the user of a connection before a query of its own
         connection.on('packet', (_packet: object, known: boolean, code: number) => {
-            if (known || code !== COM_CHANGE_USER) return;
+            if (known || code !== COM_CHANGE_USER || mode === 'says nothing') return;
             connection.sequenceId = 1;
             if (mode === 'refuses the change of user') return connection.writeError(refuse);
             connection.writeOk();
         });
         connection.on('query', (sql: string) => {
+            if (mode === 'says nothing') return;
             const isCheck = sql !== APP_SQL;
             if (isCheck) seen.checks++;
             if (!isCheck && mode === 'hangs up') return connection.stream.destroy();
@@ -608,13 +612,13 @@ describe('nodes addressed by a name that this host has no route for', () => {
     afterEach(() => lookup.mockRestore());
 
     const byName = async (block: object = BLOCK) => {
-        const ports: number[] = [];
-        for (const _name of NAMES) ports.push((await listen('answers')).port);
+        const servers: IServer[] = [];
+        for (const _name of NAMES) servers.push(await listen('answers'));
         const logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() };
         const cluster: any = createPoolCluster({
             clusterName: 'test',
             hosts: NAMES.map((host, i) => {
-                return { host, port: ports[i], id: i + 1, connectionLimit: POOLED };
+                return { host, port: servers[i].port, id: i + 1, connectionLimit: POOLED };
             }),
             defaultPoolSettings: {
                 user: 'u', password: 'p', database: 'd', flags: [], healthCheck: block
@@ -632,7 +636,7 @@ describe('nodes addressed by a name that this host has no route for', () => {
         });
         const downs = (): string[] => logger.warn.mock.calls
             .filter(([, meta]) => meta && meta.reason).map(([, meta]) => meta.reason);
-        return { cluster, downs, failedChecks };
+        return { cluster, downs, failedChecks, servers };
     };
     // The next `count` waits of ten minutes that a check timer is started with are over at
     // once, so a test gets that many checks of the timer without a clock. The spy records
@@ -721,6 +725,22 @@ describe('nodes addressed by a name that this host has no route for', () => {
             expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG, LONG, LONG]);
             expect([isUp(cluster), downs()]).toEqual([[false, true], ['fall']]);
         });
+
+    // A node that is gone together with its route: no route for a new connection, and no
+    // answer on the pooled one, which the check draws. It runs into its timeout of 200 ms
+    it('no route for the call and no answer for its check: down, and says why', async () => {
+        const { cluster, downs, servers } = await byName({ ...BLOCK, timeout: 200 });
+
+        const seen = await openWithNoRoute(cluster, 0, true);
+        servers[0].become('says nothing');
+        await until(() => !isUp(cluster)[0], 'node 0 to go down', () => waitsOf(cluster, 0));
+
+        expect(seen).toEqual(['ENETUNREACH', true, true, true]);
+        // one check, which the package ended. fall is 3
+        expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG]);
+        expect(cluster.nodes()[0].checkError).toEqual({});
+        expect([isUp(cluster), downs()]).toEqual([[false, true], ['passive_unreachable']]);
+    });
 
     it('with passive false no check starts', async () => {
         const { cluster } = await byName({ ...BLOCK, passive: false });
