@@ -512,6 +512,37 @@ describe('the check connection: after a call of the app that could open no conne
         expect(jest.getTimerCount()).toBe(0);
     });
 
+    it('the one it held breaks while the new one opens, and that finds no route: the ' +
+        'node holds none', async () => {
+        const { pool, held } = await afterCall(noRoute(), true);
+        held.emit('error', lost());
+        last().emit('error', noRoute());
+        await settle();
+
+        expect([pool.holdsCheckConnection, held.destroy.mock.calls.length]).toEqual([false, 1]);
+        expect([pool.status.isValid, pool.checkError]).toEqual(
+            [true, { code: 'ENETUNREACH', errno: -101 }]);
+    });
+
+    // The check that was opening a new one asks on the connection of the second connect(),
+    // as any check that such a connect() overtakes. It sends nothing on the one it opened
+    it('a second connect() while the new one logs in: the check asks on the connection ' +
+        'of that connect()', async () => {
+        const { pool } = await afterCall(noRoute(), true);
+        const opened = last();
+        const connecting = pool.connect();
+
+        await logIn(opened);
+        await logIn(last());
+        last().changeUser.mock.calls.forEach(([, done]: any[]) => done(null));
+        await settle();
+        last().query.mock.calls.forEach(([, done]: any[]) => done(null, []));
+        await connecting;
+
+        expect([connections().length, used(opened), used(last())]).toEqual([3, [1, 0], [0, 2]]);
+        expect([pool.status.isValid, pool.checkError]).toEqual([true, undefined]);
+    });
+
     // connect() on a node that is connected runs its own check next to the one of the
     // timer. Both have to decide, and the second must not open one more: the one the first
     // is opening is as new as it gets
