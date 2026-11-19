@@ -264,9 +264,6 @@ export class Pool {
      */
     public async query<T extends QueryResult>(sql: string, queryOptions?: IQueryOptions): Promise<T | T[]> {
         return new Promise(async (resolve, reject) => {
-            // The status query of a health check is no query of the app: what it fails with
-            // is counted by the check, never by passive health. Read before the copy below
-            const real = !PoolStatus.isCheckQuery(queryOptions);
             queryOptions = {
                 timeout: this._queryTimeout,
                 database: this._database,
@@ -295,8 +292,10 @@ export class Pool {
                 queryTimer.end();
                 Metrics.recordOperation(queryTimer.get(), { ...poolMetricOption, error });
                 // Before the caller hears of it, so every call after this one sees the node
-                // as it is now. Without a connection the error came instead of one
-                if (real) this._status.realFailure(error, !conn);
+                // as it is now. Without a connection the error came instead of one. The
+                // check of a node with a healthCheck block is not here: it asks on its own
+                // connection. That of a node without one is, and passive health skips it
+                this._status.realFailure(error, !conn);
                 Pool._handBack(conn, error);
                 reject(error);
             }

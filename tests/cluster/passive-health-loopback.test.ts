@@ -564,7 +564,7 @@ describe('two healthy nodes whose idle pooled connections the path forgot', () =
 });
 
 describe('a node that is dead for real behind its proxy', () => {
-    it('resets every connection: down after one run per connection the pool may hold',
+    it('resets every connection: down after one check that decides',
         async () => {
             const { cluster, proxies, failedChecks, downs } = await behindProxies();
             await idle(cluster, 6);
@@ -573,11 +573,12 @@ describe('a node that is dead for real behind its proxy', () => {
             const rejected = await burst(cluster, 0, 1);
             await until(() => !isUp(cluster)[0], 'node 0 to go down', () => waitsOf(cluster, 0));
 
-            // The check and ten more runs, no wait between them: five met the idle
-            // connections that were left, six a new connection that was reset
+            // One check, at once: the connection it held was reset, and so was the one
+            // it opened then
             expect(rejected).toEqual(['ECONNRESET']);
-            expect(failedChecks[0]).toEqual(Array(POOLED + 1).fill('ECONNRESET'));
-            expect(waitsOf(cluster, 0)).toEqual([LONG, ...Array(POOLED + 1).fill(0), LONG]);
+            expect(failedChecks[0]).toEqual(['ECONNRESET']);
+            expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG]);
+            expect(proxies[0].resets()).toBe(3);
             expect([isUp(cluster), downs()]).toEqual([[false, true], ['passive_lost']]);
         });
 });
