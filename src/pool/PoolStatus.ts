@@ -242,20 +242,38 @@ export class PoolStatus {
             Logger.debug("checking pool status in host: " + this._pool.host);
             queryTimer.start();
 
-            // one timer for the whole check, including waiting for a free connection
+            // One timer for the whole check. For the legacy check that includes waiting
+            // for a free connection of the pool. With a healthCheck block it covers the
+            // check connection: opening one, the change of user and the status query
             let checkTimer: NodeJS.Timeout;
+            let grace: NodeJS.Immediate;
             let result: GlobalStatusResult[];
             try {
                 asking = true;
                 result = await Promise.race([
-                    this._pool.query(`SHOW GLOBAL STATUS;`, this._checkOptions()),
+                    this._askNode(),
                     new Promise<never>((_, reject) => {
-                        checkTimer = setTimeout(() => reject(new Error("Status check timeout")), this._checkTimeout);
+                        const timedOut = () => reject(new Error("Status check timeout"));
+                        checkTimer = setTimeout(() => {
+                            if (!this._healthCheck) return timedOut();
+                            // Node runs a timer that is due before it reads the sockets,
+                            // also after this process stood still for longer than the
+                            // check waits. One turn of the event loop first, so an answer
+                            // that is in the socket by now wins
+                            grace = setImmediate(() => {
+                                // no late answer for this check: the next one opens a
+                                // connection. Not after a disconnect(): the connection
+                                // would be the one of a later connect()
+                                if (run === this._checkRun) this._pool.dropCheckConnection();
+                                timedOut();
+                            });
+                        }, this._checkTimeout);
                     })
                 ]) as GlobalStatusResult[];
                 asking = false;
             } finally {
                 clearTimeout(checkTimer);
+                clearImmediate(grace);
             }
             if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host);
 
@@ -358,6 +376,46 @@ export class PoolStatus {
                 // In a finally, so a step that throws above cannot leave the check uncounted
                 this._recordCheck('error');
             }
+        }
+    }
+
+    /**
+     * Ask the node for its status. The legacy check asks through the pool, as 4.6.0 does:
+     * it waits for a connection there like a query of the app. A node with a healthCheck
+     * block asks on its check connection, see _askOnCheckConnection()
+     * @private
+     */
+    private _askNode(): Promise<GlobalStatusResult[]> {
+        if (this._healthCheck) return this._askOnCheckConnection();
+        return this._pool.query(`SHOW GLOBAL STATUS;`, this._checkOptions()) as
+            Promise<GlobalStatusResult[]>;
+    }
+
+    /**
+     * The status query of a check on the check connection of the node. When the connection
+     * it held from before turns out to be lost, with a code of the lost kind, the check
+     * opens a new one and asks again, once: a path that forgot the idle flow resets it at
+     * its next use, and that says nothing about the node. A connection this check opened
+     * itself is no such flow, so what the second attempt fails with is the result of the
+     * check, and so is a loss on a connection that was not held before
+     * @private
+     */
+    private async _askOnCheckConnection(): Promise<GlobalStatusResult[]> {
+        const sql = `SHOW GLOBAL STATUS;`;
+        const run = this._checkRun;
+        // read before the query, which opens a connection when none is held
+        const held = this._pool.holdsCheckConnection;
+        try {
+            return await this._pool.checkQuery<GlobalStatusResult[]>(sql);
+        } catch (error) {
+            const code = PoolStatus._reduce(error).code;
+            const lost = held && PoolStatus._lostCodes.has(code) && run === this._checkRun;
+            if (!lost) throw error;
+            Logger.debug("Pool " + this._pool.name + ": the connection of the check was " +
+                "lost, the check opens a new one and asks again",
+                { pool: this._pool.name, code });
+            this._pool.dropCheckConnection();
+            return this._pool.checkQuery<GlobalStatusResult[]>(sql);
         }
     }
 

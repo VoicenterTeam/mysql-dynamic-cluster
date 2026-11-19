@@ -477,38 +477,51 @@ describe('two healthy nodes whose idle pooled connections the path forgot', () =
         await burst(cluster, 0, 3);
         await settled(cluster, 0);
 
-        // three for the queries. The check at once met the other three, one per run, and
-        // its fourth run opened a new connection
-        expect(failedChecks[0]).toEqual(['ECONNRESET', 'ECONNRESET', 'ECONNRESET']);
-        expect(waitsOf(cluster, 0)).toEqual([LONG, 0, 0, 0, 0, LONG]);
-        expect([proxies[0].resets(), cluster.nodes()[0].checkError]).toEqual([6, undefined]);
+        // three resets for the queries and one for the check connection, which the path
+        // forgot as well: the check opened a new one and got its answer there
+        expect(failedChecks[0]).toEqual([]);
+        expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG]);
+        expect([proxies[0].resets(), cluster.nodes()[0].checkError]).toEqual([4, undefined]);
     });
 
-    it('every broken connection left the pool: the queries after it all pass', async () => {
-        const { cluster, proxies } = await stale();
-        await burst(cluster, 0, 3);
-        await settled(cluster, 0);
+    // The check asks on its own connection, so it uses up none of the pool: what the path
+    // forgot there waits for a query of the app
+    it('each forgotten connection left in the pool fails one more query, then all pass',
+        async () => {
+            const { cluster, proxies, downs } = await stale();
+            await burst(cluster, 0, 3);
+            await settled(cluster, 0);
 
-        const later = await burst(cluster, 0, 2 * POOLED);
+            const later = await burst(cluster, 0, 2 * POOLED);
+            await settled(cluster, 0);
+            const last = await burst(cluster, 0, 2 * POOLED);
 
-        expect(later.filter(code => code !== undefined)).toEqual([]);
-        // the pool holds what those queries opened, and no flow was reset since
-        expect([cluster.getPoolStats()[0].idle, proxies[0].resets()]).toEqual([POOLED, 6]);
-    });
+            // the three that were left met one query each, and then none is left
+            expect(later.filter(code => code !== undefined)).toEqual(
+                ['ECONNRESET', 'ECONNRESET', 'ECONNRESET']);
+            expect(last.filter(code => code !== undefined)).toEqual([]);
+            // six of the pool and the check connection were reset, and no node went down
+            expect([cluster.getPoolStats()[0].idle, proxies[0].resets()]).toEqual([POOLED, 7]);
+            expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
+        });
 
-    it('through cluster.query: no node goes down, and the queries after it pass', async () => {
+    it('through cluster.query: no node goes down, and one query at most is lost per ' +
+        'forgotten connection', async () => {
         const { cluster, downs } = await stale();
         const ask = () => cluster.query(APP_SQL, undefined, { timeout: 0 })
             .then(() => 'passed', () => 'rejected');
 
         // each of the three meets a forgotten connection, at one node or at both
-        await Promise.all([ask(), ask(), ask()]);
+        const first = await Promise.all([ask(), ask(), ask()]);
+        const later: string[] = [];
+        for (let i = 0; i < 40; i++) later.push(await ask());
         await settled(cluster, 0);
         await settled(cluster, 1);
-        const later: string[] = [];
-        for (let i = 0; i < 20; i++) later.push(await ask());
 
-        expect(later).toEqual(Array(20).fill('passed'));
+        // twelve were forgotten, six in each pool, and the first three queries met three
+        const lost = (asked: string[]) => asked.filter(how => how === 'rejected').length;
+        expect([lost(first), lost(later) <= 9]).toEqual([3, true]);
+        expect(later.slice(-20)).toEqual(Array(20).fill('passed'));
         expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
     });
 
@@ -577,6 +590,7 @@ describe('a connect timeout of a call of the app', () => {
     it('a process that stalls past the timer while a login is out: no node goes down',
         async () => {
             const { cluster, downs } = await behindProxies();
+            await idle(cluster, 1);
             // Two queries per node: the second has to open a connection. Then this thread
             // sleeps past the connect timer, which is due before the answer is read
             const calls = [0, 0, 1, 1].map(index => burst(cluster, index, 1));
@@ -629,6 +643,8 @@ describe('nodes addressed by a name that this host has no route for', () => {
         clusters.push(cluster);
         await cluster.connect();
         await cluster.ready;
+        // one idle connection in each pool, as a pool has that a query went through
+        await idle(cluster, 1);
         // every check that failed, by node: the code it failed with
         const failedChecks: string[][] = [[], []];
         cluster.on('pool_check_failed', ([error, id]: [any, number]) => {
@@ -658,6 +674,8 @@ describe('nodes addressed by a name that this host has no route for', () => {
         // works, or it has to open one of its own
         if (giveBack) held.release();
         else closers.push(() => held.destroy());
+        // and without its check connection the node has to open one for the check too
+        if (!giveBack) cluster.pools[index].dropCheckConnection();
         return [error.code, error.errno < 0, error.fatal, isUp(cluster)[index]];
     };
 

@@ -4,6 +4,7 @@ jest.mock('mysql2', () => ({
     default: { createPool: jest.fn(), createConnection: jest.fn() }
 }));
 
+import { EventEmitter } from 'events';
 import mysql from 'mysql2';
 import { metrics } from '@opentelemetry/api';
 import { MeterProvider, MetricReader } from '@opentelemetry/sdk-metrics';
@@ -56,8 +57,74 @@ const PASS = up();
 // the same node while it is not ready: it answers, and the first default validator says no
 const NO = up(7, 'OFF');
 
+// the codes of a connection that was lost, as the package knows them
+const LOST_CODES = ['PROTOCOL_CONNECTION_LOST', 'ECONNRESET', 'EPIPE'];
+// mysql2 emits later, never inside createConnection
+const later = (call: () => void) => { Promise.resolve().then(call); };
+
 const makeNode = (steps: Step[]) => {
+    // the next step of the plan, for a request that starts now
+    const take = (): Step => {
+        node.asked.push(Date.now());
+        return node.plan.length > 1 ? node.plan.shift() : node.plan[0];
+    };
     const node = {
+        // The step of a check that is opening its second connection. A step says how one
+        // whole check ends, so that connection ends as the first one did
+        again: undefined as Step | undefined,
+        // The check connection of a node with a healthCheck block, as createConnection
+        // hands it out. Each check takes one step of the plan: a new connection when it is
+        // opened, a kept one at its change of user. A kept connection cannot fail to
+        // open, so a step that ends there breaks it first, as a node that went away
+        // does, and the connection the check then opens ends that way
+        checkConnection: () => {
+            const connection: any = new EventEmitter();
+            let step: Step = node.again !== undefined ? node.again : take();
+            node.again = undefined;
+            // the checks that started on this connection
+            let checks = 0;
+            const failureAt = (at: string) => {
+                return failuresOf(step).find(failure => failure.at === at);
+            };
+            const unopened = () => step === 'opening' || step === 'waits' || !!failureAt('open');
+            if (step === 'opening') {
+                node.opening.push((error?: any) => {
+                    return error ? connection.emit('error', error) : connection.emit('connect', {});
+                });
+            } else {
+                later(() => {
+                    const failure = failureAt('open');
+                    if (failure) return connection.emit('error', failure.error());
+                    if (step !== 'waits') connection.emit('connect', {});
+                });
+            }
+            // an error on a connection that was kept from an earlier check
+            const onKept = (error: any) => {
+                if (checks > 1 && LOST_CODES.includes(error.code)) node.again = step;
+                return error;
+            };
+            connection.changeUser = (_options: any, done: Cb) => {
+                if (checks++ > 0) step = take();
+                if (unopened()) {
+                    node.again = step;
+                    return done(network('PROTOCOL_CONNECTION_LOST')());
+                }
+                const failure = failureAt('changeUser');
+                if (failure) return done(onKept(Object.assign(failure.error(), { fatal: true })));
+                if (step !== 'stuck') done(null);
+            };
+            connection.query = (options: any, done: Cb) => {
+                node.sqls.push(options.sql);
+                const failure = failureAt(options.sql) || failureAt('query');
+                if (failure) return done(onKept(failure.error()));
+                if (step === 'held') return node.held.push(done);
+                if (step !== 'hang') done(null, isFailure(step) ? [] : step);
+            };
+            connection.destroy = jest.fn();
+            connection.stream = { destroy: jest.fn() };
+            connection.end = () => later(() => connection.emit('end'));
+            return connection;
+        },
         // the fake time of every request for a connection: the checks and the app's own
         asked: [] as number[],
         // every sql that reached a connection of this node
@@ -72,8 +139,7 @@ const makeNode = (steps: Step[]) => {
             on: jest.fn(), end: jest.fn(),
             _allConnections: [], _freeConnections: [], _connectionQueue: [] as Cb[],
             getConnection: (cb: Cb) => {
-                node.asked.push(Date.now());
-                const step = node.plan.length > 1 ? node.plan.shift() : node.plan[0];
+                const step = take();
                 if (step === 'opening') return node.opening.push(cb);
                 if (step === 'waits') return node.mysqlPool._connectionQueue.push(cb);
                 const failures = failuresOf(step);
@@ -255,11 +321,15 @@ const pool = 'node-a:3306';
 const up1 = ['info', { pool, valid: true, reason: 'first_pass' }];
 
 beforeEach(() => {
-    jest.useFakeTimers();
+    // setImmediate stays real: a check waits one turn of the event loop after its timer,
+    // and a fake setImmediate would be 1 ms of fake time instead
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'clearImmediate'] });
     Object.values(logger).forEach(log => log.mockClear());
     nodes = {};
     (mysql.createPool as jest.Mock)
         .mockImplementation((options: any) => nodes[options.host].mysqlPool);
+    (mysql.createConnection as jest.Mock)
+        .mockImplementation((options: any) => nodes[options.host].checkConnection());
 });
 
 afterEach(async () => {

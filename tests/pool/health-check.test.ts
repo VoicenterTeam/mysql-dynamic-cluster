@@ -4,6 +4,7 @@ jest.mock('mysql2', () => ({
     default: { createPool: jest.fn(), createConnection: jest.fn() }
 }));
 
+import { EventEmitter } from 'events';
 import mysql from 'mysql2';
 import { metrics } from '@opentelemetry/api';
 import { MeterProvider, MetricReader } from '@opentelemetry/sdk-metrics';
@@ -78,8 +79,70 @@ const packet = (errno: number, code: string, sqlState: string = 'HY000') => {
 };
 const serverError = (at: Where, error: () => any): ServerError => ({ at, error });
 
+// the codes of a connection that was lost, as the package knows them
+const LOST_CODES = ['PROTOCOL_CONNECTION_LOST', 'ECONNRESET', 'EPIPE'];
+// mysql2 emits later, never inside createConnection
+const later = (call: () => void) => { Promise.resolve().then(call); };
+
 const makeNode = (steps: Step[]) => {
+    // the next step of the plan, for a request that starts now
+    const take = (): Step => {
+        node.asked.push(Date.now());
+        return node.plan.length > 1 ? node.plan.shift() : node.plan[0];
+    };
+    // a step that ends before a connection is there: only a new connection can end that way
+    const loginError = (step: Step): any => {
+        if (step === 'refused' || step === 'denied') return errors[step]();
+        return isServerError(step) && step.at === 'login' ? step.error() : undefined;
+    };
     const node = {
+        // The step of a check that is opening its second connection. A step says how one
+        // whole check ends, so that connection ends as the first one did
+        again: undefined as Step | undefined,
+        // The check connection of a node with a healthCheck block, as createConnection
+        // hands it out. Each check takes one step of the plan: a new connection when it is
+        // opened, a kept one at its change of user. A kept connection cannot refuse a
+        // login, so a step that ends at the login breaks it first, as a node that went
+        // away does, and the connection the check then opens ends that way
+        checkConnection: () => {
+            const connection: any = new EventEmitter();
+            let step: Step = node.again !== undefined ? node.again : take();
+            node.again = undefined;
+            // the checks that started on this connection
+            let checks = 0;
+            later(() => {
+                const error = loginError(step);
+                if (error) return connection.emit('error', error);
+                if (step !== 'waits') connection.emit('connect', {});
+            });
+            // an error on a connection that was kept from an earlier check
+            const onKept = (error: any) => {
+                if (checks > 1 && LOST_CODES.includes(error.code)) node.again = step;
+                return error;
+            };
+            connection.changeUser = (_options: any, done: Cb) => {
+                if (checks++ > 0) step = take();
+                if (loginError(step)) {
+                    node.again = step;
+                    return done(errors.lost());
+                }
+                const answer = isServerError(step) ? step : undefined;
+                if (answer?.at !== 'changeUser') return done(null);
+                done(onKept(Object.assign(answer.error(), { fatal: true })));
+            };
+            connection.query = (options: any, done: Cb) => {
+                node.timeouts.push(options.timeout);
+                if (isServerError(step)) return done(onKept(step.error()));
+                if (step === 'lost') return done(onKept(errors.lost()));
+                if (step === 'slow') return setTimeout(() => done(null, PASS), SLOW);
+                if (step === 'held') return node.held.push(done);
+                if (step !== 'hang') done(null, step);
+            };
+            connection.destroy = jest.fn();
+            connection.stream = { destroy: jest.fn() };
+            connection.end = () => later(() => connection.emit('end'));
+            return connection;
+        },
         // the fake time of every request for a connection
         asked: [] as number[],
         // the timeout mysql2 was handed with each status query
@@ -92,8 +155,7 @@ const makeNode = (steps: Step[]) => {
             on: jest.fn(), end: jest.fn(),
             _allConnections: [], _freeConnections: [], _connectionQueue: [] as Cb[],
             getConnection: (cb: Cb) => {
-                node.asked.push(Date.now());
-                const step = node.plan.length > 1 ? node.plan.shift() : node.plan[0];
+                const step = take();
                 if (step === 'refused' || step === 'denied') return cb(errors[step]());
                 if (step === 'waits') return node.mysqlPool._connectionQueue.push(cb);
                 const answer = isServerError(step) ? step : undefined;
@@ -258,11 +320,15 @@ const upAfterEach = async (block: any, letters: string): Promise<string> => {
 };
 
 beforeEach(() => {
-    jest.useFakeTimers();
+    // setImmediate stays real: a check waits one turn of the event loop after its timer,
+    // and a fake setImmediate would be 1 ms of fake time instead
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'clearImmediate'] });
     Object.values(logger).forEach(log => log.mockClear());
     nodes = {};
     (mysql.createPool as jest.Mock)
         .mockImplementation((options: any) => nodes[options.host].mysqlPool);
+    (mysql.createConnection as jest.Mock)
+        .mockImplementation((options: any) => nodes[options.host].checkConnection());
 });
 
 afterEach(async () => {
@@ -354,12 +420,13 @@ describe('health check with a healthCheck block: the timeout of one check', () =
         ['an empty block next to the legacy values of a consumer',
             { ...CONSUMER, healthCheck: {} }, 5000]
     ])('%s', (_name, pool, timeout) => {
-        it(`hands ${timeout} to mysql2 with the status query`, async () => {
+        // the timer of the check ends it, and drops the connection it asked on
+        it('hands no timeout to mysql2 with the status query', async () => {
             const node = fakeNode([PASS]);
             await start(pool);
             await nextCheck(node);
 
-            expect(node.timeouts).toEqual([timeout, timeout]);
+            expect(node.timeouts).toEqual([undefined, undefined]);
         });
 
         it(`fails a check that hangs at ${timeout} ms, not 1 ms sooner`, async () => {
@@ -532,19 +599,21 @@ describe('health check with a healthCheck block: a login or account refusal', ()
         });
     });
 
-    it('an error the app passed to failWaiting() is none, whatever its errno', async () => {
-        const node = fakeNode([PASS, 'waits', 'hang']);
+    // A check asks on its own connection, so it is never among the requests that wait
+    // in the queue of mysql2: failWaiting() fails the request of the app and no check
+    it('failWaiting() fails no check: a full pool leaves the check its answer', async () => {
+        const node = fakeNode([PASS, 'waits', PASS]);
         await start({ healthCheck: {} });
+        const waiting = cluster.getConnection().then((): any => undefined, (e: any) => e);
         await nextCheck(node);
 
-        expect(cluster.failWaiting(0, Object.assign(new Error('leaving'), DENIED))).toBe(1);
-        await pass(0);
+        const leaving = Object.assign(new Error('leaving'), DENIED);
+        expect(cluster.failWaiting(0, leaving)).toBe(1);
 
-        // the check failed with an error the package was handed: nothing of the server
-        expect([valid(), info().checkError]).toEqual([true, {}]);
-        // and the next check comes after the interval
-        await pass(5000);
-        expect(waits(node)).toEqual([5000, 5000]);
+        expect(await waiting).toBe(leaving);
+        expect([valid(), info().checkError]).toEqual([true, undefined]);
+        // the request of the app at 0, the check when it was due
+        expect(askedAt(node)).toEqual([0, 0, 5000]);
     });
 
     it.each<[string, object, string, string]>([
@@ -696,17 +765,6 @@ describe('health check with a healthCheck block: the slow pace after a refusal',
         await start({ healthCheck: {} });
 
         await pass(125000);
-
-        expect(askedAt(node)).toEqual([0, 5000, 65000, 125000]);
-    });
-
-    it('a check the app failed with failWaiting() after a refusal keeps it too', async () => {
-        const node = fakeNode([PASS, 'denied', 'waits', PASS]);
-        await start({ healthCheck: {} });
-        await pass(65000);
-
-        expect(cluster.failWaiting(0, Object.assign(new Error('leaving'), DENIED))).toBe(1);
-        await pass(60000);
 
         expect(askedAt(node)).toEqual([0, 5000, 65000, 125000]);
     });
@@ -1060,7 +1118,8 @@ describe('health check with a healthCheck block: the two legacy keys', () => {
         // node-a: 10000 * 1.3, held at 15000, then 15000 / 1.3
         expect(waits(a)).toEqual([13000, 15000, 11538]);
         expect(waits(b)).toEqual([5000, 5000, 5000, 5000, 5000, 5000, 5000]);
-        expect([a.timeouts[0], b.timeouts[0]]).toEqual([15000, 5000]);
+        // the legacy check hands its timeout to mysql2, the check of a block does not
+        expect([a.timeouts[0], b.timeouts[0]]).toEqual([15000, undefined]);
     });
 
     it('in one cluster the host without the block is back with one pass', async () => {
@@ -1236,9 +1295,28 @@ describe('health check with a healthCheck block: the settings', () => {
 
         expect(waits(a)).toEqual([2000, 2000, 2000]);
         expect(waits(b)).toEqual([7000]);
-        expect([a.timeouts[0], b.timeouts[0]]).toEqual([2000, 7000]);
         // the last check of each failed, the ones before passed: fall 2 and fall 1
         expect([valid(0), valid(1)]).toEqual([true, false]);
+    });
+
+    it('the timeout a host takes from its own interval ends its hanging check', async () => {
+        fakeNode([PASS, 'hang'], 'node-a');
+        fakeNode([PASS, 'hang'], 'node-b');
+        const onHost = { healthCheck: { interval: 7000, fall: 3 } };
+        await start({ healthCheck: { interval: 2000, fall: 3 } }, twoHosts(onHost));
+        const errors = () => [info(0).checkError, info(1).checkError];
+
+        // node-a hangs from 2000 on for 2000, node-b from 7000 on for 7000
+        await pass(3999);
+        const before = errors();
+        await pass(1);
+        const afterA = errors();
+        await pass(9999);
+        const beforeB = errors();
+        await pass(1);
+
+        expect([before, afterA]).toEqual([[undefined, undefined], [{}, undefined]]);
+        expect([beforeB[1], errors()[1]]).toEqual([undefined, {}]);
     });
 });
 

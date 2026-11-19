@@ -14,6 +14,7 @@ import { IOperationMetricOptions } from "../types/MetricsInterfaces";
 import Redis from "../Redis/Redis";
 import { IRedisData } from "../types/RedisInterfaces";
 import { IdleConnectionReaper } from './IdleConnectionReaper';
+import { CheckConnection } from './CheckConnection';
 import { flagsForServer, IServerGreeting, IServerProbe, probeServer } from './ServerFlags';
 
 // AKA galera node
@@ -46,6 +47,11 @@ export class Pool {
     // the login that asks the server for its version, while it runs
     private _probe?: IServerProbe;
     private readonly _reaper: IdleConnectionReaper;
+    // Whether the health check of this node asks on a connection of its own: a node with
+    // a healthCheck block. The legacy check asks through the pool
+    private readonly _checksApart: boolean;
+    // that connection, from connect() to disconnect()
+    private _check?: CheckConnection;
 
     /**
      * Connections that can still be handed out: limit minus connections in use.
@@ -86,6 +92,7 @@ export class Pool {
             settings.idleCheckInterval
         );
 
+        this._checksApart = !!settings.healthCheck;
         this._status = new PoolStatus(this, settings, false);
 
         Logger.info("configuration pool finished in host: " + this.host);
@@ -104,12 +111,21 @@ export class Pool {
 
         const flagsMeta = flags === undefined ? undefined : { flags };
         Logger.debug("Creating pool in host: " + this.host, flagsMeta);
+        // left out when unset, so mysql2 keeps its default flags. mysql2 takes a string too
+        const flagsOption = flags === undefined ? {} : { flags: flags as string[] };
         this._pool = mysql.createPool({
             ...this._connectionOptions(),
             connectionLimit: this.connectionLimit,
-            // left out when unset, so mysql2 keeps its default flags. mysql2 takes a string too
-            ...(flags === undefined ? {} : { flags: flags as string[] })
+            ...flagsOption
         })
+        // Nothing is opened here: the check below opens the connection, within its own
+        // timeout. One that a connect() without a disconnect() left is closed, and a
+        // query that is still out on it is told where to ask instead
+        const replaced = this._check;
+        this._check = this._checksApart
+            ? new CheckConnection({ ...this._connectionOptions(), ...flagsOption }, this._database)
+            : undefined;
+        replaced?.close(this._check);
 
         this._reaper.start(this._pool as any);
         this.status.startTimerCheck(); // marks the status active, and undoes the stop of a disconnect()
@@ -125,8 +141,8 @@ export class Pool {
     }
 
     /**
-     * What a connection to this node needs. The pool and the login that asks the server
-     * for its version both use it, so an option added here reaches both
+     * What a connection to this node needs. The pool, the login that asks the server for
+     * its version and the check connection all use it, so an option added here reaches all
      * @private
      */
     private _connectionOptions() {
@@ -226,6 +242,8 @@ export class Pool {
         this._connectAttempt++;
         this._probe?.cancel();
         this._probe = undefined;
+        this._check?.close();
+        this._check = undefined;
         this._pool?.end((error) => {
             if (error) {
                 Logger.error(error.message);
@@ -657,6 +675,65 @@ export class Pool {
      */
     public get checkError(): PoolStatus['checkError'] {
         return this._status.checkError;
+    }
+
+    /**
+     * Whether the node holds its check connection right now: open, or logging in. False
+     * for a node without a healthCheck block, and before the first check of a connect()
+     */
+    public get holdsCheckConnection(): boolean {
+        return !!this._check?.held;
+    }
+
+    /**
+     * One query of a health check on the check connection of this node, which is opened
+     * when none is held. Never through the pool, so it waits for no connection of the app
+     * and is no query of the app to passive health. It sends a change of user first, as
+     * query() does, and has no timeout: the check has its own timer and calls
+     * dropCheckConnection() when it gives up.
+     * The attempt is one record of the operation metric, as a check through query() is.
+     * Rejects with the error of mysql2, or with POOL_NOT_CONNECTED outside connect() and
+     * disconnect()
+     * @param sql the status query
+     */
+    public checkQuery<T>(sql: string): Promise<T> {
+        const metricOptions = { ...this._metricOptions(this._database), sql };
+        const queryTimer = new QueryTimer();
+        queryTimer.start();
+        return this._askCheckConnection<T>(sql).then(result => {
+            queryTimer.end();
+            Metrics.recordOperation(queryTimer.get(), metricOptions);
+            return result;
+        }, error => {
+            queryTimer.end();
+            Metrics.recordOperation(queryTimer.get(), { ...metricOptions, error });
+            throw error;
+        });
+    }
+
+    /**
+     * Send the query on the check connection of this connect(). A second connect() without
+     * a disconnect() closes that connection and holds a new one, also while a check logs
+     * in or asks on the old one. A query that fails on a connection that was replaced
+     * that way is asked again on the one that took its place. Not after a disconnect():
+     * a check from before it is dropped, and asks nothing of a later connect()
+     * @param check the connection to ask on
+     * @private
+     */
+    private _askCheckConnection<T>(sql: string, check = this._check): Promise<T> {
+        if (!check) return Promise.reject<T>(this._notConnected());
+        return check.query<T>(sql).catch(error => {
+            if (!check.replacedBy) throw error;
+            return this._askCheckConnection<T>(sql, check.replacedBy);
+        });
+    }
+
+    /**
+     * Drop the check connection with whatever a check asked on it, so no late answer comes
+     * for that. The next check opens a new one
+     */
+    public dropCheckConnection(): void {
+        this._check?.drop();
     }
 
     /**
