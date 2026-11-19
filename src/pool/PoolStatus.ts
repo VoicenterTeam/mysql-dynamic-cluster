@@ -234,10 +234,13 @@ export class PoolStatus {
             let checkTimer: NodeJS.Timeout;
             let grace: NodeJS.Immediate;
             let result: GlobalStatusResult[];
+            // gets `drop` from the check connection: it drops the connection this check
+            // asked on, and no other
+            const asked: { drop?: () => void } = {};
             try {
                 asking = true;
                 result = await Promise.race([
-                    this._askNode(),
+                    this._askNode(asked),
                     new Promise<never>((_, reject) => {
                         const timedOut = () => reject(new Error("Status check timeout"));
                         checkTimer = setTimeout(() => {
@@ -247,10 +250,11 @@ export class PoolStatus {
                             // check waits. One turn of the event loop first, so an answer
                             // that is in the socket by now wins
                             grace = setImmediate(() => {
-                                // no late answer for this check: the next one opens a
-                                // connection. Not after a disconnect(): the connection
-                                // would be the one of a later connect()
-                                if (run === this._checkRun) this._pool.dropCheckConnection();
+                                // No late answer for this check. The connection it asked
+                                // on, which is not always the one the node holds by now:
+                                // a second connect() or a check on a new connection may
+                                // have put another one there
+                                asked.drop?.();
                                 timedOut();
                             });
                         }, this._checkTimeout);
@@ -360,8 +364,8 @@ export class PoolStatus {
      * block asks on its check connection, see _askOnCheckConnection()
      * @private
      */
-    private _askNode(): Promise<GlobalStatusResult[]> {
-        if (this._healthCheck) return this._askOnCheckConnection();
+    private _askNode(asked: { drop?: () => void }): Promise<GlobalStatusResult[]> {
+        if (this._healthCheck) return this._askOnCheckConnection(asked);
         const options = { redis: false, timeout: this._checkTimeout };
         return this._pool.query(`SHOW GLOBAL STATUS;`, options) as Promise<GlobalStatusResult[]>;
     }
@@ -380,7 +384,9 @@ export class PoolStatus {
      * one that fails any other way takes the held one along
      * @private
      */
-    private async _askOnCheckConnection(): Promise<GlobalStatusResult[]> {
+    private async _askOnCheckConnection(
+        asked: { drop?: () => void }
+    ): Promise<GlobalStatusResult[]> {
         const sql = `SHOW GLOBAL STATUS;`;
         const run = this._checkRun;
         const onNew = this._decides === 'unreachable' || this._decides === 'timeout';
@@ -389,7 +395,7 @@ export class PoolStatus {
         const held = !onNew && this._pool.holdsCheckConnection;
         try {
             const keeps = onNew ? PoolStatus._noRoute : undefined;
-            return await this._pool.checkQuery<GlobalStatusResult[]>(sql, keeps);
+            return await this._pool.checkQuery<GlobalStatusResult[]>(sql, keeps, asked);
         } catch (error) {
             const code = PoolStatus._reduce(error).code;
             const lost = held && PoolStatus._lostCodes.has(code) && run === this._checkRun;
@@ -398,7 +404,7 @@ export class PoolStatus {
                 "lost, the check opens a new one and asks again",
                 { pool: this._pool.name, code });
             // the lost one is dropped by now: such an error is fatal for mysql2
-            return this._pool.checkQuery<GlobalStatusResult[]>(sql);
+            return this._pool.checkQuery<GlobalStatusResult[]>(sql, undefined, asked);
         }
     }
 

@@ -689,7 +689,7 @@ export class Pool {
      * when none is held. Never through the pool, so it waits for no connection of the app
      * and is no query of the app to passive health. It sends a change of user first, as
      * query() does, and has no timeout: the check has its own timer and calls
-     * dropCheckConnection() when it gives up.
+     * `asked.drop` when it gives up.
      * The attempt is one record of the operation metric, as a check through query() is.
      * Rejects with the error of mysql2, or with POOL_NOT_CONNECTED outside connect() and
      * disconnect()
@@ -697,12 +697,16 @@ export class Pool {
      * @param keeps when given, the query goes out on a new connection beside the one the
      * node holds, which stays until the new one logged in. It says by the error of a new
      * one that did not log in whether the held one stays after that, too
+     * @param asked gets `drop`, which drops the connection the query went to and no other:
+     * a second connect() may have put a new one in its place by then
      */
-    public checkQuery<T>(sql: string, keeps?: (error: any) => boolean): Promise<T> {
+    public checkQuery<T>(
+        sql: string, keeps?: (error: any) => boolean, asked: { drop?: () => void } = {}
+    ): Promise<T> {
         const metricOptions = { ...this._metricOptions(this._database), sql };
         const queryTimer = new QueryTimer();
         queryTimer.start();
-        return this._askCheckConnection<T>(sql, this._check, keeps).then(result => {
+        return this._askCheckConnection<T>(sql, this._check, keeps, asked).then(result => {
             queryTimer.end();
             Metrics.recordOperation(queryTimer.get(), metricOptions);
             return result;
@@ -721,22 +725,25 @@ export class Pool {
      * a check from before it is dropped, and asks nothing of a later connect()
      * @param check the connection to ask on
      * @param keeps see checkQuery()
+     * @param asked see checkQuery()
      * @private
      */
     private _askCheckConnection<T>(
-        sql: string, check = this._check, keeps?: (error: any) => boolean
+        sql: string, check = this._check, keeps?: (error: any) => boolean,
+        asked: { drop?: () => void } = {}
     ): Promise<T> {
         if (!check) return Promise.reject<T>(this._notConnected());
-        const asked = keeps ? check.queryOnNew<T>(sql, keeps) : check.query<T>(sql);
-        return asked.catch(error => {
+        const answer = keeps ? check.queryOnNew<T>(sql, keeps, asked) : check.query<T>(sql, asked);
+        return answer.catch(error => {
             if (!check.replacedBy) throw error;
-            return this._askCheckConnection<T>(sql, check.replacedBy);
+            return this._askCheckConnection<T>(sql, check.replacedBy, undefined, asked);
         });
     }
 
     /**
-     * Drop the check connection with whatever a check asked on it, so no late answer comes
-     * for that. The next check opens a new one
+     * Drop the check connection the node holds, so the next check opens a new one. A check
+     * that gives up does not call this: it drops the connection it asked on, through the
+     * `asked` of checkQuery()
      */
     public dropCheckConnection(): void {
         this._check?.drop();

@@ -46,14 +46,17 @@ export class CheckConnection {
      * Send one query, on the connection that is held or on a new one. As every query of
      * the package it changes the user first, which is a login: a server that refuses the
      * account refuses it on an open connection too. No timeout of mysql2 runs here. The
-     * caller has its own timer and calls drop() when it gives up.
+     * caller has its own timer and calls `asked.drop` when it gives up.
      * Rejects with the error of mysql2 as it is. A login refused on a new connection is
      * not fatal there, one refused at the change of user is
      * @param sql the query
+     * @param asked gets `drop`: it drops the connection this query went to, with its
+     * socket and the query, and no other. By then another one may be held
      */
-    public async query<T>(sql: string): Promise<T> {
+    public async query<T>(sql: string, asked: { drop?: () => void } = {}): Promise<T> {
         if (this._closed) throw new Error("the check connection is closed");
         const held = this._held || this._open();
+        asked.drop = () => this._drop(held);
         const connection = await held.ready;
         return new Promise<T>((resolve, reject) => {
             const fail = (error: any) => {
@@ -80,11 +83,19 @@ export class CheckConnection {
      * connection is new already, and a second check that asks for a new one shares it
      * @param sql the query
      * @param keeps whether the old connection stays after the new one failed with this
+     * @param asked as for query(). While the new one logs in, `drop` logs out of the old
+     * one as well: the new one was not there in time
      */
-    public async queryOnNew<T>(sql: string, keeps: (error: any) => boolean): Promise<T> {
-        if (!this._held?.open) return this.query<T>(sql);
+    public async queryOnNew<T>(
+        sql: string, keeps: (error: any) => boolean, asked: { drop?: () => void } = {}
+    ): Promise<T> {
+        if (!this._held?.open) return this.query<T>(sql, asked);
         this._kept = this._held;
         const opened = this._open();
+        asked.drop = () => {
+            this._drop(opened);
+            this._settle(false);
+        };
         try {
             await opened.ready;
         } catch (error) {
@@ -93,17 +104,15 @@ export class CheckConnection {
         }
         // the new one is the connection that is held now
         this._settle(false);
-        return this.query<T>(sql);
+        return this.query<T>(sql, asked);
     }
 
     /**
      * Drop the connection that is held, with its socket and whatever was asked on it: no
-     * answer comes for that any more. The next query opens a new connection. A connection
-     * that was put aside for a new one is logged out of: the new one was not there in time
+     * answer comes for that any more. The next query opens a new connection
      */
     public drop(): void {
         this._drop(this._held);
-        this._settle(false);
     }
 
     /**

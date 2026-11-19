@@ -666,6 +666,46 @@ describe('the check connection: the timeout of a check', () => {
             expect([last().destroy.mock.calls.length, pool.holdsCheckConnection])
                 .toEqual([0, true]);
         });
+
+    // how often each connection was destroyed, in the order they were opened
+    const destroyed = () => connections().map(one => one.destroy.mock.calls.length);
+
+    // A second connect() without a disconnect() holds a new connection, and its check
+    // passes there. The check that hangs on the one before it times out later
+    it('of a check a second connect() overtook drops the connection it asked on, and ' +
+        'not the new one', async () => {
+        const pool = await started();
+        pool.status.checkStatus();
+        await settle();
+        const connecting = pool.connect();
+        await logIn(last());
+        await answer(last());
+        await connecting;
+
+        await jest.advanceTimersByTimeAsync(TIMEOUT);
+
+        expect([destroyed(), pool.holdsCheckConnection]).toEqual([[1, 0], true]);
+    });
+
+    // Two checks out at once. The first hangs on the connection the node holds. The second
+    // has to decide after a call that found no route, and moves the node to a new one
+    it('of a check that hangs on a connection the node has left drops that one only',
+        async () => {
+            const pool = await started();
+            pool.status.checkStatus();
+            await settle();
+            pool.status.realFailure(Object.assign(new Error('connect ENETUNREACH'),
+                { code: 'ENETUNREACH', errno: -101, syscall: 'connect', fatal: true }), true);
+            const deciding = pool.status.checkStatus();
+            await settle();
+            await logIn(last());
+            await answer(last());
+            await deciding;
+
+            await jest.advanceTimersByTimeAsync(TIMEOUT);
+
+            expect([destroyed(), pool.holdsCheckConnection]).toEqual([[1, 0], true]);
+        });
 });
 
 describe('the check connection: connect() and disconnect()', () => {
@@ -750,6 +790,33 @@ describe('the check connection: connect() and disconnect()', () => {
             expect([connections().length, last().query.mock.calls.length]).toEqual([2, 2]);
             expect([results(), pool.checkError]).toEqual([['valid', 'valid'], undefined]);
         });
+
+    // The check of the first connect() is asked again on the connection of the second, and
+    // gets no answer there. What it drops at its timeout is where it asked last
+    it('a check that was asked again on the connection of a second connect() drops that ' +
+        'one at its timeout', async () => {
+        const pool = makePool();
+        pools.push(pool);
+        pool.connect().catch((): void => undefined);
+        const replaced = last();
+        const second = pool.connect();
+        replaced.changeUser.mockImplementation((_options: any, done: any) => {
+            done(closedState());
+        });
+        await logIn(replaced);
+        await logIn(last());
+        // the check of the second connect() asked first, and passes
+        last().changeUser.mock.calls[0][1](null);
+        await settle();
+        last().query.mock.calls[0][1](null, []);
+        await second;
+
+        await jest.advanceTimersByTimeAsync(TIMEOUT);
+
+        expect([last().changeUser.mock.calls.length, last().destroy.mock.calls.length])
+            .toEqual([2, 1]);
+        expect(pool.holdsCheckConnection).toBe(false);
+    });
 
     it('a check from before a disconnect() asks nothing on the connection of a later connect()',
         async () => {
