@@ -68,7 +68,7 @@ export class CheckConnection {
      * @param keeps whether the old connection stays after the new one failed with this
      */
     public async queryOnNew<T>(sql: string, keeps: (error: any) => boolean): Promise<T> {
-        if (this._closed || !this._held?.open || this._kept) return this.query<T>(sql);
+        if (!this._held?.open) return this.query<T>(sql);
         this._kept = this._held;
         const opened = this._open();
         try {
@@ -123,14 +123,14 @@ export class CheckConnection {
     }
 
     /**
-     * The end of a connection that was put aside: held again when it is to be kept and
-     * none took its place, logged out of otherwise
+     * The end of a connection that was put aside: held again, or logged out of. Nothing is
+     * held when it is kept: the new one failed, and that dropped it
      */
     private _settle(keep: boolean): void {
         const kept = this._kept;
         this._kept = undefined;
         if (!kept) return;
-        if (keep && !this._held && !this._closed) this._held = kept;
+        if (keep) this._held = kept;
         else logOut(kept.connection);
     }
 
