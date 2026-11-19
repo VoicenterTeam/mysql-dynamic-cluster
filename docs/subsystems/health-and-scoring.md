@@ -581,7 +581,8 @@ The check that starts in the same moment then has to open one too, and
 while the route is gone it finds none either. It repeats what the call said
 and adds nothing about the node. Were it to decide, a route that is gone
 for 100 ms would take every node behind it down, which is what the check
-was started to prevent.
+was started to prevent. With `fall: 1` it still does: there every failed
+check takes its node down.
 
 So a check that has to decide, after a lost connection, a connect timeout
 or a missing route, and itself fails with `EHOSTUNREACH` or `ENETUNREACH`
@@ -788,8 +789,10 @@ right after a check that passed, and the call comes 1000 ms later.
   no route leaves both nodes up, and so does a check that finds none
   either. With `fall: 3` a route that stays gone takes the node down with
   the third check that finds none. The suite lets the waits of the check
-  timer run out at once for that, so no clock is in it. The address is the
-  limited broadcast address, which Linux
+  timer run out at once for that, so no clock is in it. A node that also
+  says nothing on its pooled connection is down with `passive_unreachable`
+  when the check that drew that connection runs into its `timeout`. The
+  address is the limited broadcast address, which Linux
   refuses for a TCP connection before a packet leaves the host. `EPIPE` and
   `EHOSTUNREACH` were not produced there. They are rows of the suite with
   the fake clock only.

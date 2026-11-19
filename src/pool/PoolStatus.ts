@@ -627,8 +627,8 @@ export class PoolStatus {
 
     /**
      * Tell that a check which had to decide for a node that is up found no route itself
-     * and so did not decide. One warn, since the node stays up and an operator has no
-     * other line with the code: `code` is what the call of the app ran into, `checkCode`
+     * and so did not decide. One warn, since the node stays up and no other line has
+     * both codes in its fields: `code` is what the call of the app ran into, `checkCode`
      * what the check did
      * @private
      */
