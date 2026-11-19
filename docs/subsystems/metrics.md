@@ -324,9 +324,12 @@ Notes on cardinality and content:
   left out for other keywords, for text with anything but whitespace after a
   `;` that stands outside quotes, and for transactions. The text is scanned
   once, with no regular expression.
-- **The cluster metric's `error.type` is `_OTHER` for now.** The cluster wraps
-  pool errors in a plain `Error` without a code. The per-attempt
-  `mysql_dynamic_cluster.operation.duration` carries the real code.
+- **The cluster metric carries the code of the node tried last.** Since
+  5.0.0 a failed `query()` rejects with the mysql2 error itself, so
+  `error.type` is its code and `db.response.status_code` its errno.
+  `MDC_NO_NODE_AVAILABLE` when no node was valid. The per-attempt
+  `mysql_dynamic_cluster.operation.duration` carries the code of each
+  attempt.
 - **`stale_cache` shows outages hidden by the cache.** Those queries succeed
   for the caller although no pool answered, either because no pool was valid
   or because every pool failed.

@@ -1460,8 +1460,8 @@ was dropped and a check that did not run record nothing. `isValid` and `loadScor
 [metrics.md](./metrics.md#health-check-metric).
 
 When every node is invalid, `GaleraCluster` throws
-`"There is no pool that satisfies the parameters"` before the Redis cache
-lookup — the reason one failed check isn't enough to drop a node.
+`"There is no pool that satisfies the parameters"`, code
+`MDC_NO_NODE_AVAILABLE`, before the Redis cache lookup — the reason one failed check isn't enough to drop a node.
 
 The whole check has one timeout, `min(queryTimeout, timerCheckRange.end)`
 (15 s with the defaults; `queryTimeout: 0` means no query timeout, so the

@@ -26,6 +26,8 @@ tests/
     named-values-setting.test.ts # the escapeNamedValues setting through createPoolCluster
     host-ids.test.ts             # Host ids: which id each host gets, with and without an id in the settings
     query-pool-order.test.ts     # The order query() tries its pools in: load score, the pool of the service first
+    query-error.test.ts          # What a failed query() rejects with, real mysql2 on loopback: the mysql2 error, nodeId, errors, MDC_NO_NODE_AVAILABLE
+    query-error-edges.test.ts    # The same over fake pools: one error from two nodes, a frozen error, a non-object, the stale cache
     node-api.test.ts             # Node API over fake pools: getConnection, failWaiting, getPoolStats, nodes
     node-api-public.test.ts      # Node API through createPoolCluster, before connect()
     node-api-loopback.test.ts    # Node API with the real mysql2 against its server class on loopback, getConnection with a signal included

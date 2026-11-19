@@ -180,8 +180,9 @@ The first lines of the `try` block.
    same helper, with the caller's `exclude` and without steps 1 and 4.
 4. If the pinned pool exists in `_pools`, find it and `unshift` it to
    the front so the pinned pool is tried first, also when it is not valid.
-5. Throw `"There is no pool that satisfies the parameters"` if the
-   final list is empty. Since 3.2.2 `query()` first serves cached Redis
+5. Throw an `Error` with the code `MDC_NO_NODE_AVAILABLE` and the message
+   `"There is no pool that satisfies the parameters"` if the final list is
+   empty. `getConnection()` uses the same code. Since 3.2.2 `query()` first serves cached Redis
    data for that SQL, even expired, when `redis` is on for the query and
    no `redisRefreshCache` was asked — the same fallback it already used
    when every pool errors.
@@ -192,12 +193,13 @@ The first lines of the `try` block.
 `_maxRetryCount`
 clamps the retry count to the active-pool count so the retry loop never
 overruns the array; if `maxRetry` is missing or non-positive it falls
-back to `_errorRetryCount`.
+back to `_errorRetryCount`. Since 5.0.0 the count is at least 1, so a
+query always tries one node, also with `errorRetryCount: 0`.
 
 Service-id resolution and active-pool selection share a single
-`try`/`catch`: a thrown error is recorded as a failed query and
-re-wrapped before being rethrown
-(the `catch` of that block).
+`try`/`catch`. The lookup of a service name catches its own errors, so
+the one error that reaches it is `MDC_NO_NODE_AVAILABLE`: it is recorded
+as a failed query and rethrown as it is (the `catch` of that block).
 
 ### 6. SQL formatting
 
@@ -254,15 +256,27 @@ meantime is still tried, as before.
 
 The end of `query`, after the loop.
 
-When every pool has failed:
+Each failed attempt is kept as `{ nodeId, error }`, in the order the
+nodes were tried. `nodeId` is also set on the error itself. When every
+pool has failed:
 
-- Build a multi-line error message of `Pool: <name>; Error: <message>`
-  per entry in `errorList`.
 - If `redisData` is non-null (cache existed but was expired), log a
   warning, record the query with source `stale_cache`, and **return the
   stale payload** anyway.
-- Otherwise record the query as failed and throw the aggregated
-  message.
+- Otherwise reject with the error of the node tried last, as mysql2 made
+  it: its own `message`, `code`, `errno`, `sqlState`, `sqlMessage` and
+  `fatal`, plus `nodeId`. The attempts before it are set on it as
+  `errors`, so a single node gives `errors: []`. The query is recorded
+  as failed with that error, so the metric carries its code.
+
+Since 5.0.0. Before, `query()` rejected with a new `Error` whose message
+joined `Pool: <name>; Error: Query error: <message>` lines and which had
+no code. See the changelog.
+
+A frozen error, or a rejection that is no object, cannot take `nodeId`
+or `errors` and is thrown without them. An error that the app handed
+`failWaiting()` can fail one query on two nodes: it is not listed in
+its own `errors`, so it never refers to itself.
 
 ### 10. `_queryRequest`
 
@@ -274,9 +288,8 @@ the attempt as `mysql_dynamic_cluster.operation.duration`. On success:
   awaits `_clusterHashing.updateNodeForService(serviceId, pool.id)` to
   pin the service to the pool that just served it.
 
-On failure the error is
-rewrapped as `"Query error: " + e.message` and rethrown to the retry
-loop in `query`.
+On failure the error goes to the retry loop in `query` as it is.
+`updateNodeForService` catches its own errors.
 
 ## Public API summary
 
