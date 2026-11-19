@@ -165,6 +165,8 @@ interface IProxy {
     forget: () => void,
     // change the path, and forget the open flows
     become: (next: Path) => void,
+    // change the path for new connections only: the flows that are open go on
+    onlyNew: (next: Path) => void,
     // how many connections this proxy reset
     resets: () => number
 }
@@ -214,6 +216,7 @@ const proxyTo = async (target: number): Promise<IProxy> => {
             path = next;
             forget();
         },
+        onlyNew: (next: Path) => { path = next; },
         resets: () => resets
     };
 };
@@ -615,6 +618,29 @@ describe('a connect timeout of a call of the app', () => {
         expect([isUp(cluster), downs()]).toEqual([[false, true], ['passive_timeout']]);
     });
 
+    // The path takes new connections and says nothing on them, and the flows that are open
+    // go on: the check connection of the node still gets its answer. A check that asked
+    // there would pass while no call of the app that needs a connection gets one
+    it('a path that swallows new connections only: the check opens one too, and the node ' +
+        'is down', async () => {
+        const block = { ...BLOCK, timeout: 200 };
+        const { cluster, proxies, failedChecks, downs } = await behindProxies(block);
+        proxies[0].onlyNew('swallows');
+        // a check with nothing to decide asks on the connection the node holds, and passes
+        await cluster.pools[0].status.checkStatus();
+        const before = [isUp(cluster)[0], failedChecks[0].length];
+
+        const error = await cluster.pools[0].getConnection()
+            .then((): any => undefined, (e: any) => e);
+        await until(() => !isUp(cluster)[0], 'node 0 to go down', () => waitsOf(cluster, 0));
+
+        expect(before).toEqual([true, 0]);
+        expect([error.code, error.fatal]).toEqual(['ETIMEDOUT', true]);
+        // one check, which got no connection within its 200 ms. fall is 3
+        expect(cluster.nodes()[0].checkError).toEqual({});
+        expect([isUp(cluster), downs()]).toEqual([[false, true], ['passive_timeout']]);
+    });
+
     it('a process that stalls past the timer while a login is out: no node goes down',
         async () => {
             const { cluster, downs } = await behindProxies();
@@ -653,7 +679,7 @@ describe('nodes addressed by a name that this host has no route for', () => {
     });
     afterEach(() => lookup.mockRestore());
 
-    const byName = async (block: object = BLOCK) => {
+    const byName = async (block: object = BLOCK, pooled: number = 1) => {
         const servers: IServer[] = [];
         for (const _name of NAMES) servers.push(await listen('answers'));
         const logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() };
@@ -672,7 +698,7 @@ describe('nodes addressed by a name that this host has no route for', () => {
         await cluster.connect();
         await cluster.ready;
         // one idle connection in each pool, as a pool has that a query went through
-        await idle(cluster, 1);
+        if (pooled) await idle(cluster, pooled);
         // every check that failed, by node: the code it failed with
         const failedChecks: string[][] = [[], []];
         cluster.on('pool_check_failed', ([error, id]: [any, number]) => {
@@ -698,16 +724,15 @@ describe('nodes addressed by a name that this host has no route for', () => {
         noRoute = true;
         const error = await cluster.pools[index].getConnection()
             .then((): any => undefined, (e: any) => e);
-        // Before the timer of the check that starts: the check draws this connection, which
-        // works, or it has to open one of its own
+        // Either way the check that starts opens a connection of its own: after a call
+        // that found no route it asks neither the pool nor the connection the node held
         if (giveBack) held.release();
         else closers.push(() => held.destroy());
-        // and without its check connection the node has to open one for the check too
-        if (!giveBack) cluster.pools[index].dropCheckConnection();
         return [error.code, error.errno < 0, error.fatal, isUp(cluster)[index]];
     };
 
-    it('a call that finds no route leaves both nodes up: the check at once passes', async () => {
+    it('a call that finds no route leaves both nodes up: the check at once finds none ' +
+        'either', async () => {
         const { cluster, downs } = await byName();
 
         const seen = [await openWithNoRoute(cluster, 0, true),
@@ -772,8 +797,8 @@ describe('nodes addressed by a name that this host has no route for', () => {
             expect([isUp(cluster), downs()]).toEqual([[false, true], ['fall']]);
         });
 
-    // A node that is gone when its route is back: no route for the call, and no answer for
-    // the check that starts then. It runs into its timeout of 200 ms
+    // A node that is gone when its route is back: no route for the call, and no answer on
+    // the connection the check opens after it. It runs into its timeout of 200 ms
     it('no route for the call and no answer for its check: down, and says why', async () => {
         const { cluster, downs, servers } = await byName({ ...BLOCK, timeout: 200 });
 
@@ -787,6 +812,67 @@ describe('nodes addressed by a name that this host has no route for', () => {
         expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG]);
         expect(cluster.nodes()[0].checkError).toEqual({});
         expect([isUp(cluster), downs()]).toEqual([[false, true], ['passive_unreachable']]);
+    });
+
+    // The outage of a route that is gone for new connections only, with pools that hold
+    // no connection: every call has to open one and finds no route. The connection the
+    // node held for its checks goes on answering, and a check that asked there would keep
+    // the node up for as long as the route is gone. fall is 2, as the default
+    const emptyPools = () => byName({ ...BLOCK, fall: 2 }, 0);
+    const openNone = async (cluster: any, index: number): Promise<string> => {
+        noRoute = true;
+        const error = await cluster.pools[index].getConnection()
+            .then((): any => undefined, (e: any) => e);
+        return error.code;
+    };
+
+    it('empty pools and a route that stays gone for new connections: down by fall',
+        async () => {
+            const { cluster, downs, failedChecks, servers } = await emptyPools();
+            // the check of the timer after the one passive health starts
+            timerDue(1);
+
+            const code = await openNone(cluster, 0);
+            await until(() => !isUp(cluster)[0], 'node 0 to go down', () => waitsOf(cluster, 0));
+            await until(() => servers[0].open() === 0, 'the held one to close', servers[0].open);
+
+            // both checks had to open a connection, and the one the node held is logged out of
+            expect(code).toBe('ENETUNREACH');
+            expect(failedChecks[0]).toEqual(['ENETUNREACH', 'ENETUNREACH']);
+            expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG, LONG]);
+            expect([isUp(cluster), downs()]).toEqual([[false, true], ['fall']]);
+        });
+
+    it('empty pools and a route that is back for the next check: the node stays up, with ' +
+        'one connection', async () => {
+        const { cluster, downs, failedChecks, servers } = await emptyPools();
+
+        const code = await openNone(cluster, 0);
+        await settled(cluster, 0);
+        noRoute = false;
+        // the check of the timer, by hand
+        await cluster.pools[0].status.checkStatus();
+        await until(() => servers[0].open() === 1, 'one open connection', servers[0].open);
+
+        // the first of fall 2, then a pass on the connection the second check opened
+        expect([code, failedChecks[0]]).toEqual(['ENETUNREACH', ['ENETUNREACH']]);
+        expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
+        expect([servers[0].logins(), cluster.nodes()[0].checkError]).toEqual([2, undefined]);
+    });
+
+    it('a route that is back when the check starts: it passes on a new connection, and ' +
+        'the node holds that one alone', async () => {
+        const { cluster, downs, failedChecks, servers } = await emptyPools();
+
+        const code = await openNone(cluster, 0);
+        noRoute = false;
+        await settled(cluster, 0);
+        await until(() => servers[0].open() === 1, 'one open connection', servers[0].open);
+
+        // the login of connect() and the one of this check, whose connection is kept
+        expect([code, failedChecks[0], servers[0].logins()]).toEqual(['ENETUNREACH', [], 2]);
+        expect(waitsOf(cluster, 0)).toEqual([LONG, 0, LONG]);
+        expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
     });
 
     it('with passive false no check starts', async () => {
