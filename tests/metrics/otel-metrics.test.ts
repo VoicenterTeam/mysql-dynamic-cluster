@@ -275,12 +275,14 @@ describe('OpenTelemetry metrics', () => {
     it('records a cluster query that found no valid pool as failed', async () => {
         const pool = makePool(makeConn());
         (pool.status as any)._isValid = false;
-        await expect(makeCluster(pool).query('SELECT 1', null, { redis: false })).rejects.toThrow('There is no pool');
+        await expect(makeCluster(pool).query('SELECT 1', null, { redis: false }))
+            .rejects.toMatchObject({ code: 'MDC_NO_NODE_AVAILABLE' });
 
         const collected = await collect();
         expect(collected[OPERATION]).toBeUndefined();
         expect(counts(collected, QUERY)).toEqual([1]);
-        expect(collected[QUERY].points[0].attributes['error.type']).toBe('_OTHER');
+        expect(collected[QUERY].points[0].attributes['error.type']).toBe('MDC_NO_NODE_AVAILABLE');
+        expect(collected[QUERY].points[0].attributes['db.response.status_code']).toBeUndefined();
     });
 
     it('records a cached value that does not parse as a failed query, when no pool is valid', async () => {
@@ -306,14 +308,15 @@ describe('OpenTelemetry metrics', () => {
         expect(collected[QUERY].points[0].attributes['error.type']).toBe('_OTHER');
     });
 
-    it('records a failed cluster query with error.type and no result source', async () => {
+    it('records a failed cluster query with the code of the node and no result source', async () => {
         const cluster = makeCluster(makePool(makeConn({ queryErr: accessDenied })));
-        await expect(cluster.query('SELECT 1', null, { redis: false })).rejects.toThrow('Access denied');
+        await expect(cluster.query('SELECT 1', null, { redis: false })).rejects.toBe(accessDenied);
 
         const collected = await collect();
         expect(collected[CACHE]).toBeUndefined();
         expect(collected[QUERY].points).toHaveLength(1);
-        expect(collected[QUERY].points[0].attributes['error.type']).toBe('_OTHER');
+        expect(collected[QUERY].points[0].attributes['error.type']).toBe('ER_ACCESS_DENIED_ERROR');
+        expect(collected[QUERY].points[0].attributes['db.response.status_code']).toBe('1045');
         expect(collected[QUERY].points[0].attributes[SOURCE]).toBeUndefined();
     });
 });
