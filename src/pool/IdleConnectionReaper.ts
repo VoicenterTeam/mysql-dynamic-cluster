@@ -13,6 +13,9 @@ export class IdleConnectionReaper {
     }
 
     start(pool: { _freeConnections: { length: number } }): void {
+        // a connect() without a disconnect() starts again: its timer takes the place of
+        // the one before, which would keep the process alive after a disconnect()
+        if (this._timer !== null) clearInterval(this._timer);
         this._pool = pool;
         this._timer = setInterval(() => this._tick(), this._idleCheckInterval);
     }

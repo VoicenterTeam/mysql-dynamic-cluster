@@ -496,6 +496,25 @@ describe('the check connection: connect() and disconnect()', () => {
         expect([first.end.mock.calls.length, last().end.mock.calls.length]).toEqual([1, 0]);
     });
 
+    // Each connect() starts the timer that closes idle connections of its pool. The one
+    // of a connect() that was replaced has to end with it, or the process never exits
+    it.each([1, 2])('%i connect() calls, then disconnect(): no timer of the node is left',
+        async calls => {
+            const pool = await connected();
+            for (let call = 1; call < calls; call++) {
+                const connecting = pool.connect();
+                await logIn(last());
+                await answer(last());
+                await connecting;
+            }
+
+            pool.disconnect();
+            // the logout of a check connection gives the server 2000 ms to close
+            jest.advanceTimersByTime(2000);
+
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
     // mysql2 takes no command on a connection once its logout is queued
     const closedState = () => Object.assign(
         new Error("Can't add new command when connection is in closed state"), { fatal: true });
