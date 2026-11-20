@@ -16,6 +16,7 @@ If you're new to the project, read in this order:
 
 - [architecture.md](architecture.md) — boot and runtime diagrams, singletons, and the connect/disconnect lifecycle.
 - [configuration.md](configuration.md) — zod schema, strict validation, `Settings.mixSettings` merge order, defaults.
+- [configuration.md, moving from `timerCheckRange` and `timerCheckMultiplier`](configuration.md#moving-from-timercheckrange-and-timercheckmultiplier): the migration note for an app on the legacy health check settings that wants the `healthCheck` block.
 - [events.md](events.md) — catalog of cluster and pool events, their payloads, and the array-wrapping listener quirk.
 - [sql-assets.md](sql-assets.md) — hashing-database tables, routines, capacity caps, and SQL path resolution.
 - [testing.md](testing.md) — Jest layout, which suites run, and the four stale suites that still fail to compile.

@@ -184,6 +184,20 @@ The block is strict like every other object of the settings, and every problem i
 
 #### Moving from `timerCheckRange` and `timerCheckMultiplier`
 
+This part is for an app that runs on the legacy check and wants the block. Nothing forces the move. A node without the block is checked as in 4.6.0: the same waits, the same timeout, down at the second failed check and back with one pass. [tests/pool/health-check-legacy.test.ts](../tests/pool/health-check-legacy.test.ts) holds that, with the default settings and with the settings of the example below.
+
+The steps:
+
+1. Upgrade the package first. Versions 4.0.0 to 4.6.0 reject the key `healthCheck` when the cluster is created, as they reject every key they do not know.
+2. Add `healthCheck: {}` to `defaultPoolSettings`. To try it on one node first, add it to that host instead. A block on one host switches that host alone, see [On `defaultPoolSettings` and on a host](#on-defaultpoolsettings-and-on-a-host).
+3. Remove `timerCheckRange` and `timerCheckMultiplier` wherever the block now applies. A node with the block ignores them. While they are there it logs one `warn` that names them, and the settings stay valid.
+4. Keep `queryTimeout`. It still limits the queries of the app. It no longer limits the check.
+5. Go through [What changes for the app](#what-changes-for-the-app) and set the keys of the block the app needs.
+
+To go back, remove the block and put the two keys back. The node is on the legacy check again.
+
+##### Before and after
+
 The legacy check waits longer after each answered check and shorter after each failed one, between the two ends of `timerCheckRange`. An app that wanted few checks set a long range, and paid for it when a node died. Take this app:
 
 ```js
@@ -218,9 +232,34 @@ defaultPoolSettings: {
 
 Every number is measured, see [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#time-to-leave-rotation-and-to-come-back), for the row of the query [Time to leave rotation once a call of the app fails](subsystems/health-and-scoring.md#time-to-leave-rotation-once-a-call-of-the-app-fails) and, for the last two rows, [Logins in one hour](subsystems/health-and-scoring.md#logins-in-one-hour).
 
+##### What each legacy setting becomes
+
+| Legacy check | With the block | Default with the block |
+|---|---|---|
+| `timerCheckRange.start`, 5000 by default. The shortest wait, reached after failed checks | `interval`. One wait after every check, passed or failed | `5000` |
+| `timerCheckRange.end`, 15000 by default. The longest wait, reached after answered checks | `interval` as well | `5000` |
+| `min(queryTimeout, timerCheckRange.end)`, 15000 with the defaults. The limit of one check | `timeout` | the `interval` of the node |
+| `timerCheckMultiplier`, 1.3 by default. How far the wait moves after each check | Nothing. The wait does not move, so no key takes its place | |
+| A multiplier below 1 with a wide range, to ask a node that refuses the login less often | `authRetryInterval`, for a refused login alone | the longer of `60000` and the `interval` of the node |
+| Down at the second failed check in a row. Fixed, not a setting | `fall` | `2` |
+| Back with one check that passes. Fixed, not a setting | `rise`. The first pass after `connect()` is enough by itself | `2` |
+| No error of a query of the app moves a node | `passive` | `true` |
+
+The defaults of the block are in the table of [`healthCheck`](#healthcheck). With an empty block a node is checked every 5 s, one check may take 5 s, and two failed checks in a row take the node down, as with the legacy check. Two passes bring it back, where the legacy check needs one.
+
+##### An app that raised `timerCheckMultiplier`
+
+A multiplier above the default moves the legacy wait to the ends of the range in fewer checks. With a multiplier of 3 and the default range, one failed check sets the wait to 5000 and one answered check sets it back to 15000. With the default of 1.3 the first failed check sets it to 11538. So with the raised key the second check comes 5 s after the first failure, not 11.5 s, and a dead node leaves rotation that much sooner.
+
+Such an app can drop the key once it uses the block. The wait after a failed check is then `interval`, 5000 by default, and no multiplier has a part in it. A dead node is out after 10 s at most, or 20 s when its checks hang. With `passive` on, a node that refuses connections is out with the first call of the app that fails, and no check is waited for.
+
+One thing changes the other way. A healthy node is checked every 5 s, where the raised multiplier checked it every 15 s. Set `interval` to keep that pace, see item 2 of [What changes for the app](#what-changes-for-the-app).
+
+##### An app that set a multiplier below 1
+
 A multiplier below 1 turns the legacy rule around: the wait shrinks after an answered check and grows after a failed one. An app that set it, with a wide range, to keep a node with a wrong password from being asked every 5 seconds can drop both keys. With the legacy defaults such a node gets 718 logins in an hour. The wide range brought that down to 60, and made every other failure wait a minute as well, so a dead node took 75 s to leave rotation. The block keeps the 60 for a refused login alone, through `authRetryInterval`, and checks a node that fails any other way every `interval`.
 
-What changes for the app:
+##### What changes for the app
 
 1. **Remove `timerCheckRange` and `timerCheckMultiplier`.** They are ignored next to the block, and each node logs one `warn` while they are there. The slow retry they gave a refused login comes from `authRetryInterval` now, with no key to set.
 2. **A node is checked more often.** Each check is one `SHOW GLOBAL STATUS` on the check connection of the node. With the defaults that is one every 5 s per node, where the legacy defaults settle at one every 15 s. Set `interval` to keep the old pace: `healthCheck: { interval: 15000 }` checks every 15 s and takes a dead node out after 30 s, or after 60 s when its checks hang.
