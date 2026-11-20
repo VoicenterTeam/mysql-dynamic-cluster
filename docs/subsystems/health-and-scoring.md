@@ -91,8 +91,9 @@ A check ends in one of four ways:
    error the package made. The run of passes is reset and the run of
    failures grows by one. At `fall` in a row the node goes down. Every kind
    of failure counts the same, but for the next one. One failed check is
-   enough when a query of the app lost its connection since the last check
-   that got its answer, see [Passive health](#passive-health).
+   enough when a query of the app lost its connection, got none in time or
+   found no route since the last check that got its answer, unless that
+   check finds no route itself. See [Passive health](#passive-health).
 4. **The server refused the login or the account.** It is a failed check
    that takes the node down at once, whatever `fall` is. See
    [A login or account refusal](#a-login-or-account-refusal).
@@ -336,10 +337,13 @@ the last two those of the
   Such a node is checked every `interval` and goes down at `fall`.
 - **What a check on an open connection does not see.** An app reported from
   a real server that for 1040 and 1129 a new login is refused while the
-  change of user on an open connection still passes. A pool that holds an
-  open connection runs its check on that one. Such a check passes, and sees
-  neither of the two until it has to open a new connection. This was not
-  reproduced here and is not changed.
+  change of user on an open connection still passes. A check asks on an
+  open connection when there is one: the check connection the node holds,
+  or for the legacy check an idle connection of the pool. Such a check
+  passes, and sees neither of the two until it has to open a new
+  connection. For 1040 this was measured against a server the probe
+  played, see [What never counts](#what-never-counts). Neither was
+  reproduced against a real server here, and it is not changed.
 - **`connect()` checks at once.** `authRetryInterval` holds back the timer
   of the node, nothing else. A `disconnect()` and a new `connect()` log in
   right away, whatever the last check ended with. A refused check of that
@@ -441,8 +445,9 @@ Measured with a fake clock in
 [tests/pool/health-check.test.ts](../../tests/pool/health-check.test.ts). A
 node passes the check of `connect()`, and from then on the server refuses
 every login with 1045. The table counts the checks in the hour after the
-first refused one. Each is one login at the server, as the pool holds no
-connection to use again.
+first refused one. Each is one login at the server: a refused login leaves
+no connection to use again, neither the check connection of a node with
+the block nor one in the pool of a node without it.
 
 | Settings | Wait after a refused login, ms | Logins in that hour |
 | --- | --- | --- |
@@ -719,7 +724,7 @@ queries through `cluster.query()`.
 
 | Node and pool settings | Pause | First query after the pause | Pooled connections forgotten, per node |
 | --- | --- | --- | --- |
-| The check through the pool, before this change | 3 s | Answered | 0 |
+| The check through the pool, before the check connection | 3 s | Answered | 0 |
 | Check connection, pool settings at their defaults | 3 s | Rejected with `ECONNRESET` after it failed on both nodes | 1 |
 | No block, `timerCheckRange` 400 to 600 | 3 s | Answered | 0 |
 | Check connection, `idleTimeout: 1000` | 3 s | Rejected | 1 |
@@ -976,7 +981,7 @@ went down at the same moment and was back by `rise` 10 s later, in 2 runs.
 some for minutes. The same probe with every query timed to its answer,
 399 queries in each run:
 
-| | Pools that hold no connection, 2 runs | One open connection in each pool, 1 run | The check through the pool, before this change, 1 run |
+| | Pools that hold no connection, 2 runs | One open connection in each pool, 1 run | The check through the pool, before the check connection, 1 run |
 | --- | --- | --- | --- |
 | Queries rejected | 0 | 0 | 0 |
 | Took longer than 10.5 s | 140 | 0 | 0 |
@@ -1000,9 +1005,9 @@ from `connect()` until its first query.** It holds no connection then.
 With the check through the pool it never was: the check of `connect()`
 left one connection in the pool, which is the third column. A pool whose
 connections are all in use has to open one for the next query in the same
-way, with or without this change.
+way, with the check connection and without it.
 
-The review of this change timed the first column with a probe of its own,
+An independent review timed the first column with a probe of its own,
 in 1 run: no query rejected of 399, 141 took longer than 10.5 s, 121 had
 no answer at 40 s and 101 at 52 s, and the slowest took 145 s.
 
@@ -1026,10 +1031,9 @@ With `rise: 1` that one check brings the node back in the same millisecond.
 With the default of 2 the node is back one `interval` later, and with
 `rise: 3` two intervals later.
 
-A lost connection, or a connect timeout, whose check got its answer is
-over. The node stays up,
-the run of failures starts again as after any pass, and the next failed
-check is the first of `fall`.
+A lost connection, a connect timeout or a missing route whose check got
+its answer is over. The node stays up, the run of failures starts again as
+after any pass, and the next failed check is the first of `fall`.
 
 #### What never counts
 
@@ -1060,10 +1064,10 @@ new connection with 1040 from one moment on,
 `healthCheck: { interval: 500 }`, a pool that holds no connection, 20
 queries 150 ms apart. All 20 were rejected, the server answered 5 checks
 in that time, no check failed, the node was up and `checkError` unset.
-With the check through the pool, before this change, the check of
+With the check through the pool, before the check connection, the check of
 `connect()` had left one connection in the pool: 1 or 2 of the 20 were
-rejected, one check failed with 1040, and the node was up as well. The
-review of this change measured the same with a probe of its own.
+rejected, one check failed with 1040, and the node was up as well. An
+independent review measured the same with a probe of its own.
 
 The status query of a check never counts either. A failed check has rules
 of its own: `fall` and the refusal list. The check of a node with the block
@@ -1467,11 +1471,12 @@ value is an empty object in these cases:
   answer. Only what the status query is rejected with is reduced.
 - The error is not an object, or reading one of the three fields throws.
 
-A check that times out ends by its own timer, not by the `timeout` option
-of mysql2 that the status query is sent with. Both have the same length,
-and the timer of the check is set first: mysql2 sets its timer only after
-the connection was handed out and the database was changed, which is never
-in the same turn. So a timed out check reports `{}`, not
+A check that times out ends by its own timer. The legacy check also sends
+its status query with the `timeout` option of mysql2. Both have the same
+length, and the timer of the check is set first: mysql2 sets its timer only
+after the connection was handed out and the database was changed, which is
+never in the same turn. A node with a `healthCheck` block sends the status
+query with no such option. So a timed out check reports `{}` in both, not
 `PROTOCOL_SEQUENCE_TIMEOUT`. The connect timeout of mysql2 is set when the
 connection is made, before the timer of the check, and is 10 s. It ends the
 check with `ETIMEDOUT` when the timer of the check is longer than that.

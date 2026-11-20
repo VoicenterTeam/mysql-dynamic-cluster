@@ -148,7 +148,7 @@ helper.
 
 ## `query()`
 
-[src/pool/Pool.ts:265-341](../../src/pool/Pool.ts#L265).
+[src/pool/Pool.ts:265-340](../../src/pool/Pool.ts#L265).
 
 `async query<T extends QueryResult>(sql: string, queryOptions?:
 IQueryOptions): Promise<T | T[]>`. The body wraps a callback-style
@@ -178,7 +178,7 @@ can be broken down by pool, service and error type. See
 ### Execution sequence
 
 The `Promise` callback chain is, in order
-([src/pool/Pool.ts:304-339](../../src/pool/Pool.ts#L304)):
+([src/pool/Pool.ts:304-338](../../src/pool/Pool.ts#L304)):
 
 1. `_pool.getConnection((err, conn) => { ... })` — checks out a raw
    `mysql2.PoolConnection`. On error, records the
@@ -200,7 +200,7 @@ The `Promise` callback chain is, in order
 4. On success: stops the `QueryTimer`, records the attempt as
    `mysql_dynamic_cluster.operation.duration`, logs a slow-query
    warning if `queryTimer.get() >= _slowQueryTime`
-   ([src/pool/Pool.ts:323-325](../../src/pool/Pool.ts#L323)),
+   ([src/pool/Pool.ts:322-324](../../src/pool/Pool.ts#L322)),
    optionally writes the
    result to Redis (see below), and resolves with the mysql2 result.
 
@@ -228,7 +228,7 @@ ended the call before the error came. The abort itself is not told.
 ### Redis cache write
 
 If `queryOptions.redis` is truthy
-([src/pool/Pool.ts:327-334](../../src/pool/Pool.ts#L327)), the
+([src/pool/Pool.ts:326-333](../../src/pool/Pool.ts#L326)), the
 successful result is serialised into an `IRedisData`:
 
 - `data`: the raw query result.
@@ -251,7 +251,7 @@ and [#1a](../known-issues.md#1a-connections-released-back-to-the-pool-after-a-ti
 
 ## `multiStatementQuery()`
 
-[src/pool/Pool.ts:348-431](../../src/pool/Pool.ts#L348).
+[src/pool/Pool.ts:347-430](../../src/pool/Pool.ts#L347).
 
 `async multiStatementQuery<T extends QueryResult>(sqls: string[],
 queryOptions: IQueryOptions): Promise<T[]>`. Wraps a series of SQL
@@ -264,11 +264,11 @@ ship the SQL-asset bootstrap statements as one atomic unit (see
 Same merge pattern as `query()`, but the Redis-related defaults are
 omitted — this method does not cache:
 `{ timeout: _queryTimeout, database: _database, ...queryOptions }`
-([src/pool/Pool.ts:350-354](../../src/pool/Pool.ts#L350)).
+([src/pool/Pool.ts:349-353](../../src/pool/Pool.ts#L349)).
 
 ### Execution sequence
 
-[src/pool/Pool.ts:389-429](../../src/pool/Pool.ts#L389):
+[src/pool/Pool.ts:389-428](../../src/pool/Pool.ts#L389):
 
 1. `_pool.getConnection(...)` — same guards as `query()`. Reject on
    error or missing `conn`.
@@ -528,7 +528,7 @@ the waiting requests reject with it as before.
 | `connect(outcome?)` | `async (outcome?: ICheckOutcome) => Promise<void>` | [:104](../../src/pool/Pool.ts#L104) |
 | `disconnect()` | `() => void` | [:239](../../src/pool/Pool.ts#L239) |
 | `query<T>(sql, options?)` | `async => Promise<T \| T[]>` | [:265](../../src/pool/Pool.ts#L265) |
-| `multiStatementQuery<T>(sqls, options)` | `async => Promise<T[]>` | [:348](../../src/pool/Pool.ts#L348) |
+| `multiStatementQuery<T>(sqls, options)` | `async => Promise<T[]>` | [:347](../../src/pool/Pool.ts#L347) |
 | `getConnection(signal?, outcome?)` | `(signal?: AbortSignal, outcome?: IAbortOutcome) => Promise<PoolConnection>` | [`getConnection`](../../src/pool/Pool.ts) |
 | `Pool.abortReason(signal)` | `static (signal: AbortSignal) => unknown` | [`abortReason`](../../src/pool/Pool.ts) |
 | `failWaiting(error)` | `(error: Error) => number` | [`failWaiting`](../../src/pool/Pool.ts) |
