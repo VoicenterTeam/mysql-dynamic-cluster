@@ -243,29 +243,17 @@ describe('a refused login whose check ran to its end', () => {
         expect((await firstReady).map(checkErrorOf)).toStrictEqual([DENIED]);
     });
 
-    // disconnect() stops the idle check interval of the last connect() of a pool only. The one
-    // of the first of two connect() calls would keep jest from exiting, so the test stops
-    // every interval that was started in it
-    describe('with a second connect() while the first one is out', () => {
-        let intervals: jest.SpyInstance;
-        beforeEach(() => { intervals = jest.spyOn(global, 'setInterval'); });
-        afterEach(() => {
-            intervals.mock.results.forEach(started => clearInterval(started.value));
-            intervals.mockRestore();
-        });
+    it('keeps its code on the results of the first of two connect() calls', async () => {
+        const server = await listen('refuses the login');
+        const cluster = makeCluster([server.port]);
+        const first = connectOf(cluster);
+        const [ready, firstReady] = [cluster.ready, cluster.firstReady];
+        const second = connectOf(cluster);
 
-        it('keeps its code on the results of the first of two connect() calls', async () => {
-            const server = await listen('refuses the login');
-            const cluster = makeCluster([server.port]);
-            const first = connectOf(cluster);
-            const [ready, firstReady] = [cluster.ready, cluster.firstReady];
-            const second = connectOf(cluster);
-
-            expect([await first, await second]).toEqual([NOT_VALID, NOT_VALID]);
-            expect((await ready).map(checkErrorOf)).toStrictEqual([DENIED]);
-            expect((await firstReady).map(checkErrorOf)).toStrictEqual([DENIED]);
-            expect((await cluster.ready).map(checkErrorOf)).toStrictEqual([DENIED]);
-        });
+        expect([await first, await second]).toEqual([NOT_VALID, NOT_VALID]);
+        expect((await ready).map(checkErrorOf)).toStrictEqual([DENIED]);
+        expect((await firstReady).map(checkErrorOf)).toStrictEqual([DENIED]);
+        expect((await cluster.ready).map(checkErrorOf)).toStrictEqual([DENIED]);
     });
 });
 
