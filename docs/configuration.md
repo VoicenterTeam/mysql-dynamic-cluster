@@ -190,7 +190,7 @@ The steps:
 
 1. Upgrade the package first. Versions 4.0.0 to 4.6.0 reject the key `healthCheck` when the cluster is created, as they reject every key they do not know.
 2. Add `healthCheck: {}` to `defaultPoolSettings`. To try it on one node first, add it to that host instead. A block on one host switches that host alone, see [On `defaultPoolSettings` and on a host](#on-defaultpoolsettings-and-on-a-host).
-3. Remove `timerCheckRange` and `timerCheckMultiplier` wherever the block now applies. A node with the block ignores them. While they are there it logs one `warn` that names them, and the settings stay valid.
+3. Remove `timerCheckRange` and `timerCheckMultiplier` once every host they reach has the block. A node with the block ignores them. While they are there it logs one `warn` that names them, whether the app wrote them on that host or in `defaultPoolSettings`, and the settings stay valid. With the block on some hosts only, the hosts without it still take the two keys from `defaultPoolSettings`. Removing them there would put those hosts on the default range and multiplier, and nothing would say so. Leave the keys there and expect the `warn`, or move them to the hosts that keep the legacy check.
 4. Keep `queryTimeout`. It still limits the queries of the app. It no longer limits the check.
 5. Go through [What changes for the app](#what-changes-for-the-app) and set the keys of the block the app needs.
 
@@ -249,7 +249,7 @@ The defaults of the block are in the table of [`healthCheck`](#healthcheck). Wit
 
 ##### An app that raised `timerCheckMultiplier`
 
-A multiplier above the default moves the legacy wait to the ends of the range in fewer checks. With a multiplier of 3 and the default range, one failed check sets the wait to 5000 and one answered check sets it back to 15000. With the default of 1.3 the first failed check sets it to 11538. So with the raised key the second check comes 5 s after the first failure, not 11.5 s, and a dead node leaves rotation that much sooner.
+A multiplier above the default moves the legacy wait to the ends of the range in fewer checks. With a multiplier of 3 and the default range, one failed check sets the wait to 5000 and one answered check sets it back to 15000. With the default of 1.3 the first failed check sets a wait of 15000 to 11538. A healthy node has that wait from its second answered check after `connect()` on. So with the raised key the second check comes 5 s after the first failure, not 11.5 s, and a dead node leaves rotation that much sooner.
 
 Such an app can drop the key once it uses the block. The wait after a failed check is then `interval`, 5000 by default, and no multiplier has a part in it. A dead node is out after 10 s at most, or 20 s when its checks hang. With `passive` on, a node that refuses connections is out with the first call of the app that fails, and no check is waited for.
 
