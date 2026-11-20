@@ -686,12 +686,13 @@ every connection is down after one check.
 
 **The check keeps no connection of the pool in use.** A check through the
 pool draws an idle connection of the pool each time it runs. The legacy
-check does, and so did the check of a node with the block in 4.6.0. So the
-connection that `minConnections: 1` keeps carried a query every `interval`,
-and a path with an idle timeout never forgot it. The check connection
-takes that away. While the app sends nothing the connections of the pool
-carry no byte, and the path forgets them. The check connection itself
-stays in use and is not forgotten.
+check does, in 4.6.0 and now. So the connection that `minConnections: 1`
+keeps carries a query at every check, and a path whose idle timeout is
+longer than the wait between two checks does not forget it. A node with
+the block has no such check: the block is not in 4.6.0 or earlier, and its
+check asks on the check connection. While the app sends nothing the
+connections of its pool carry no byte, and the path forgets them. The
+check connection itself stays in use and is not forgotten.
 
 - **The first query after the pause fails with `ECONNRESET`**, on every
   node whose pooled connection the path forgot. `cluster.query()` sends
@@ -724,18 +725,28 @@ queries through `cluster.query()`.
 | Check connection, `idleTimeout: 1000` | 3 s | Rejected | 1 |
 | Check connection, `idleTimeout: 500`, `idleCheckInterval: 250` | 3 s | Rejected | 1 |
 | Check connection, `minConnections: 0`, `idleTimeout: 1000` | 3 s | Rejected | 1 |
-| Check connection, `minConnections: 0`, `idleTimeout: 1000`, `idleCheckInterval: 1000` | 1.8 s | Rejected | 1 |
+| Check connection, `minConnections: 0`, `idleTimeout: 1000`, `idleCheckInterval: 1000` | 1.55 s and 1.65 s | Rejected | 1 |
 | Check connection, `minConnections: 0`, `idleTimeout: 1000`, `idleCheckInterval: 250` | 1.8 s and 3 s | Answered | 0 |
 | Check connection, `minConnections: 0`, `idleTimeout: 500`, `idleCheckInterval: 250` | 3 s | Answered | 0 |
 
-Each row was the same in its 3 runs. The four queries after the first were
-answered in every run, and no node went down in any. In the sixth row
-`idleCheckInterval` is at its default of 10 s, so the timer did not look
-once during the pause. The review of this change ran the first four rows
-with a probe of its own and found the same, 2 or 3 runs per row. It also
-reports the first query answered with `minConnections: 0` and an
-`idleTimeout` below that of the path, in 2 runs, which this probe sees
-only with `idleCheckInterval` set as in the last two rows.
+Each row was the same in its 3 runs, at each pause it names. The four
+queries after the first were answered in every run, and no node went down
+in any. In the sixth row `idleCheckInterval` is at its default of 10 s, so
+the timer did not look once during the pause.
+
+In the seventh row `idleTimeout` plus `idleCheckInterval` is 2 s, above the
+1500 ms of the path. So there is a time in which the path has forgotten a
+connection the pool still holds, and it ends when the timer looks next.
+The first query was rejected in 3 of 3 runs after a pause of 1.55 s and of
+1.65 s, in 2 of 3 after 1.75 s and in 1 of 3 after 1.8 s. It was answered
+in 3 of 3 after 2 s and after 2.5 s: by then the timer had closed the
+connection. With `idleCheckInterval: 250`, the eighth row, it was answered
+in 3 of 3 runs at each of these six pauses.
+
+An independent review of the check connection ran the first four rows with
+a probe of its own and found the same, 2 or 3 runs per row. It also saw
+the first query answered with `minConnections: 0`, an `idleTimeout` below
+that of the path and `idleCheckInterval: 300`, in 2 runs.
 
 The package does nothing more about it. Whether it should keep a pooled
 connection of a quiet node in use is an open question.

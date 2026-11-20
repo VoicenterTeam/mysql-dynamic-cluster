@@ -364,7 +364,11 @@ away from the app. The rules of the check are in
 - **A listener for `error` stays on it.** mysql2 tells a connection that
   nobody asks on of its loss with an `error` event, and an `error` event
   without a listener ends the process. The listener drops the connection,
-  and the next check opens a new one.
+  and the next check opens a new one. It stays after that first event, so
+  a second one on the same connection is taken as well and nothing is
+  thrown. No path was found on which mysql2 3.24.6 sends a second one to a
+  connection the listener dropped. That was read from its source and not
+  run, so the test that holds the listener sends the second event itself.
 - **mysql2 gives a login 10 s.** The check connection takes the
   `connectTimeout` of mysql2 as the pool does. A check whose
   `healthCheck.timeout` is longer than 10 s ends a login that hangs after
