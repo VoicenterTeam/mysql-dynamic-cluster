@@ -291,6 +291,36 @@ describe('the check connection: when it is kept and when it is dropped', () => {
         expect([pool.holdsCheckConnection, idle.destroy.mock.calls.length]).toEqual([false, 1]);
         expect(pool.checkError).toBeUndefined();
     });
+
+    // The listener stays on a connection after its first error event. No path was found
+    // on which mysql2 3.24.6 sends a second one there, so the test sends it itself
+    const lostWhileIdle = async () => {
+        const pool = await started();
+        last().emit('error', lost());
+        return pool;
+    };
+    const refusedAtLogin = async () => {
+        const pool = makePool();
+        pools.push(pool);
+        pool.connect().catch((): void => undefined);
+        last().emit('error', Object.assign(new Error('Access denied'), { errno: 1045 }));
+        await settle();
+        return pool;
+    };
+
+    it.each<[string, () => Promise<any>]>([
+        ['was lost while nobody asked', lostWhileIdle],
+        ['was refused its login', refusedAtLogin]
+    ])('a second error event on one that %s: nothing is thrown', async (_name, dropped) => {
+        const pool = await dropped();
+        const first = last();
+        pool.status.checkStatus();
+        await settle();
+
+        expect(() => first.emit('error', lost())).not.toThrow();
+        // the check opened a second one, and the node still holds it
+        expect([connections().length, pool.holdsCheckConnection]).toEqual([2, true]);
+    });
 });
 
 describe('the check connection: a connection that was lost', () => {
@@ -380,6 +410,28 @@ describe('the check connection: a connection that was lost', () => {
         await answerUser(held, lost());
 
         expect(connections()).toHaveLength(1);
+    });
+
+    // The second attempt gets no answer. The connection the check dropped at its timeout
+    // has to be the one it asked on last: the first is gone already
+    it.each<[string, boolean]>([
+        ['is still logging in', false],
+        ['logged in and says nothing', true]
+    ])('the new one %s when the check times out: the check drops it', async (_name, loggedIn) => {
+        const pool = await started();
+        const held = last();
+
+        const checking = pool.status.checkStatus();
+        await settle();
+        await answerUser(held, lost());
+        if (loggedIn) await logIn(last());
+        await jest.advanceTimersByTimeAsync(TIMEOUT);
+        await checking;
+
+        expect([connections().length, pool.checkError]).toEqual([2, {}]);
+        expect([held.destroy.mock.calls.length, last().destroy.mock.calls.length])
+            .toEqual([1, 1]);
+        expect(pool.holdsCheckConnection).toBe(false);
     });
 });
 
@@ -588,6 +640,24 @@ describe('the check connection: after a call of the app that could open no conne
             await checking;
 
             expect([connections().length, used(held)]).toEqual([1, [0, 2]]);
+        });
+
+    // The node holds no connection when the call fails, so the one the check opens is new
+    // already and the only one. The timeout of the check has to drop it
+    it.each([['found no route', noRoute], ['got none in time', timedOut]])(
+        'that %s, on a node that holds none: the check drops the one it opened at its timeout',
+        async (_name, error) => {
+            const pool = await started();
+            last().emit('error', lost());
+            pool.status.realFailure(error(), true);
+            await jest.advanceTimersByTimeAsync(0);
+            const opened = [connections().length, pool.holdsCheckConnection];
+            await jest.advanceTimersByTimeAsync(TIMEOUT);
+
+            expect(opened).toEqual([2, true]);
+            expect([last().destroy.mock.calls.length, pool.holdsCheckConnection])
+                .toEqual([1, false]);
+            expect([pool.status.isValid, pool.checkError]).toEqual([false, {}]);
         });
 });
 
