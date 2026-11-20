@@ -45,15 +45,16 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   helper that hands the connection back once and returns; the query only runs
   after `changeUser` succeeds.
 - **Severity:** **high**
-- **Location:** [src/pool/Pool.ts:167-194](../src/pool/Pool.ts#L167-L194)
+- **Location:** [src/pool/Pool.ts:265-340](../src/pool/Pool.ts#L265-L340), `Pool.query`
+  as it is now. The description is of the code before 3.2.2.
 - **Description:** Inside the nested `getConnection` -> `changeUser` -> `query`
   callback chain, every error branch calls `reject(err)` without a following
-  `return`. After a rejection in the `getConnection` branch (lines 167-174),
+  `return`. After a rejection in the `getConnection` branch,
   execution falls through into the `!conn` check, the `changeUser` call and the
   outer `query` call. The Promise stays rejected (resolves only once), but the
   callbacks still fire side effects against a possibly undefined connection,
   call `conn.release()` on a missing connection, and emit misleading log/metric
-  events. The `!conn` branch (lines 176-182) additionally calls
+  events. The `!conn` branch additionally calls
   `conn?.release()` on a connection that, by definition, does not exist.
 - **Suggested fix:** add `return;` after every `reject(...)` in the chain and
   remove the redundant `conn?.release()` from the `!conn` branch. Consider
@@ -87,7 +88,9 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   successful `_isValid`, so a node whose checks all failed stayed in rotation.
   It now sets `_isValid = false` after **two** failed checks in a row (one
   transient failure keeps the node in rotation); the next passing check
-  restores it.
+  restores it. A node with a `healthCheck` block counts `fall` failed
+  checks and `rise` passed ones instead, see
+  [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#two-modes).
 
 ### 1c. `availableConnectionCount` drifted
 
@@ -115,7 +118,9 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   logging on and `log_bin_trust_function_creators=0`), fixed in the same
   release.
 - **Severity:** **high**
-- **Location:** [src/pool/Pool.ts:282-307](../src/pool/Pool.ts#L282-L307)
+- **Location:** [src/pool/Pool.ts:347-430](../src/pool/Pool.ts#L347-L430),
+  `Pool.multiStatementQuery` as it is now. The description is of the code
+  before 3.2.2.
 - **Description:** Inside the `beginTransaction` callback, `sqls.forEach` fires
   each `conn.query(...)` callback-style, then `conn.commit(...)` is invoked,
   the results array is returned via `resolve(results)`, and `conn.release()`
@@ -249,14 +254,16 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   stores them. An unknown key or a wrong type throws one error at boot that
   lists every problem by its path.
 - **Severity:** **low**
-- **Location:** [index.ts:15](../index.ts#L15)
+- **Location:** [index.ts:22](../index.ts#L22), the `config.load` call as it
+  is now. The description is of the code before 4.0.0.
 - **Description:** The statement reads
   `config.load(userSettings).validate;` — it accesses the `.validate` method
   as a property but never invokes it. Result: user settings are loaded into
   the convict store but never validated at boot. The only validation that
   actually runs is the eager call at module load time in
-  [src/configs/index.ts:23](../src/configs/index.ts#L23), which validates the
-  *defaults* (since user settings have not been loaded yet). Cross-reference
+  [src/configs/index.ts](../src/configs/index.ts), which validates the
+  *defaults* (since user settings have not been loaded yet). That call is
+  gone since 4.0.0. Cross-reference
   [configuration.md](configuration.md) for the validation contract this
   silently breaks.
 - **Suggested fix:** append `()` so the call becomes
@@ -336,8 +343,8 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 - **Location:** `tests/` — see [testing.md](testing.md) for the per-file breakdown.
 - **Description:** Four suites were written against the dev-branch API and
   never ported (`tests/cluster/hashing.test.ts`, `tests/cluster/query.test.ts`,
-  `tests/pool/query.test.ts`, `tests/utils/settings.test.ts`). The other 16
-  suites pass. Failures include a deleted `AmqpLoggerConfig` import in
+  `tests/pool/query.test.ts`, `tests/utils/settings.test.ts`). Every other
+  suite passes. Failures include a deleted `AmqpLoggerConfig` import in
   [tests/utils/settings.test.ts:7](../tests/utils/settings.test.ts#L7), wrong
   constructor arity in
   [tests/pool/query.test.ts:11](../tests/pool/query.test.ts#L11) and
@@ -345,7 +352,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   and top-level `user`/`password`/`validators`/`loadFactors` (instead of nested
   under `defaultPoolSettings`) in
   [tests/cluster/query.test.ts:11-32](../tests/cluster/query.test.ts#L11-L32)
-  and [tests/loads/load.test.ts:14-37](../tests/loads/load.test.ts#L14-L37).
+  and [tests/loads/load.test.ts:16-37](../tests/loads/load.test.ts#L16-L37).
 - **Suggested fix:** rewrite each test file against the V3 schema and
   constructor signatures. Defer until after the dev -> V3 merge to avoid
   redoing the work.
