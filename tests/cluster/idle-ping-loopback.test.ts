@@ -61,6 +61,8 @@ interface IServer {
     // keep the answer to every ping from now on, until answerPings()
     holdPings: () => void,
     answerPings: () => void,
+    // how many logouts arrived
+    quits: () => number,
     // answer the next ping, then close the connection it came on, as a server does that
     // ends a connection it finds idle for too long
     closeAfterNextPing: () => void
@@ -68,7 +70,7 @@ interface IServer {
 const listen = async (): Promise<IServer> => {
     const server: any = (mysql as any).createServer();
     const connections: any[] = [];
-    const seen = { logins: 0, open: 0, pings: [] as number[], order: [] as string[] };
+    const seen = { logins: 0, open: 0, quits: 0, pings: [] as number[], order: [] as string[] };
     const heldPings: any[] = [];
     let holding = false;
     let closing = false;
@@ -117,12 +119,16 @@ const listen = async (): Promise<IServer> => {
             connection.sequenceId = 1;
             connection.writeTextResult(STATUS, [column('Variable_name'), column('Value')]);
         });
-        connection.on('quit', () => connection.close());
+        connection.on('quit', () => {
+            seen.quits++;
+            connection.close();
+        });
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     return {
         port: (server._server.address() as AddressInfo).port,
         logins: () => seen.logins,
+        quits: () => seen.quits,
         pings: () => [...seen.pings],
         order: () => [...seen.order],
         open: () => seen.open,
@@ -545,17 +551,30 @@ describe('an idleCheckInterval that makes the reaper look every millisecond', ()
 });
 
 describe('the ping and the life of a cluster', () => {
-    it('disconnect() while a ping is out: every connection is closed, and nothing is ' +
-        'logged about that ping', async () => {
+    // mysql2 queues the logout behind the ping. The server answers a logout and never
+    // this ping, as behind a path that died for the open flows
+    it('disconnect() while a ping has no answer: every connection is closed, and nothing ' +
+        'is logged about that ping', async () => {
         const { cluster, server, removals } = await quiet();
         await heldPing(server);
 
         cluster.disconnect();
-        server.answerPings();
         await until(() => server.open() === 0, 'no connection after a disconnect', server.open);
 
-        expect([removals(), pooled(cluster).idle]).toEqual([[], 1]);
+        expect(removals()).toEqual([]);
     });
+
+    it('disconnect() with no ping out logs out of the pooled connection, as before',
+        async () => {
+            const { cluster, server } = await quiet({ ...BLOCK, idleCheckInterval: LONG });
+
+            cluster.disconnect();
+            await until(() => server.open() === 0, 'no connection after a disconnect',
+                server.open);
+
+            // the check connection and the pooled one
+            expect(server.quits()).toBe(2);
+        });
 
     it('connect, disconnect, connect: the connection of the new pool is pinged', async () => {
         const { cluster, server } = await quiet();

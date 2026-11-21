@@ -351,7 +351,20 @@ describe('IdleConnectionReaper with a ping: stop and start', () => {
         expect([pings(conns), jest.getTimerCount()]).toEqual([[0], 0]);
     });
 
-    it('stop() while a ping is out leaves no timer, and closes nothing at the limit', () => {
+    // mysql2 queues the logout of disconnect() behind the ping, and would wait for an
+    // answer that may never come
+    it('stop() while a ping is out closes that connection and its socket, and no other', () => {
+        const { reaper, conns, removed } = pinging(2);
+        jest.advanceTimersByTime(INTERVAL);
+        conns[0].answer();
+
+        reaper.stop();
+
+        expect([destroys(conns), conns[1].stream.destroy.mock.calls.length]).toEqual([[0, 1], 1]);
+        expect(removed).not.toHaveBeenCalled();
+    });
+
+    it('stop() while a ping is out leaves no timer, and closes nothing more at the limit', () => {
         const { reaper, conns, removed } = pinging(1);
         jest.advanceTimersByTime(INTERVAL);
 
@@ -359,17 +372,27 @@ describe('IdleConnectionReaper with a ping: stop and start', () => {
         const timers = jest.getTimerCount();
         jest.advanceTimersByTime(LIMIT);
 
-        expect([timers, destroys(conns), removed.mock.calls]).toEqual([0, [0], []]);
+        expect([timers, destroys(conns), removed.mock.calls]).toEqual([0, [1], []]);
     });
 
-    it('a ping that fails after stop() closes nothing and reports nothing', () => {
+    it('a ping that fails after stop() closes nothing more and reports nothing', () => {
         const { reaper, conns, removed } = pinging(1);
         jest.advanceTimersByTime(INTERVAL);
         reaper.stop();
 
         conns[0].answer(lost());
 
-        expect([destroys(conns), removed.mock.calls]).toEqual([[0], []]);
+        expect([destroys(conns), removed.mock.calls]).toEqual([[1], []]);
+    });
+
+    it('a destroy that throws at stop() is not thrown on, and the next is still closed', () => {
+        const { reaper, conns } = pinging(2);
+        conns[0].destroy.mockImplementation(() => { throw new Error('gone already'); });
+        jest.advanceTimersByTime(INTERVAL);
+
+        expect(() => reaper.stop()).not.toThrow();
+
+        expect([destroys(conns), jest.getTimerCount()]).toEqual([[1, 1], 0]);
     });
 
     it('a second start() without a stop() sends one ping per tick, not two', () => {
@@ -787,18 +810,32 @@ describe('the ping and the life of a pool', () => {
         expect(pings([conn])).toEqual([0]);
     });
 
-    it('disconnect() while a ping is out: nothing is closed or logged at its limit', async () => {
+    it('disconnect() while a ping is out closes that connection, and logs nothing about ' +
+        'a ping', async () => {
         const pool = await connected();
         const conn = idleIn();
         jest.advanceTimersByTime(INTERVAL);
         debug.mockClear();
 
         pool.disconnect();
+        const closed = destroys([conn]);
         jest.advanceTimersByTime(CHECK_TIMEOUT);
         conn.answer(lost());
 
-        expect([destroys([conn]), removals()]).toEqual([[0], []]);
+        expect([closed, destroys([conn]), removals()]).toEqual([[1], [1], []]);
     });
+
+    it('disconnect() leaves an idle connection with no ping out to the logout of mysql2',
+        async () => {
+            const pool = await connected();
+            const conn = idleIn();
+            jest.advanceTimersByTime(INTERVAL);
+            conn.answer();
+
+            pool.disconnect();
+
+            expect([destroys([conn]), lastOf(createPool).end.mock.calls.length]).toEqual([[0], 1]);
+        });
 
     // The fake clock runs a timer of 2147483648 ms every millisecond, as Node does. One of
     // 0 ms it would never get past, so the waits below 1 ms are rows on the real clock

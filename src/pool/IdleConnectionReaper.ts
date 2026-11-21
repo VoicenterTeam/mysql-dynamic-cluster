@@ -74,9 +74,19 @@ export class IdleConnectionReaper {
             this._pingTimer = null;
         }
         this._idleConnections.clear();
-        // a ping that is still out decides nothing any more, and leaves no timer
-        this._pings.forEach(timer => clearTimeout(timer));
+        // A ping that is still out decides nothing any more, and leaves no timer. Its
+        // connection is closed with the socket: mysql2 queued the logout of disconnect()
+        // behind the ping, and would wait there for an answer that may never come
+        const out = [...this._pings];
         this._pings.clear();
+        for (const [connection, timer] of out) {
+            clearTimeout(timer);
+            try {
+                drop(connection);
+            } catch {
+                // ignore errors from already-dead connections
+            }
+        }
     }
 
     onRelease(connection: any): void {
