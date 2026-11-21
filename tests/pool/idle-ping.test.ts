@@ -174,14 +174,26 @@ describe('IdleConnectionReaper with a ping: which connections get one', () => {
 });
 
 describe('IdleConnectionReaper with a ping: what a ping ends with', () => {
-    it('an answered ping keeps the connection, and leaves no timer of its own', () => {
+    it('an answered ping keeps the connection, also once its limit passed', () => {
         const { reaper, conns, removed } = pinging(1);
         jest.advanceTimersByTime(INTERVAL);
 
         conns[0].answer();
         jest.advanceTimersByTime(LIMIT);
 
-        expect([destroys(conns), removed.mock.calls, jest.getTimerCount()]).toEqual([[0], [], 2]);
+        expect([destroys(conns), removed.mock.calls]).toEqual([[0], []]);
+        reaper.stop();
+    });
+
+    it('an answered ping clears the timer of its limit at once, not when the limit passes', () => {
+        const { reaper, conns } = pinging(1);
+        jest.advanceTimersByTime(INTERVAL);
+        const out = jest.getTimerCount();
+
+        conns[0].answer();
+
+        // while the ping is out: the age rule, the ping and the limit. Then the first two
+        expect([out, jest.getTimerCount()]).toEqual([3, 2]);
         reaper.stop();
     });
 
