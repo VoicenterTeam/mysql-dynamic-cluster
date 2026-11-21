@@ -610,7 +610,9 @@ keeps, at the moment of the call.
 
 - `used` is every connection of the pool minus the free ones. A connection that still logs in
   counts as used.
-- `idle` is the free connections: open, and nobody uses them.
+- `idle` is the free connections: open, and nobody uses them. A connection of a node with a
+  `healthCheck` block whose ping is out counts here too, see
+  [subsystems/pool.md](subsystems/pool.md#the-idle-connections-of-the-pool).
 - `pending` is the requests that wait for a connection.
 - `limit` is the `connectionLimit` of the node. `0` means no limit, as in mysql2.
 

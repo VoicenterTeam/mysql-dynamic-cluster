@@ -79,7 +79,7 @@ and rates come from the count, errors from the `error.type` attribute.
 
 | Metric | One record per | Recorded in |
 |---|---|---|
-| `mysql_dynamic_cluster.operation.duration` | Query attempt in one pool. A transaction (`multiStatementQuery`) is one record. Health checks count too: the legacy check runs through `Pool.query`, and `Pool.checkQuery` records the attempt of a check on the check connection the same way. | [src/pool/Pool.ts](../../src/pool/Pool.ts) |
+| `mysql_dynamic_cluster.operation.duration` | Query attempt in one pool. A transaction (`multiStatementQuery`) is one record. Health checks count too: the legacy check runs through `Pool.query`, and `Pool.checkQuery` records the attempt of a check on the check connection the same way. The ping of an idle pooled connection is no query attempt and no record. | [src/pool/Pool.ts](../../src/pool/Pool.ts) |
 | `mysql_dynamic_cluster.query.duration` | `GaleraCluster.query` call, including the cache lookup and every retry. | [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts) |
 | `mysql_dynamic_cluster.cache.lookup.duration` | Redis cache lookup on the normal query path. | [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts) |
 | `mysql_dynamic_cluster.health_check.duration` | Finished health check of one node, see [Health-check metric](#health-check-metric). | [src/pool/PoolStatus.ts](../../src/pool/PoolStatus.ts) |
@@ -140,6 +140,10 @@ Two kinds of check record nothing:
   `disconnect()` or `stopTimerCheck()`. The status drops its result too.
 - A check that did not run because the status was not active.
 
+The ping of an idle pooled connection of a node with a `healthCheck` block
+is no health check. It records nothing, also when it fails, see
+[pool.md](./pool.md#the-idle-connections-of-the-pool).
+
 A health check shows in two metrics. Its status query is also one record
 of `mysql_dynamic_cluster.operation.duration`, as it was before this metric
 existed. There it has `db.operation.name` = `SHOW`. The legacy check runs
@@ -195,7 +199,9 @@ its checks are never among the pending requests. The counts come from `Pool.stat
 - `used` is every connection of the pool minus the idle ones. A connection
   that still logs in counts as used. So does a connection the app took with
   `cluster.getConnection()` and has not given back.
-- `idle` is the open connections nobody uses.
+- `idle` is the open connections nobody uses. A connection whose ping is
+  out counts as `idle`: the ping takes it out of no list, see
+  [pool.md](./pool.md#the-idle-connections-of-the-pool).
 - The sum of the two points is the number of connections the node has open.
 
 A cluster's pools are reported from its `connect()` call until its
