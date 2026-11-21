@@ -8,12 +8,12 @@ import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
 import { IAbortOutcome, ICheckOutcome, IQueryOptions, QueryResult } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
-import { IUserPoolSettings } from "../types/PoolSettingsInterfaces";
+import { IHealthCheck, IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
 import { IOperationMetricOptions } from "../types/MetricsInterfaces";
 import Redis from "../Redis/Redis";
 import { IRedisData } from "../types/RedisInterfaces";
-import { IdleConnectionReaper } from './IdleConnectionReaper';
+import { IdleConnectionReaper, IIdlePing } from './IdleConnectionReaper';
 import { CheckConnection } from './CheckConnection';
 import { flagsForServer, IServerGreeting, IServerProbe, probeServer } from './ServerFlags';
 
@@ -89,7 +89,7 @@ export class Pool {
         this._reaper = new IdleConnectionReaper(
             settings.minConnections,
             settings.idleTimeout,
-            settings.idleCheckInterval
+            settings.idleCheckInterval, this._idlePing(settings.healthCheck as IHealthCheck)
         );
 
         this._checksApart = !!settings.healthCheck;
@@ -760,5 +760,27 @@ export class Pool {
     private _newAttempt(outcome: ICheckOutcome): number {
         outcome.recorded = false;
         return ++this._connectAttempt;
+    }
+
+    /**
+     * The ping the reaper sends on the idle connections of this pool, for a node with a
+     * healthCheck block: its check asks on a connection of its own, so nothing else uses a
+     * pooled connection while the app is quiet. A node without the block has no ping. Its
+     * check draws from the pool.
+     * A ping gets the timeout of the block. One that fails takes its connection out of the
+     * pool and is one debug line. It is no check: it moves no node and counts toward nothing
+     * @param block the healthCheck block of the node, with every key, or nothing
+     * @private
+     */
+    private _idlePing(block?: IHealthCheck): IIdlePing | undefined {
+        if (!block) return undefined;
+        return {
+            timeout: block.timeout,
+            // the code names the cause. A connection mysql2 dropped before has none
+            removed: error => Logger.debug(
+                "Pool " + this.name + ": an idle connection failed its ping and was closed",
+                { pool: this.name, idlePing: 'failed', code: error?.code }
+            )
+        };
     }
 }
