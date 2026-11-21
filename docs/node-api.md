@@ -660,8 +660,8 @@ What it touches and what it does not:
   valid nodes that are left. A query that has no node left rejects with `error` itself,
   with `nodeId` and `errors` set on it. All those queries share that one object, so its
   `nodeId` and `errors` are those of the query that rejected last. An entry that would lead
-  back to it is left out of `errors`, so the errors never refer to each other in a cycle. A health check of the legacy check that waits is failed too and counts
-  as a failed check.
+  back to it is left out of `errors`, so the errors never refer to each other in a cycle. A
+  health check of the legacy check that waits is failed too and counts as a failed check.
 - Connections in use are left alone. So are logins that are still running.
 - The node stays in the cluster, and the call does not set `isValid`. It can still cost the
   node its validity through a health check of the legacy check. A check that waits is failed

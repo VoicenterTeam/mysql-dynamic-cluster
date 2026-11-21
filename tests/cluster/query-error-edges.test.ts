@@ -16,10 +16,11 @@ import Metrics from '../../src/metrics/Metrics';
 import Redis from '../../src/Redis/Redis';
 
 // What a failed query() rejects with, for rejections mysql2 does not make: one error object
-// from two nodes, as failWaiting() can hand out, a frozen error and a value that is no object
-const node = (id: number, rejection: unknown): any => ({
+// from two nodes, as failWaiting() can hand out, a frozen error and a value that is no object.
+// The node with the lowest loadScore is tried first
+const node = (id: number, rejection: unknown, loadScore = id): any => ({
     id, name: 'node' + id, host: 'host' + id,
-    status: { isValid: true, loadScore: id },
+    status: { isValid: true, loadScore },
     query: jest.fn(() => Promise.reject(rejection))
 });
 
@@ -42,6 +43,22 @@ const rejectionOf = (cluster: any): Promise<any> =>
 
 beforeEach(() => jest.clearAllMocks());
 
+describe('three nodes that each fail with their own error', () => {
+    it('rejects with the error of the node tried last, and lists the others as tried', async () => {
+        const [first, second, third] = [new Error('one'), new Error('two'), new Error('three')];
+        // given out of order: the nodes are tried by loadScore, 1, 2 and then 3
+        const error = await rejectionOf(
+            makeCluster([node(3, third), node(1, first), node(2, second)])
+        );
+
+        expect(error).toBe(third);
+        expect(error.nodeId).toBe(3);
+        expect(error.errors.map((entry: any) => entry.nodeId)).toEqual([1, 2]);
+        expect(error.errors[0].error).toBe(first);
+        expect(error.errors[1].error).toBe(second);
+    });
+});
+
 describe('one error object from two nodes', () => {
     it('is not listed in its own errors, so it can be turned into JSON', async () => {
         const shared = new Error('node is being drained');
@@ -62,7 +79,23 @@ describe('one error object from two nodes', () => {
         expect(error).toBe(shared);
         expect(error.errors).toEqual([{ nodeId: 2, error: other }]);
     });
+
+    it('keeps the node and the list of the query that rejected last', async () => {
+        const shared = new Error('node is being drained');
+        const [a, b] = [new Error('a'), new Error('b')];
+        await rejectionOf(makeCluster([node(1, a), node(2, shared)]));
+        const error = await rejectionOf(makeCluster([node(3, b), node(4, shared)]));
+
+        expect(error).toBe(shared);
+        expect(error.nodeId).toBe(4);
+        expect(error.errors).toHaveLength(1);
+        expect(error.errors[0].nodeId).toBe(3);
+        expect(error.errors[0].error).toBe(b);
+    });
 });
+
+// falsy values a promise can be rejected with
+const FALSY: unknown[] = ['', 0, false];
 
 describe('a rejection that cannot take nodeId or errors', () => {
     it('a frozen error goes to the caller as it is', async () => {
@@ -85,7 +118,7 @@ describe('a rejection that cannot take nodeId or errors', () => {
         expect(options.error).toBeTruthy();
     });
 
-    it.each([[''], [0], [false]])('a rejection with %p is still recorded as a failed query', async value => {
+    it.each(FALSY)('a rejection with %p is recorded as a failed query', async value => {
         await expect(rejectionOf(makeCluster([node(1, value)]))).resolves.toBe(value);
 
         const [[, options]] = (Metrics.recordQuery as jest.Mock).mock.calls;
@@ -96,14 +129,18 @@ describe('a rejection that cannot take nodeId or errors', () => {
 describe('an error that has errors of its own', () => {
     // what Node rejects with when every address of a host name refuses the connection
     const refused = () => Object.assign(
-        new (globalThis as any).AggregateError([new Error('::1 refused'), new Error('127.0.0.1 refused')], ''),
+        new (globalThis as any).AggregateError(
+            [new Error('::1 refused'), new Error('127.0.0.1 refused')], ''
+        ),
         { code: 'ECONNREFUSED' }
     );
 
     it('keeps them when it is the error of the node tried last', async () => {
         const aggregate = refused();
         const own = aggregate.errors;
-        const error = await rejectionOf(makeCluster([node(1, new Error('first')), node(2, aggregate)]));
+        const error = await rejectionOf(
+            makeCluster([node(1, new Error('first')), node(2, aggregate)])
+        );
 
         expect(error).toBe(aggregate);
         expect(error.nodeId).toBe(2);
@@ -113,7 +150,9 @@ describe('an error that has errors of its own', () => {
     it('keeps them when it is listed for a node tried before', async () => {
         const aggregate = refused();
         const own = aggregate.errors;
-        const error = await rejectionOf(makeCluster([node(1, aggregate), node(2, new Error('last'))]));
+        const error = await rejectionOf(
+            makeCluster([node(1, aggregate), node(2, new Error('last'))])
+        );
 
         expect(error.errors).toEqual([{ nodeId: 1, error: aggregate }]);
         expect(aggregate.errors).toBe(own);
@@ -127,8 +166,7 @@ describe('two errors from failWaiting() that two queries meet in opposite order'
         // the first query is failed with x on node 1 and then with y on node 2, the second
         // with y on node 2 and then with x on node 1
         const first = await rejectionOf(makeCluster([node(1, x), node(2, y)]));
-        const busy = (pool: any) => Object.assign(pool, { status: { isValid: true, loadScore: 9 } });
-        const second = await rejectionOf(makeCluster([node(2, y), busy(node(1, x))]));
+        const second = await rejectionOf(makeCluster([node(2, y), node(1, x, 9)]));
 
         expect(first).toBe(y);
         expect(second).toBe(x);
@@ -139,11 +177,14 @@ describe('two errors from failWaiting() that two queries meet in opposite order'
 
 describe('every node failed and Redis holds expired data', () => {
     it('the data is served and no error is thrown', async () => {
-        (Redis.get as jest.Mock).mockResolvedValue(JSON.stringify({ data: [{ a: 1 }], expired: 0 }));
+        const stale = JSON.stringify({ data: [{ a: 1 }], expired: 0 });
+        (Redis.get as jest.Mock).mockResolvedValue(stale);
         const cluster = makeCluster([node(1, new Error('down'))], true);
 
         await expect(cluster.query('SELECT 1')).resolves.toEqual([{ a: 1 }]);
         const [[, options]] = (Metrics.recordQuery as jest.Mock).mock.calls;
-        expect(options).toEqual(expect.objectContaining({ source: 'stale_cache', error: undefined }));
+        expect(options).toEqual(
+            expect.objectContaining({ source: 'stale_cache', error: undefined })
+        );
     });
 });

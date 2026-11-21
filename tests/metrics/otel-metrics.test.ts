@@ -308,7 +308,7 @@ describe('OpenTelemetry metrics', () => {
         expect(collected[QUERY].points[0].attributes['error.type']).toBe('_OTHER');
     });
 
-    it('records a failed cluster query with the code of the node and no result source', async () => {
+    it('records a failed cluster query with the code of its node, and no source', async () => {
         const cluster = makeCluster(makePool(makeConn({ queryErr: accessDenied })));
         await expect(cluster.query('SELECT 1', null, { redis: false })).rejects.toBe(accessDenied);
 

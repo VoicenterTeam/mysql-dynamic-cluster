@@ -36,6 +36,11 @@ const STATUS = [
     { Variable_name: 'wsrep_local_recv_queue_avg', Value: '0' }
 ];
 
+// the query of the app, and the port of each node it was sent to, in the order it was sent
+const APP_SQL = 'UPDATE t SET a = 1';
+const asked: number[] = [];
+beforeEach(() => asked.splice(0));
+
 // How a node answers a query of the app: an error packet, or it closes the connection
 type Answer = { errno: number, sqlState: string, message: string } | 'hangs up';
 const DEADLOCK = {
@@ -51,6 +56,7 @@ const LOCK_WAIT = {
 const listen = async (answer: Answer): Promise<number> => {
     const server: any = (mysql as any).createServer();
     const connections: any[] = [];
+    let port = 0;
     closers.push(() => {
         connections.forEach(connection => connection.stream.destroy());
         server.close();
@@ -77,8 +83,10 @@ const listen = async (answer: Answer): Promise<number> => {
         connection.on('query', (sql: string) => {
             if (sql.startsWith('SHOW GLOBAL STATUS')) {
                 connection.sequenceId = 1;
-                return connection.writeTextResult(STATUS, [column('Variable_name'), column('Value')]);
+                const columns = [column('Variable_name'), column('Value')];
+                return connection.writeTextResult(STATUS, columns);
             }
+            if (sql === APP_SQL) asked.push(port);
             if (answer === 'hangs up') return connection.stream.destroy();
             connection.sequenceId = 1;
             // the server class writes no SQL state of its own. A real server does
@@ -93,7 +101,8 @@ const listen = async (answer: Answer): Promise<number> => {
         connection.on('quit', () => connection.close());
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-    return (server._server.address() as AddressInfo).port;
+    port = (server._server.address() as AddressInfo).port;
+    return port;
 };
 
 const clusters: any[] = [];
@@ -124,7 +133,7 @@ const connected = async (ports: number[], errorRetryCount = ports.length): Promi
 };
 
 const failedQuery = (cluster: any): Promise<any> =>
-    cluster.query('UPDATE t SET a = 1', undefined, { redis: false }).then(
+    cluster.query(APP_SQL, undefined, { redis: false }).then(
         () => { throw new Error('the query passed'); },
         (error: unknown) => error
     );
@@ -142,6 +151,8 @@ describe('cluster.query() on one node that answers with error 1213', () => {
         expect(error.message).toBe(DEADLOCK.message);
         // mysql2 marks no error the server sent as fatal
         expect(error.fatal).toBeUndefined();
+        // the statement as sent, with any values query() wrote into it
+        expect(error.sql).toBe(APP_SQL);
     });
 
     it('adds the node it came from, and no earlier errors', async () => {
@@ -170,10 +181,12 @@ describe('cluster.query() on two nodes that fail with 1213 and 1205', () => {
         const ports = [await listen(DEADLOCK), await listen(LOCK_WAIT)];
         const error = await failedQuery(await connected(ports));
 
-        expect(error.errors).toHaveLength(1);
-        const [first] = error.errors;
-        expect(first.nodeId).not.toBe(error.nodeId);
-        expect(first.error.nodeId).toBe(first.nodeId);
+        // the id of each node, in the order the servers were asked
+        const tried = asked.map(port => ports.indexOf(port) + 1);
+        expect(tried).toHaveLength(2);
+        expect(error.nodeId).toBe(tried[1]);
+        expect(error.errors.map((entry: any) => entry.nodeId)).toEqual([tried[0]]);
+        expect(error.errors[0].error.nodeId).toBe(tried[0]);
     });
 
     it('has both codes, each with its own node', async () => {

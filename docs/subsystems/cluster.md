@@ -239,8 +239,8 @@ The `for` loop.
 
 For `i` from `0` to `retryCount - 1`, calls
 `this._queryRequest(sql, activePools[i], queryOptions)`. First success
-records the query with source `pool` and returns. Each failure pushes
-`{ error, pool }` into `errorList` and the loop continues until exhausted.
+records the query with source `pool` and returns. Each failure is kept as
+`{ nodeId, error }` in `errors`, and the loop continues until exhausted.
 
 The list of step 4 is made once per call, and each turn of the loop takes
 the next pool of it, so a retry never asks the pool that just failed. For a
@@ -264,10 +264,14 @@ pool has failed:
   warning, record the query with source `stale_cache`, and **return the
   stale payload** anyway.
 - Otherwise reject with the error of the node tried last, as mysql2 made
-  it: its own `message`, `code`, `errno`, `sqlState`, `sqlMessage` and
-  `fatal`, plus `nodeId`. The attempts before it are set on it as
+  it: its own `message`, `code`, `errno`, `sqlState`, `sqlMessage`, `sql`
+  and `fatal`, plus `nodeId`. The attempts before it are set on it as
   `errors`, so a single node gives `errors: []`. The query is recorded
   as failed with that error, so the metric carries its code.
+
+`sql` is the statement mysql2 sent, with the values `_formatSQL` wrote
+into it. An app that logs or ships the error whole ships those values
+too, so it should drop `sql` first.
 
 Since 5.0.0. Before, `query()` rejected with a new `Error` whose message
 joined `Pool: <name>; Error: Query error: <message>` lines and which had
