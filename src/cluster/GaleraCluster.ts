@@ -450,17 +450,11 @@ export class GaleraCluster {
         }
 
         // The error of the node tried last, as mysql2 made it. The nodes tried before it are
-        // listed on it, so a caller can see every error without a second error type. An error
-        // the app handed failWaiting() can reach one query from two nodes: it is not listed
-        // on itself, so the error holds no reference to itself
+        // listed on it, so a caller can see every error without a second error type
         const { error } = errors.pop();
-        try {
-            error.errors = errors.filter(entry => entry.error !== error);
-        } catch {
-            // a frozen error, or one that is no object, goes to the caller without the list
-        }
-        // a rejection without a value is still a failed query to the metric
-        record(undefined, error ?? {});
+        GaleraCluster._listEarlier(error, errors);
+        // a rejection without a value, or with a falsy one, is still a failed query to the metric
+        record(undefined, error || {});
         throw error;
     }
 
@@ -617,6 +611,42 @@ export class GaleraCluster {
      */
     private static _noNode(message: string): Error {
         return Object.assign(new Error(message), { code: 'MDC_NO_NODE_AVAILABLE' });
+    }
+
+    /**
+     * Sets `errors` on the error a failed query() rejects with: the nodes tried before the
+     * last one, as `{ nodeId, error }`. An error the app handed failWaiting() is one object
+     * that many queries can meet, so an entry that leads back to the error, itself or
+     * through the lists of earlier queries, is left out. The errors keep no cycle and can
+     * be turned into JSON. An error that has an `errors` of its own, such as the
+     * AggregateError of a host name whose every address refused, keeps it. A frozen error,
+     * or one that is no object, gets no list
+     * @param error the error of the node tried last
+     * @param earlier the error of each node tried before it, in the order they were tried
+     */
+    private static _listEarlier(error: any, earlier: { nodeId: number, error: any }[]): void {
+        if (!error || typeof error !== 'object') return;
+        if (Array.isArray(error.errors) && !GaleraCluster._lists.has(error.errors)) return;
+        const list = earlier.filter(entry => !GaleraCluster._leadsTo(entry.error, error));
+        try {
+            error.errors = list;
+            GaleraCluster._lists.add(list);
+        } catch {
+            // a frozen error goes to the caller without the list
+        }
+    }
+
+    // the lists _listEarlier() set, told apart from an errors array of the error's own
+    private static _lists = new WeakSet<object>();
+
+    // whether `target` is `from` or can be reached from it through the lists _listEarlier() set
+    private static _leadsTo(from: any, target: any, seen = new Set<any>()): boolean {
+        if (from === target) return true;
+        if (!from || typeof from !== 'object' || seen.has(from)) return false;
+        seen.add(from);
+        const list = from.errors;
+        if (!Array.isArray(list) || !GaleraCluster._lists.has(list)) return false;
+        return list.some(entry => GaleraCluster._leadsTo(entry.error, target, seen));
     }
 
     /**

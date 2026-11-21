@@ -84,6 +84,57 @@ describe('a rejection that cannot take nodeId or errors', () => {
         const [[, options]] = (Metrics.recordQuery as jest.Mock).mock.calls;
         expect(options.error).toBeTruthy();
     });
+
+    it.each([[''], [0], [false]])('a rejection with %p is still recorded as a failed query', async value => {
+        await expect(rejectionOf(makeCluster([node(1, value)]))).resolves.toBe(value);
+
+        const [[, options]] = (Metrics.recordQuery as jest.Mock).mock.calls;
+        expect(options.error).toBeTruthy();
+    });
+});
+
+describe('an error that has errors of its own', () => {
+    // what Node rejects with when every address of a host name refuses the connection
+    const refused = () => Object.assign(
+        new (globalThis as any).AggregateError([new Error('::1 refused'), new Error('127.0.0.1 refused')], ''),
+        { code: 'ECONNREFUSED' }
+    );
+
+    it('keeps them when it is the error of the node tried last', async () => {
+        const aggregate = refused();
+        const own = aggregate.errors;
+        const error = await rejectionOf(makeCluster([node(1, new Error('first')), node(2, aggregate)]));
+
+        expect(error).toBe(aggregate);
+        expect(error.nodeId).toBe(2);
+        expect(error.errors).toBe(own);
+    });
+
+    it('keeps them when it is listed for a node tried before', async () => {
+        const aggregate = refused();
+        const own = aggregate.errors;
+        const error = await rejectionOf(makeCluster([node(1, aggregate), node(2, new Error('last'))]));
+
+        expect(error.errors).toEqual([{ nodeId: 1, error: aggregate }]);
+        expect(aggregate.errors).toBe(own);
+    });
+});
+
+describe('two errors from failWaiting() that two queries meet in opposite order', () => {
+    it('refer to each other at most one way, so both can be turned into JSON', async () => {
+        const x = new Error('node 1 is being drained');
+        const y = new Error('node 2 is being drained');
+        // the first query is failed with x on node 1 and then with y on node 2, the second
+        // with y on node 2 and then with x on node 1
+        const first = await rejectionOf(makeCluster([node(1, x), node(2, y)]));
+        const busy = (pool: any) => Object.assign(pool, { status: { isValid: true, loadScore: 9 } });
+        const second = await rejectionOf(makeCluster([node(2, y), busy(node(1, x))]));
+
+        expect(first).toBe(y);
+        expect(second).toBe(x);
+        expect(() => JSON.stringify(x)).not.toThrow();
+        expect(() => JSON.stringify(y)).not.toThrow();
+    });
 });
 
 describe('every node failed and Redis holds expired data', () => {
@@ -92,5 +143,7 @@ describe('every node failed and Redis holds expired data', () => {
         const cluster = makeCluster([node(1, new Error('down'))], true);
 
         await expect(cluster.query('SELECT 1')).resolves.toEqual([{ a: 1 }]);
+        const [[, options]] = (Metrics.recordQuery as jest.Mock).mock.calls;
+        expect(options).toEqual(expect.objectContaining({ source: 'stale_cache', error: undefined }));
     });
 });

@@ -274,9 +274,15 @@ joined `Pool: <name>; Error: Query error: <message>` lines and which had
 no code. See the changelog.
 
 A frozen error, or a rejection that is no object, cannot take `nodeId`
-or `errors` and is thrown without them. An error that the app handed
-`failWaiting()` can fail one query on two nodes: it is not listed in
-its own `errors`, so it never refers to itself.
+or `errors` and is thrown without them. An error that already has an
+`errors` array of its own keeps it and gets no list: Node's
+`AggregateError`, when every address of a host name refused, holds the
+error of each address there. An error that the app handed `failWaiting()`
+is one object that many queries can meet. An entry that would lead back
+to it, itself or through the list an earlier query set, is left out, so
+the errors never form a cycle and `JSON.stringify` works on them. Each
+attempt is still logged with `Logger.error`. The single
+`All pools have error` line that listed them all is gone.
 
 ### 10. `_queryRequest`
 
