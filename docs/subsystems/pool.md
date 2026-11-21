@@ -137,9 +137,9 @@ Synchronous. Steps:
    shut down the `PoolStatus` polling timer. A check that is still
    running after this changes nothing and reports nothing
    ([src/pool/Pool.ts:252-253](../../src/pool/Pool.ts#L252)). The line
-   after them stops the timer of
-   [the idle connections](#the-idle-connections-of-the-pool), and with it
-   every ping that is out.
+   after them stops the timers of
+   [the idle connections](#the-idle-connections-of-the-pool), and closes a
+   connection whose ping is still out.
 3. Emit `'pool_disconnected'` with the pool id
    ([src/pool/Pool.ts:255](../../src/pool/Pool.ts#L255)).
 
@@ -412,12 +412,13 @@ the describe "the check connection of a healthCheck node" in
 
 [src/pool/IdleConnectionReaper.ts](../../src/pool/IdleConnectionReaper.ts).
 The constructor of `Pool` builds one reaper per node. `connect()` starts
-its timer and `disconnect()` stops it. The listeners of `_connectEvents()`
-tell it of every `release` and `acquire`, so it knows which connections
-are idle and since when.
+its timers and `disconnect()` stops them. The listeners of
+`_connectEvents()` tell it of every `release` and `acquire`, so it knows
+which connections are idle and since when.
 
-The timer runs every `idleCheckInterval`, 10 s by default, and does two
-things in this order.
+It does two things, each on a timer of its own, every `idleCheckInterval`,
+10 s by default. The timer of the age rule is started first, so at a tick
+the two share the age rule runs first.
 
 **The age rule, for every node.** A connection that has been idle for
 longer than `idleTimeout` is destroyed, as long as the pool has more than
@@ -467,14 +468,45 @@ them. What an app has to set is in
   longer than `idleCheckInterval`.
 - **A connection in use gets no ping.** Neither does the check connection.
 - **`disconnect()` ends it.** No ping is sent after it. A ping that is out
-  decides nothing any more and leaves no timer. The next `connect()` starts
-  the timer again.
+  decides nothing any more and leaves no timer. Its connection is closed
+  with the socket, without a logout: mysql2 queues the logout of
+  `disconnect()` behind the ping, and a ping that never gets its answer
+  would keep the connection open. Every other idle connection is logged
+  out of as before. The next `connect()` starts the timers again.
 - **A connection mysql2 dropped by itself** while it was idle, as after
   the server closed it, is still known to the reaper. Its next ping fails
   before a byte is sent, and the reaper forgets it with the same `debug`
   line, which has no `code` then.
 - **A free list of mysql2 that cannot be read** stops the age rule, which
   needs its length. The ping needs no list of mysql2 and goes on.
+
+### The pace of the ping
+
+The settings take any number as `idleCheckInterval`. Node runs a timer
+whose wait is below 1 ms, or above 2147483647 ms, every millisecond. For
+the age rule that is a walk over a map, and it is left as it was. A ping
+is a round trip to the server for every idle connection, so the timer of
+the ping never waits less than 100 ms, and never more than a timer of Node
+can.
+
+| `idleCheckInterval` | Age rule, every node | Ping, a node with the block |
+| --- | --- | --- |
+| 0, a negative number, a fraction below 1 | every millisecond, as before | every 100 ms |
+| 1 to 99 | as set | every 100 ms |
+| 100 to 2147483647 | as set | as set |
+| above 2147483647 | every millisecond, as before | every 2147483647 ms, about 24.8 days |
+
+A node without the block has the one timer of the age rule, started with
+the value as it is, as before. Nothing is logged for a value the ping
+does not follow.
+
+Measured with the real mysql2 on the loopback interface of one Linux host,
+by a probe that is not part of the suite, 3 runs of 1 s per value: one
+node with the block and one idle pooled connection. With the ping on the
+timer of the age rule, the node got 738 to 805 pings in that second for 0,
+-5, 0.4 and 2147483648. With a timer of its own it gets 10 for the first
+three and none for the last. A node without the block got no ping either
+way.
 
 `_idlePing()` builds the ping for the reaper. It is at the end of the
 class, so the line references above did not move.

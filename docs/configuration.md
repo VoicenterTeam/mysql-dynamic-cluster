@@ -36,7 +36,7 @@ Base configuration applied to every host in `hosts`.
 | `connectionLimit` | `number` | `10` |
 | `minConnections` | `number` | `1` |
 | `idleTimeout` | `number` (ms) | `30000` |
-| `idleCheckInterval` | `number` (ms) | `10000` |
+| `idleCheckInterval` | `number` (ms). A node with a `healthCheck` block also pings its idle connections at this pace, but never more often than every 100 ms and never less often than every 2147483647 ms, whatever the value. A value below 100 or above 2147483647 is still valid, see [subsystems/pool.md](subsystems/pool.md#the-pace-of-the-ping) | `10000` |
 | `validators` | array | see below |
 | `loadFactors` | array | see below |
 | `timerCheckRange` | `{ start, end }` (ms), either half may be left out | `{ start: 5000, end: 15000 }` |

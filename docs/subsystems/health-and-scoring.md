@@ -716,7 +716,9 @@ it on and counts it as use.
   connection gets a ping at every tick of the timer, so it is never
   without a byte for longer than `idleCheckInterval`. With the defaults
   that is enough behind a path whose idle timeout is above 10 s. A timer
-  of Node runs late in a busy process, so leave room.
+  of Node runs late in a busy process, so leave room. The ping never comes
+  more often than every 100 ms, also with a lower `idleCheckInterval`, see
+  [pool.md](pool.md#the-pace-of-the-ping).
 - **Behind a path with a shorter idle timeout the defaults still fail.**
   The path forgets the connection before the first ping. The first query
   after the pause is rejected with `ECONNRESET`, on every node whose
@@ -736,7 +738,10 @@ it on and counts it as use.
   another path answers with a reset, gives no answer. After `timeout` the
   connection is destroyed with its socket. Until then it is in the pool. A
   query that draws it in that time waits behind the ping and ends at its
-  own timeout, as it would have without the ping.
+  own timeout, as it would have without the ping. The same `timeout` means
+  two things: a check that takes longer costs one count toward `fall`, and
+  a ping that takes longer costs the connection, so the next query pays
+  for a login.
 - **Nothing is opened in place of a closed connection.** `idleTimeout` and
   `minConnections` mean what they meant: the timer closes the connections
   that are too old first, and pings the ones it keeps.

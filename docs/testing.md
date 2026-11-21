@@ -37,7 +37,7 @@ tests/
     check-error-loopback.test.ts # checkError with the real mysql2 on loopback: refused login, timeouts, reconnect
     health-check-refusal-loopback.test.ts # A healthCheck node whose login the real mysql2 sees refused on loopback: down at once, the next login after authRetryInterval, a refusal held back past the timeout
     passive-health-loopback.test.ts # Passive health with the real mysql2 on loopback: a refused connection, a connection dropped under a query, a deadlock, a refused login. Behind a TCP proxy, with ten connections per pool: idle connections the path forgot, a path that resets or swallows everything, a process that stalls past the connect timer. By name: a name that resolves to an address with no route, for a real ENETUNREACH of a call and of the check after it, with pools that hold a connection and with pools that hold none, and a path that swallows new connections only. The check connection: a pool at its limit, connect and disconnect, a connection lost while idle or forgotten by the path, a check that times out, a process that stalls past the check timer
-    idle-ping-loopback.test.ts   # The ping of the idle pooled connections with the real mysql2 behind a TCP proxy on loopback: a path that forgets a flow after 1500 ms and a pause of 3 s of real time, a connection the path forgot before its ping, by a reset and by silence, the app drawing a connection whose ping is out, a node without the block, a cluster with the block on one host only, disconnect and connect
+    idle-ping-loopback.test.ts   # The ping of the idle pooled connections with the real mysql2 behind a TCP proxy on loopback: a path that forgets a flow after 1500 ms and a pause of 3 s of real time, a connection the path forgot before its ping, by a reset and by silence, the app drawing a connection whose ping is out, a node without the block, a cluster with the block on one host only, an `idleCheckInterval` Node runs every millisecond, disconnect with a ping that has no answer, disconnect and connect
     query.test.ts                # GaleraCluster.query() shapes: no values, scalar, array, named, timeout (stale)
   configs/
     settings.test.ts             # Settings schema: defaults, strict validation, mixSettings, no env reading
@@ -58,7 +58,7 @@ tests/
     query-hygiene.test.ts        # Pool.query error paths and availableConnectionCount
     query.test.ts                # Single-pool round-trip: connect, query, disconnect, query timeout (stale)
     reaper.test.ts               # IdleConnectionReaper: the age rule
-    idle-ping.test.ts            # The ping of the idle pooled connections of a healthCheck node: the reaper alone, then a Pool over a mysql2 the test drives. Which connections get a ping, what a ping ends with, its limit, the app drawing the connection, stop and start, no event, no metric, no check
+    idle-ping.test.ts            # The ping of the idle pooled connections of a healthCheck node: the reaper alone, then a Pool over a mysql2 the test drives. Which connections get a ping, what a ping ends with, its limit, the app drawing the connection, stop and start, the pace of the ping for an `idleCheckInterval` below 100 or above 2147483647, no event, no metric, no check
     status-invalid.test.ts       # PoolStatus.checkStatus validity
     status-missing-key.test.ts   # A status key missing from SHOW GLOBAL STATUS
     check-failed-event.test.ts   # pool_check_failed: the payload, every failed check, a listener that throws
