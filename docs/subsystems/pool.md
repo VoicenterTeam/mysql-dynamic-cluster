@@ -14,7 +14,8 @@ next to the mysql2 pool, for those checks: see
 [The check connection](#the-check-connection).
 
 Source: [src/pool/Pool.ts](../../src/pool/Pool.ts),
-[src/pool/CheckConnection.ts](../../src/pool/CheckConnection.ts).
+[src/pool/CheckConnection.ts](../../src/pool/CheckConnection.ts),
+[src/pool/IdleConnectionReaper.ts](../../src/pool/IdleConnectionReaper.ts).
 
 ## Construction
 
@@ -135,7 +136,10 @@ Synchronous. Steps:
 2. Set `status.active = false` and call `status.stopTimerCheck()` to
    shut down the `PoolStatus` polling timer. A check that is still
    running after this changes nothing and reports nothing
-   ([src/pool/Pool.ts:252-253](../../src/pool/Pool.ts#L252)).
+   ([src/pool/Pool.ts:252-253](../../src/pool/Pool.ts#L252)). The line
+   after them stops the timer of
+   [the idle connections](#the-idle-connections-of-the-pool), and with it
+   every ping that is out.
 3. Emit `'pool_disconnected'` with the pool id
    ([src/pool/Pool.ts:255](../../src/pool/Pool.ts#L255)).
 
@@ -382,6 +386,9 @@ What it costs and what an app sees:
 - The pool of a node holds no connection after `connect()`. Before, the
   check of `connect()` left one idle there. So the first query of the app
   to each node pays for a login.
+- No check uses a connection of the pool. The timer of the idle
+  connections pings them instead, see
+  [The idle connections of the pool](#the-idle-connections-of-the-pool).
 - The events `connection`, `acquire` and `release` come from the mysql2
   pool. A check of a node with the block emits none of them.
 - `getPoolStats()`, `stats()`, `availableConnectionCount` and the
@@ -400,6 +407,85 @@ Pinned by
 against a mysql2 the test drives, and with the real mysql2 on loopback by
 the describe "the check connection of a healthCheck node" in
 [tests/cluster/passive-health-loopback.test.ts](../../tests/cluster/passive-health-loopback.test.ts).
+
+## The idle connections of the pool
+
+[src/pool/IdleConnectionReaper.ts](../../src/pool/IdleConnectionReaper.ts).
+The constructor of `Pool` builds one reaper per node. `connect()` starts
+its timer and `disconnect()` stops it. The listeners of `_connectEvents()`
+tell it of every `release` and `acquire`, so it knows which connections
+are idle and since when.
+
+The timer runs every `idleCheckInterval`, 10 s by default, and does two
+things in this order.
+
+**The age rule, for every node.** A connection that has been idle for
+longer than `idleTimeout` is destroyed, as long as the pool has more than
+`minConnections` free ones. With the defaults the pool keeps one idle
+connection whatever its age.
+
+**The ping, for a node with a `healthCheck` block.** Not in 4.6.0 or
+earlier. Every idle connection the age rule kept gets one `COM_PING`. The
+check of such a node asks on [the check connection](#the-check-connection),
+so without the ping nothing would use the pooled connections of a quiet
+app, and a balancer, a NAT or a firewall with an idle timeout would forget
+them. What an app has to set is in
+[health-and-scoring.md](health-and-scoring.md#a-quiet-app-behind-a-path-with-an-idle-timeout).
+
+- **A node without the block gets no ping.** Its check draws a connection
+  of the pool each time it runs, as before.
+- **The connection stays in the pool while its ping is out.** It is taken
+  out of no list of mysql2. So it counts as `idle` in `stats()`,
+  `getPoolStats()` and the connection gauges, `availableConnectionCount`
+  does not move, and a pool at its limit loses no connection to a ping.
+- **A ping is no query of the app and no check.** It emits no
+  `connection`, `acquire` or `release` and is no record of any metric.
+  Neither the health check nor passive health is told of it.
+- **A ping has the `timeout` of the block to be answered**, 5 s with the
+  defaults. There is no setting of its own.
+- **A ping that fails closes its connection**, with the socket, and so
+  does a ping with no answer in time. mysql2 takes the connection out of
+  the pool, so the app does not draw it. Every error counts: a reset, a
+  connection the server closed, an error packet of the server.
+- **Nothing is opened in its place.** The next request that finds no free
+  connection opens one, as after the age rule. `minConnections` is a floor
+  for the age rule and opens nothing.
+- **One `debug` line per connection a ping took out**, with the meta
+  `pool`, `idlePing: 'failed'` and `code`. The code is that of the error:
+  `ECONNRESET` after a reset, `PROTOCOL_SEQUENCE_TIMEOUT` for a ping with
+  no answer in time. A failed ping moves no node, sets no `checkError` and
+  emits no `pool_check_failed`.
+- **The app can draw a connection whose ping is out.** mysql2 runs the
+  commands of a connection one after another, so what the app asks is sent
+  after the answer to the ping. The reaper hears the `acquire` and lets go
+  of that ping: its timer is cleared, and the reaper closes no connection
+  the app holds. When the connection is lost, mysql2 fails the ping and
+  what the app queued with the same error. That is the error the app would
+  have met on that connection without a ping.
+- **One ping at a time per connection.** A connection whose ping is still
+  out at the next tick gets no second one. That happens when `timeout` is
+  longer than `idleCheckInterval`.
+- **A connection in use gets no ping.** Neither does the check connection.
+- **`disconnect()` ends it.** No ping is sent after it. A ping that is out
+  decides nothing any more and leaves no timer. The next `connect()` starts
+  the timer again.
+- **A connection mysql2 dropped by itself** while it was idle, as after
+  the server closed it, is still known to the reaper. Its next ping fails
+  before a byte is sent, and the reaper forgets it with the same `debug`
+  line, which has no `code` then.
+- **A free list of mysql2 that cannot be read** stops the age rule, which
+  needs its length. The ping needs no list of mysql2 and goes on.
+
+`_idlePing()` builds the ping for the reaper. It is at the end of the
+class, so the line references above did not move.
+
+Pinned by
+[tests/pool/idle-ping.test.ts](../../tests/pool/idle-ping.test.ts) against
+a mysql2 the test drives, and with the real mysql2 behind a TCP proxy on
+loopback by
+[tests/cluster/idle-ping-loopback.test.ts](../../tests/cluster/idle-ping-loopback.test.ts).
+The age rule is in
+[tests/pool/reaper.test.ts](../../tests/pool/reaper.test.ts).
 
 ## Node API helpers
 
