@@ -504,6 +504,46 @@ describe('one cluster with the block on one host only', () => {
     });
 });
 
+// Node runs a timer whose wait is below 1 ms or above 2147483647 after 1 ms, and the
+// settings take such an idleCheckInterval. 300 ticks of the reaper are 300 ms or more
+describe('an idleCheckInterval that makes the reaper look every millisecond', () => {
+    // Node says once per process that it took 1 ms for such a wait. Not this suite's line
+    let warned: jest.SpyInstance;
+    beforeEach(() => {
+        warned = jest.spyOn(process, 'emitWarning').mockImplementation(() => undefined);
+    });
+    afterEach(() => warned.mockRestore());
+    // the pings one idle pooled connection got in 300 ticks, and how long those took
+    const inTicks = async (pool: object) => {
+        const { cluster, server } = await behind(pool);
+        if (pooled(cluster).idle === 0) await ask(cluster);
+        const from = server.pings().length;
+        const began = Date.now();
+        await moreTicks(300);
+        return { pings: server.pings().length - from, ms: Date.now() - began };
+    };
+
+    it.each([
+        ['0', 0], ['a negative number', -5], ['a fraction below 1', 0.4]
+    ])('%s on a node with the block: a ping every 100 ms, not at every tick', async (_n, odd) => {
+        const { pings, ms } = await inTicks({ ...BLOCK, idleCheckInterval: odd });
+
+        expect(pings).toBeGreaterThanOrEqual(1);
+        expect(pings).toBeLessThanOrEqual(Math.floor(ms / 100) + 1);
+    });
+
+    it('2147483648 on a node with the block: no ping in those 300 ticks', async () => {
+        expect((await inTicks({ ...BLOCK, idleCheckInterval: 2147483648 })).pings).toBe(0);
+    });
+
+    it.each([
+        ['0', 0], ['a negative number', -5], ['a fraction below 1', 0.4],
+        ['2147483648', 2147483648]
+    ])('%s on a node without the block: no ping, as before', async (_name, odd) => {
+        expect((await inTicks({ ...LEGACY, idleCheckInterval: odd })).pings).toBe(0);
+    });
+});
+
 describe('the ping and the life of a cluster', () => {
     it('disconnect() while a ping is out: every connection is closed, and nothing is ' +
         'logged about that ping', async () => {

@@ -8,6 +8,11 @@ export interface IIdlePing {
     removed: (error: any) => void
 }
 
+// A ping is never paced below this, whatever idleCheckInterval is
+const PING_PACE_MIN = 100;
+// The longest wait a timer of Node takes. A longer one, as one below 1 ms, runs after 1 ms
+const TIMER_MAX = 2147483647;
+
 export class IdleConnectionReaper {
     private readonly _minConnections: number;
     private readonly _idleTimeout: number;
@@ -15,6 +20,8 @@ export class IdleConnectionReaper {
     private readonly _ping?: IIdlePing;
     private _pool: { _freeConnections: { length: number } } | null = null;
     private _timer: ReturnType<typeof setInterval> | null = null;
+    // the timer of the ping, apart from that of the age rule: see _pingPace()
+    private _pingTimer: ReturnType<typeof setInterval> | null = null;
     private _idleConnections: Map<any, number> = new Map();
     // the pings that are out: the idle connection, and the timer that ends its ping
     private _pings: Map<any, ReturnType<typeof setTimeout>> = new Map();
@@ -36,17 +43,35 @@ export class IdleConnectionReaper {
         // a connect() without a disconnect() starts again: its timer takes the place of
         // the one before, which would keep the process alive after a disconnect()
         if (this._timer !== null) clearInterval(this._timer);
+        if (this._pingTimer !== null) clearInterval(this._pingTimer);
         this._pool = pool;
-        this._timer = setInterval(() => {
-            this._tick();
-            if (this._ping) this._pingIdle(this._ping);
-        }, this._idleCheckInterval);
+        this._timer = setInterval(() => this._tick(), this._idleCheckInterval);
+        // Started after the timer of the age rule, so where the two share a tick the age
+        // rule runs first
+        const ping = this._ping;
+        if (ping) this._pingTimer = setInterval(() => this._pingIdle(ping), this._pingPace());
+    }
+
+    /**
+     * The wait between two rounds of pings: idleCheckInterval, but never below 100 ms and
+     * never above the longest wait a timer takes. Node runs a timer with a wait below 1 ms
+     * or above that limit every millisecond. For the age rule that is a walk over a map,
+     * and it is left as it was. A ping is a round trip to the server per idle connection
+     */
+    private _pingPace(): number {
+        // also for a wait that is no number
+        if (!(this._idleCheckInterval >= PING_PACE_MIN)) return PING_PACE_MIN;
+        return Math.min(this._idleCheckInterval, TIMER_MAX);
     }
 
     stop(): void {
         if (this._timer !== null) {
             clearInterval(this._timer);
             this._timer = null;
+        }
+        if (this._pingTimer !== null) {
+            clearInterval(this._pingTimer);
+            this._pingTimer = null;
         }
         this._idleConnections.clear();
         // a ping that is still out decides nothing any more, and leaves no timer

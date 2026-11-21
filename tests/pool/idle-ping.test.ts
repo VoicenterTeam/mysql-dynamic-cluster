@@ -147,7 +147,8 @@ describe('IdleConnectionReaper with a ping: which connections get one', () => {
         const { reaper, removed } = pinging(0);
 
         expect(() => jest.advanceTimersByTime(3 * INTERVAL)).not.toThrow();
-        expect([removed.mock.calls.length, jest.getTimerCount()]).toEqual([0, 1]);
+        // the two timers of a reaper that pings: the age rule and the ping
+        expect([removed.mock.calls.length, jest.getTimerCount()]).toEqual([0, 2]);
         reaper.stop();
     });
 
@@ -180,7 +181,7 @@ describe('IdleConnectionReaper with a ping: what a ping ends with', () => {
         conns[0].answer();
         jest.advanceTimersByTime(LIMIT);
 
-        expect([destroys(conns), removed.mock.calls, jest.getTimerCount()]).toEqual([[0], [], 1]);
+        expect([destroys(conns), removed.mock.calls, jest.getTimerCount()]).toEqual([[0], [], 2]);
         reaper.stop();
     });
 
@@ -318,7 +319,7 @@ describe('IdleConnectionReaper with a ping: a connection the app draws meanwhile
         const timers = jest.getTimerCount();
         jest.advanceTimersByTime(LIMIT);
 
-        expect([timers, destroys(conns), removed.mock.calls]).toEqual([1, [0], []]);
+        expect([timers, destroys(conns), removed.mock.calls]).toEqual([2, [0], []]);
         reaper.stop();
     });
 
@@ -377,7 +378,8 @@ describe('IdleConnectionReaper with a ping: stop and start', () => {
 
         jest.advanceTimersByTime(INTERVAL);
 
-        expect([pings(conns), jest.getTimerCount()]).toEqual([[1], 2]);
+        // the age rule, the ping and the limit of the one ping that is out
+        expect([pings(conns), jest.getTimerCount()]).toEqual([[1], 3]);
         reaper.stop();
     });
 
@@ -394,6 +396,114 @@ describe('IdleConnectionReaper with a ping: stop and start', () => {
         expect(pings([conns[0], next])).toEqual([0, 1]);
         reaper.stop();
     });
+});
+
+// The wait each timer of the reaper is armed with, by its idleCheckInterval. Node runs a
+// timer whose wait is below 1 ms, or above 2147483647, after 1 ms. The age rule keeps that
+// wait, as before. The ping has a timer of its own, never below 100 ms
+describe('IdleConnectionReaper: the pace of the ping', () => {
+    let intervals: jest.SpyInstance;
+    beforeEach(() => {
+        intervals = jest.spyOn(global, 'setInterval');
+    });
+    afterEach(() => intervals.mockRestore());
+    // the wait of every interval timer that was started, in order
+    const armed = (ping: boolean, idleCheckInterval: number) => {
+        const options = ping ? { timeout: LIMIT, removed: jest.fn() } : undefined;
+        const reaper = new IdleConnectionReaper(1, IDLE, idleCheckInterval, options);
+        reaper.start(freeOf(0) as any);
+        reaper.stop();
+        return intervals.mock.calls.map(([, ms]) => ms);
+    };
+    const ODD: [string, number, number][] = [
+        ['0', 0, 100], ['a negative number', -5, 100], ['a fraction below 1', 0.4, 100],
+        ['2147483648, above the longest wait of a timer', 2147483648, 2147483647]
+    ];
+
+    it.each(ODD)('idleCheckInterval %s: the ping gets the nearest wait it may have',
+        (_name, value, pace) => {
+            expect(armed(true, value)).toEqual([value, pace]);
+        });
+
+    it.each(ODD)('idleCheckInterval %s without a ping: one timer, with that wait as before',
+        (_name, value) => {
+            expect(armed(false, value)).toEqual([value]);
+        });
+
+    it.each([
+        ['99, just below the floor', 99, 100], ['100, the floor', 100, 100],
+        ['the default', 10_000, 10_000], ['the longest wait of a timer', 2147483647, 2147483647],
+        ['not a number', NaN, 100]
+    ])('idleCheckInterval %s: the ping and the age rule', (_name, value, pace) => {
+        expect(armed(true, value)).toEqual([value, pace]);
+    });
+
+    it('the timer of the age rule is started first, so it runs first at a shared tick', () => {
+        const { reaper, conns } = pinging(1);
+        const order: string[] = [];
+        jest.spyOn(reaper as any, '_tick').mockImplementation(() => order.push('age rule'));
+        conns[0].ping.mockImplementation(() => order.push('ping'));
+
+        jest.advanceTimersByTime(INTERVAL);
+
+        expect(order).toEqual(['age rule', 'ping']);
+        reaper.stop();
+    });
+});
+
+// The same on the real clock of Node, where such a wait really is 1 ms: 300 ticks of the
+// age rule take 300 ms or more. A ping is answered at once, so only the pace holds it back
+describe('IdleConnectionReaper on the real clock: an idleCheckInterval Node runs every ms', () => {
+    let ticks: jest.SpyInstance;
+    let warned: jest.SpyInstance;
+    beforeEach(() => {
+        jest.useRealTimers();
+        ticks = jest.spyOn(IdleConnectionReaper.prototype as any, '_tick');
+        // Node says once per process that it took 1 ms for such a wait. Not this suite's line
+        warned = jest.spyOn(process, 'emitWarning').mockImplementation(() => undefined);
+    });
+    afterEach(() => [ticks, warned].forEach(spy => spy.mockRestore()));
+    const TICKS = 300;
+    const run = async (idleCheckInterval: number, ping: boolean) => {
+        const conn = makeConn();
+        conn.ping.mockImplementation((done: () => void) => done());
+        const options = ping ? { timeout: LIMIT, removed: jest.fn() } : undefined;
+        const reaper = new IdleConnectionReaper(1, IDLE, idleCheckInterval, options);
+        const began = Date.now();
+        reaper.start(freeOf(1) as any);
+        reaper.onRelease(conn);
+        // gives up after 4000 turns, 20 s or more, and says what it saw
+        for (let turn = 0; turn < 4000 && ticks.mock.calls.length < TICKS; turn++) {
+            await new Promise(resolve => setTimeout(resolve, 5));
+        }
+        reaper.stop();
+        const seen = { ticks: ticks.mock.calls.length, pings: conn.ping.mock.calls.length };
+        if (seen.ticks < TICKS) throw new Error('gave up waiting for 300 ticks: ' + seen.ticks);
+        return { ...seen, ms: Date.now() - began, closed: conn.destroy.mock.calls.length };
+    };
+
+    it.each([
+        ['0', 0], ['a negative number', -5], ['a fraction below 1', 0.4]
+    ])('idleCheckInterval %s: a ping every 100 ms, not at every tick', async (_name, value) => {
+        const { pings, ms } = await run(value, true);
+
+        expect(pings).toBeGreaterThanOrEqual(1);
+        expect(pings).toBeLessThanOrEqual(Math.floor(ms / 100) + 1);
+    });
+
+    it('idleCheckInterval 2147483648: no ping in those 300 ticks', async () => {
+        expect((await run(2147483648, true)).pings).toBe(0);
+    });
+
+    it.each([
+        ['0', 0], ['a negative number', -5], ['a fraction below 1', 0.4],
+        ['2147483648', 2147483648]
+    ])('idleCheckInterval %s without a ping: 300 ticks, and nothing is sent or closed',
+        async (_name, value) => {
+            const { pings, closed } = await run(value, false);
+
+            expect([pings, closed]).toEqual([0, 0]);
+        });
 });
 
 // the error names the argument that is wrong. Its wording is not held
@@ -688,6 +798,19 @@ describe('the ping and the life of a pool', () => {
         conn.answer(lost());
 
         expect([destroys([conn]), removals()]).toEqual([[0], []]);
+    });
+
+    // The fake clock runs a timer of 2147483648 ms every millisecond, as Node does. One of
+    // 0 ms it would never get past, so the waits below 1 ms are rows on the real clock
+    it('idleCheckInterval 2147483648 on a node with the block is taken by the settings, ' +
+        'and no ping comes in 10 s', async () => {
+        await started({ ...WITH_BLOCK, idleCheckInterval: 2147483648 });
+        const conn = idleIn();
+        conn.ping.mockImplementation((done: () => void) => done());
+
+        jest.advanceTimersByTime(10_000);
+
+        expect(pings([conn])).toEqual([0]);
     });
 
     it('connect, disconnect, connect: the connections of the new pool are pinged', async () => {
