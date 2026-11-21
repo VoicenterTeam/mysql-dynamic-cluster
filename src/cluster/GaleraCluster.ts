@@ -386,8 +386,10 @@ export class GaleraCluster {
                     return cached.data;
                 }
             }
+            // MDC_NO_NODE_AVAILABLE of _getActivePools(). The lookup of a service name catches
+            // its own errors
             record(undefined, e);
-            throw new Error(e);
+            throw e;
         }
 
         sql = this._formatSQL(sql, values, queryOptions.escapeNamedValues);
@@ -422,43 +424,37 @@ export class GaleraCluster {
             }
         }
 
-        const errorList: {
-            error: any,
-            pool: Pool
-        }[] = [];
+        // the error of each node tried, in the order they were tried
+        const errors: { nodeId: number, error: any }[] = [];
 
         for (let i = 0; i < retryCount; i++) {
+            const pool = activePools[i];
             try {
-                Logger.debug("Query use host: " + activePools[i].host);
-                const res = await this._queryRequest(sql, activePools[i], queryOptions) as T;
+                Logger.debug("Query use host: " + pool.host);
+                const res = await this._queryRequest(sql, pool, queryOptions) as T;
                 record('pool');
                 return res;
             } catch (e) {
-                errorList.push({
-                    error: e,
-                    pool: activePools[i],
-                });
-                Logger.error(e.message);
+                errors.push({ nodeId: pool.id, error: GaleraCluster._fromNode(e, pool.id) });
+                Logger.error(`Query failed in pool ${pool.name}: ${e?.message}`);
                 if (i + 1 < retryCount) {
                     Logger.debug("Retrying query...");
                 }
             }
         }
 
-        let errorMessage: string = "";
-        errorList.forEach(err => {
-            errorMessage += `Pool: ${err.pool.name}; Error: ${err.error.message}\n`;
-        })
-
-        Logger.error("All pools have error. Error messages: \n" + errorMessage);
         if (redisData) {
-            Logger.warn("Use old data from Redis");
+            Logger.warn("Every pool failed. Use old data from Redis");
             record('stale_cache');
             return redisData.data;
         }
 
-        const error = new Error(errorMessage);
-        record(undefined, error);
+        // The error of the node tried last, as mysql2 made it. The nodes tried before it are
+        // listed on it, so a caller can see every error without a second error type
+        const { error } = errors.pop();
+        GaleraCluster._listEarlier(error, errors);
+        // a rejection without a value, or with a falsy one, is still a failed query to the metric
+        record(undefined, error || {});
         throw error;
     }
 
@@ -470,16 +466,12 @@ export class GaleraCluster {
      * @private
      */
     private async _queryRequest<T extends QueryResult>(sql: string, pool: Pool, queryOptions: IQueryOptions): Promise<T> {
-        try {
-            const result = await pool.query(sql, queryOptions) as T;
+        const result = await pool.query(sql, queryOptions) as T;
 
-            if (queryOptions?.serviceId && this._clusterHashing.connected) {
-                await this._clusterHashing?.updateNodeForService(queryOptions?.serviceId, pool.id);
-            }
-            return result;
-        } catch (e) {
-            throw new Error("Query error: " + e.message);
+        if (queryOptions?.serviceId && this._clusterHashing.connected) {
+            await this._clusterHashing?.updateNodeForService(queryOptions?.serviceId, pool.id);
         }
+        return result;
     }
 
     /**
@@ -493,7 +485,8 @@ export class GaleraCluster {
         if (retryCount > activePoolsLength) {
             Logger.warn("Active pools less than error retry count");
         }
-        retryCount = Math.min(retryCount, activePoolsLength);
+        // one node at least: a query that tries none has no error of a node to reject with
+        retryCount = Math.max(1, Math.min(retryCount, activePoolsLength));
         return retryCount;
     }
 
@@ -558,7 +551,7 @@ export class GaleraCluster {
         }
 
         if (activePools.length < 1) {
-            throw new Error("There is no pool that satisfies the parameters");
+            throw GaleraCluster._noNode("There is no pool that satisfies the parameters");
         }
 
         return activePools;
@@ -599,11 +592,7 @@ export class GaleraCluster {
         if (signal?.aborted) throw Pool.abortReason(signal);
 
         const pool = this._validPools(exclude ?? [])[0];
-        if (!pool) {
-            throw Object.assign(new Error("No valid node is left to take a connection from"), {
-                code: 'MDC_NO_NODE_AVAILABLE'
-            });
-        }
+        if (!pool) throw GaleraCluster._noNode("No valid node is left to take a connection from");
 
         // the pool sets `aborted` on it when the abort ended the call, not an error of the node
         const outcome: AbortOutcome = {};
@@ -612,14 +601,69 @@ export class GaleraCluster {
         } catch (error) {
             // the reason of the signal belongs to the app. It goes back as it is
             if (outcome.aborted) throw error;
-            // the error of mysql2 itself, so the caller sees its code. Only the node is added
-            try {
-                error.nodeId = pool.id;
-            } catch {
-                // a frozen error, or one that is no object, goes to the caller without the node
-            }
-            throw error;
+            throw GaleraCluster._fromNode(error, pool.id);
         }
+    }
+
+    /**
+     * The error query() and getConnection() reject with when no valid node is left
+     * @private
+     */
+    private static _noNode(message: string): Error {
+        return Object.assign(new Error(message), { code: 'MDC_NO_NODE_AVAILABLE' });
+    }
+
+    /**
+     * Sets `errors` on the error a failed query() rejects with: the nodes tried before the
+     * last one, as `{ nodeId, error }`. An error the app handed failWaiting() is one object
+     * that many queries can meet, so an entry that leads back to the error, itself or
+     * through the lists of earlier queries, is left out. The errors keep no cycle and can
+     * be turned into JSON. An error that has an `errors` of its own, such as the
+     * AggregateError of a host name whose every address refused, keeps it. A frozen error,
+     * or one that is no object, gets no list
+     * @param error the error of the node tried last
+     * @param earlier the error of each node tried before it, in the order they were tried
+     */
+    private static _listEarlier(error: any, earlier: { nodeId: number, error: any }[]): void {
+        if (!error || typeof error !== 'object') return;
+        if (Array.isArray(error.errors) && !GaleraCluster._lists.has(error.errors)) return;
+        const list = earlier.filter(entry => !GaleraCluster._leadsTo(entry.error, error));
+        try {
+            error.errors = list;
+            GaleraCluster._lists.add(list);
+        } catch {
+            // a frozen error goes to the caller without the list
+        }
+    }
+
+    // the lists _listEarlier() set, told apart from an errors array of the error's own
+    private static _lists = new WeakSet<object>();
+
+    // whether `target` is `from` or can be reached from it through the lists _listEarlier() set
+    private static _leadsTo(from: any, target: any, seen = new Set<any>()): boolean {
+        if (from === target) return true;
+        if (!from || typeof from !== 'object' || seen.has(from)) return false;
+        seen.add(from);
+        const list = from.errors;
+        if (!Array.isArray(list) || !GaleraCluster._lists.has(list)) return false;
+        return list.some(entry => GaleraCluster._leadsTo(entry.error, target, seen));
+    }
+
+    /**
+     * The error of a node as the caller gets it: the error of mysql2 itself, so its code,
+     * errno and message stay as mysql2 made them. Only the id of the node is added
+     * @param error what the node's call was rejected with
+     * @param nodeId id of the node
+     * @returns the same error
+     * @private
+     */
+    private static _fromNode<E>(error: E, nodeId: number): E {
+        try {
+            (error as any).nodeId = nodeId;
+        } catch {
+            // a frozen error, or one that is no object, goes to the caller without the node
+        }
+        return error;
     }
 
     /**

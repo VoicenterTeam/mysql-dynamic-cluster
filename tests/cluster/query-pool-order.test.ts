@@ -79,10 +79,10 @@ describe('the pool order of GaleraCluster.query', () => {
         expect(cluster.pools.map((pool: any) => pool.id)).toEqual([1, 2, 3]);
     });
 
-    it('rejects with the same text as before when no pool is left', async () => {
+    it('rejects with MDC_NO_NODE_AVAILABLE when no pool is left', async () => {
         const cluster = makeCluster([node(1, 10, false)]);
-        await expect(cluster.query('SELECT 1')).rejects.toThrow(
-            'There is no pool that satisfies the parameters'
-        );
+        await expect(cluster.query('SELECT 1')).rejects.toMatchObject({
+            code: 'MDC_NO_NODE_AVAILABLE'
+        });
     });
 });
