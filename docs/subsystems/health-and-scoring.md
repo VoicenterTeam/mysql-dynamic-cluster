@@ -167,7 +167,7 @@ More on these rules:
 
 ### The check connection
 
-Not in 4.6.0 or earlier. The check of a node with a `healthCheck` block asks
+Added in 4.7.0. The check of a node with a `healthCheck` block asks
 on one connection of its own, next to the pool of the app. The legacy check
 asks through the pool, like a query of the app.
 
@@ -474,7 +474,7 @@ the block nor one in the pool of a node without it.
 
 ### Passive health
 
-Not in 4.6.0 or earlier. A check sees a node once every `interval`. The
+Added in 4.7.0. A check sees a node once every `interval`. The
 queries of the app see it all the time. With `passive: true`, the default of
 the block, four kinds of error move the node between two checks. They are
 the errors of a query, a transaction or a `getConnection()` of the app,

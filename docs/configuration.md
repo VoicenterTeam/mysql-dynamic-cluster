@@ -112,7 +112,7 @@ defaultPoolSettings: {
 
 ### `healthCheck`
 
-Not in 4.6.0 or earlier. A node that has this block is checked by new rules: a fixed wait between two checks, down after `fall` failed checks in a row, back after `rise` passed ones. A node without it keeps the legacy check, which is every node of an app that does not set the block. The rules of both are in [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#two-modes).
+Added in 4.7.0. A node that has this block is checked by new rules: a fixed wait between two checks, down after `fall` failed checks in a row, back after `rise` passed ones. A node without it keeps the legacy check, which is every node of an app that does not set the block. The rules of both are in [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#two-modes).
 
 | key | type | default | meaning |
 |---|---|---|---|
