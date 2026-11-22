@@ -77,7 +77,11 @@ const loggingIn = (mysqlPool: any): any[] => {
     return callbacks;
 };
 
-const connection = (): any => ({ release: jest.fn(), destroy: jest.fn() });
+// getConnection() lends what it resolves with: that replaces release() and listens for the
+// warning of packets out of order
+const connection = (): any => ({
+    release: jest.fn(), destroy: jest.fn(), on: jest.fn(), removeListener: jest.fn()
+});
 
 // How a promise stands one turn of the event loop from now. No timer: a promise that is still
 // pending then is one that waits for something the test has not done yet
@@ -127,12 +131,15 @@ describe('Pool.getConnection with a signal that does not abort', () => {
     it('resolves with the connection mysql2 hands out, asked once', async () => {
         const { pool, mysqlPool } = await connected();
         const handed = connection();
+        // the release() of mysql2: the lend puts one for the app in its place
+        const { release } = handed;
         mysqlPool.getConnection.mockImplementation((cb: any) => cb(null, handed));
         const outcome: any = {};
 
         expect(await pool.getConnection(new AbortController().signal, outcome)).toBe(handed);
         expect(mysqlPool.getConnection).toHaveBeenCalledTimes(1);
-        expect(handed.release).not.toHaveBeenCalled();
+        expect(release).not.toHaveBeenCalled();
+        expect(handed.release).not.toBe(release);
         expect(outcome).toEqual({});
     });
 
@@ -341,6 +348,7 @@ describe('Pool.getConnection whose signal aborts after the call settled', () => 
     it('does nothing after the promise resolved: the caller keeps the connection', async () => {
         const { pool, mysqlPool } = await connected();
         const handed = connection();
+        const { release } = handed;
         mysqlPool.getConnection.mockImplementation((cb: any) => cb(null, handed));
         const controller = new AbortController();
         const outcome: any = {};
@@ -349,7 +357,7 @@ describe('Pool.getConnection whose signal aborts after the call settled', () => 
 
         controller.abort(new Error('too late'));
         expect(await stateOf(request)).toEqual({ resolved: handed });
-        expect(handed.release).not.toHaveBeenCalled();
+        expect(release).not.toHaveBeenCalled();
         expect(handed.destroy).not.toHaveBeenCalled();
         expect(outcome).toEqual({});
     });
@@ -372,6 +380,7 @@ describe('Pool.getConnection whose signal aborts after the call settled', () => 
     it('does nothing when a signal calls its listener after the call settled', async () => {
         const { pool, mysqlPool } = await connected();
         const handed = connection();
+        const { release } = handed;
         const signal = oldSignal();
         signal.removeEventListener = jest.fn();
         const outcome: any = {};
@@ -384,7 +393,7 @@ describe('Pool.getConnection whose signal aborts after the call settled', () => 
         signal.abort();
         expect(outcome).toEqual({});
         expect([...mysqlPool._connectionQueue]).toEqual([other]);
-        expect(handed.release).not.toHaveBeenCalled();
+        expect(release).not.toHaveBeenCalled();
     });
 });
 

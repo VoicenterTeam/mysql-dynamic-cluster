@@ -55,17 +55,22 @@ const connected = async (): Promise<{ pool: any, mysqlPool: any }> => {
 describe('Pool.getConnection', () => {
     beforeEach(() => jest.clearAllMocks());
 
-    it('resolves with the connection mysql2 hands out, untouched, with no metric', async () => {
+    // lent: a listener for packets out of order, and a release() of the pool in place of
+    // the one of mysql2. Nothing is sent on the connection
+    it('resolves with the connection mysql2 hands out, lent, with no metric', async () => {
         const { pool, mysqlPool } = await connected();
-        const connection = {
+        const connection: any = {
             changeUser: jest.fn(), query: jest.fn(), reset: jest.fn(),
-            release: jest.fn(), destroy: jest.fn()
+            release: jest.fn(), destroy: jest.fn(), on: jest.fn(), removeListener: jest.fn()
         };
+        const { on, ...others } = connection;
         mysqlPool.getConnection.mockImplementation((cb: any) => cb(null, connection));
 
         expect(await pool.getConnection()).toBe(connection);
         expect(mysqlPool.getConnection).toHaveBeenCalledTimes(1);
-        Object.values(connection).forEach(method => expect(method).not.toHaveBeenCalled());
+        expect(on.mock.calls.map(([event]: [string]) => event)).toEqual(['warn']);
+        Object.values(others).forEach(method => expect(method).not.toHaveBeenCalled());
+        expect(connection.release).not.toBe(others.release);
         expect(Metrics.recordOperation).not.toHaveBeenCalled();
     });
 

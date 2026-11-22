@@ -61,7 +61,7 @@ describe('PoolStatus.checkStatus validity', () => {
 
     // The arguments of the status query: the last says no probe, see Pool.query()
     const asked = (timeout: number) => [
-        'SHOW GLOBAL STATUS;', { redis: false, timeout }, {}, undefined, false, false
+        'SHOW GLOBAL STATUS;', { redis: false, timeout }, {}, { probe: false }
     ];
 
     it('the status query times out at the longest check interval, or queryTimeout if lower', async () => {

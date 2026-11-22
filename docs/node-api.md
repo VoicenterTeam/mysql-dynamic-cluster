@@ -313,7 +313,8 @@ A connection that was idle in the pool longer than `probeIdle` (1000 ms by defau
 a ping before you get it. On a node with a `healthCheck` block the idle connections get a
 ping every `idleCheckInterval`, and an answered one counts as well: the time runs from the
 later of the release and that answer. When such a ping is still out, the cluster waits for
-its answer, within `probeTimeout`, instead of sending a second one. A connection
+its answer, within `probeTimeout`, instead of sending a second one, also on a connection
+used within `probeIdle`. A connection
 that answers in time is yours. One that fails, does not answer within `probeTimeout`
 (1000 ms by default) or meets packets out of order is destroyed with its socket, passive
 health hears of it as a lost connection, and the cluster takes the next connection of the
@@ -321,15 +322,21 @@ same node. A new connection needs no ping, so the call ends with one at the late
 that forgot an idle connection, such as a firewall or a NAT, costs you nothing then: the
 ping meets it, not your first statement.
 
-So the call can take up to `probeTimeout` longer per connection that does not answer. A
-connection used within `probeIdle` gets no ping.
+So the call can take up to `probeTimeout` longer per connection that does not answer. The
+worst case is a path that drops the packets of every idle connection without a reset: each
+one costs `probeTimeout`, so about `connectionLimit × probeTimeout` (10 s with a limit of
+10 and the defaults) pass before the call gets to a new connection, which then has
+mysql2's `connectTimeout` for its login. A connection used within `probeIdle` gets no ping
+of its own.
 
 #### The reset at release()
 
 `release()` resets the connection before it goes back to the pool: one `COM_RESET_CONNECTION`,
 bounded by `resetTimeout`. The server rolls back an open transaction and drops its locks,
 temporary tables, user variables, prepared statements and session settings. A reset that
-fails or runs out of time destroys the connection, and it never goes back. The next caller,
+fails or runs out of time destroys the connection, and it never goes back. So do packets
+out of order on the reset: the connection is destroyed at once, not after `resetTimeout`.
+The next caller,
 a `getConnection()` or a query of the cluster, gets the connection only after the reset was
 answered. A query of the cluster sends `USE` before it, since the cluster does not know which
 database you left the connection on.

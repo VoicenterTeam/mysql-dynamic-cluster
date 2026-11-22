@@ -10,6 +10,7 @@ import Logger from "../utils/Logger";
 
 import { format as MySQLFormat, escape as MySQLEscape, PoolConnection } from 'mysql2';
 import { Pool } from "../pool/Pool";
+import { abortReason } from "../utils/Abort";
 import { ClusterHashing } from "./ClusterHashing";
 import { mayTryNextNode } from "./QueryRetry";
 import Metrics from "../metrics/Metrics";
@@ -393,7 +394,7 @@ export class GaleraCluster {
         // with stale data of Redis. A falsy reason is a failed query to the metric too
         const stopIfAborted = () => {
             if (!signal?.aborted) return;
-            const reason = Pool.abortReason(signal);
+            const reason = abortReason(signal);
             record(undefined, reason || {});
             throw reason;
         };
@@ -552,7 +553,7 @@ export class GaleraCluster {
         sql: string, pool: Pool, queryOptions: IQueryOptions, outcome: IQueryOutcome,
         values: QueryValues, valuesInText: boolean
     ): Promise<T> {
-        const result = await pool.query(sql, queryOptions, outcome, values, valuesInText) as T;
+        const result = await pool.query(sql, queryOptions, outcome, { values, valuesInText }) as T;
 
         if (queryOptions?.serviceId && this._clusterHashing.connected) {
             // the statement ran: a failure from here on must not send it to another node
@@ -668,7 +669,7 @@ export class GaleraCluster {
             throw new TypeError("getConnection: options.signal must be an AbortSignal");
         }
         // before a node is looked for: an aborted call asks none, also when none is left
-        if (signal?.aborted) throw Pool.abortReason(signal);
+        if (signal?.aborted) throw abortReason(signal);
 
         const pool = this._validPools(exclude ?? [])[0];
         if (!pool) throw GaleraCluster._noNode("No valid node is left to take a connection from");
@@ -683,7 +684,6 @@ export class GaleraCluster {
             if (outcome.aborted) throw error;
             throw GaleraCluster._fromNode(error, pool.id);
         }
-        pool.lend(connection);
         return { connection, nodeId: pool.id };
     }
 

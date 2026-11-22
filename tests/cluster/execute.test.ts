@@ -567,7 +567,9 @@ describe('Pool.query() called directly', () => {
             const cluster = await clusterOf(node);
             const outcome: any = {};
 
-            const call = cluster.pools[0].query(SELECT, { execute: true }, outcome, [undefined]);
+            const call = cluster.pools[0].query(SELECT, { execute: true }, outcome, {
+                values: [undefined]
+            });
             const ended = await within(3000, call);
 
             expect(ended).not.toBe('still waiting');

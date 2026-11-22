@@ -119,7 +119,7 @@ describe('checkError after a failure the package makes itself', () => {
         const conn = makeConn({ hangs: 'reset' });
         const pool = handsOut(conn);
         // the app had the connection, so the query resets it first
-        pool.lend(conn);
+        await pool.getConnection();
         const query = pool.query('SELECT 1').catch((e: any) => e);
         await turns();
         // resetTimeout of the defaults

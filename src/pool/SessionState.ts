@@ -190,19 +190,25 @@ export class SessionState {
      * Give a connection back to the pool. A clean one goes back at once. A dirty one is reset
      * first and goes back clean, and one whose reset fails or runs out of time is destroyed.
      * One the node answered 1047 on is destroyed with no reset. A connection that was dropped
-     * already is left alone
+     * already is left alone. Exactly one of the two callbacks runs, once the release is over
      * @param broken the socket is dead or still runs a statement: destroyed, never reset
-     * @param putBack puts the connection into the pool of mysql2, see Borrow
+     * @param putBack puts the connection into the pool of mysql2. Not connection.release():
+     * the one of a lent connection is the app's, see Borrow
+     * @param gone the connection was destroyed, or was already
      */
     public release(
-        connection: mysql.PoolConnection, broken = false, putBack = () => connection.release()
+        connection: mysql.PoolConnection, broken: boolean, putBack: () => void, gone: () => void
     ): void {
         const session = this._sessions.get(connection);
-        if (session?.dropped) return;
-        if (broken) return connection.destroy();
+        if (session?.dropped) return gone();
+        if (broken) {
+            connection.destroy();
+            return gone();
+        }
         if (session?.notReady) {
             // the reset would get no answer and hold the slot for resetTimeout, see _reset()
-            return this.drop(connection);
+            this.drop(connection);
+            return gone();
         }
         if (!session?.dirty) return putBack();
         this._reset(connection, session, error => {
@@ -210,6 +216,7 @@ export class SessionState {
             const pool = this._poolName;
             Logger.warn("Pool " + pool + ": the reset of a connection before its release " +
                 "failed, the connection was closed", { pool, code: error?.code });
+            gone();
         });
     }
 
@@ -255,8 +262,7 @@ export class SessionState {
             finished = true;
             clearTimeout(timer);
             if (error) {
-                session.dropped = true;
-                drop(connection);
+                this.drop(connection);
             } else {
                 session.dirty = false;
                 session.sinceReset = 0;

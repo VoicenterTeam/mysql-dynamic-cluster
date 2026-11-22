@@ -450,13 +450,15 @@ const behindProxies = async (block: object = BLOCK) => {
         .filter(([, meta]) => meta && meta.reason).map(([, meta]) => meta.reason);
     return { cluster, proxies, failedChecks, downs };
 };
-// open `count` connections in every pool and hand them back, so they sit idle in the pool
+// open `count` connections in every pool and hand them back, so they sit idle in the pool.
+// release() resets each one first, so the wait is for that reset to end
 const idle = async (cluster: any, count: number) => {
     for (const pool of cluster.pools) {
         const held = await Promise.all(Array.from({ length: count }, () => pool.getConnection()));
         held.forEach((connection: any) => connection.release());
     }
-    expect(cluster.getPoolStats().map((stats: any) => stats.idle)).toEqual([count, count]);
+    const idles = () => cluster.getPoolStats().map((stats: any) => stats.idle);
+    await until(() => idles().every((n: number) => n === count), 'the resets at release', idles);
 };
 // the waits the check timer of one node was started with
 const waitsOf = (cluster: any, index: number): number[] => {

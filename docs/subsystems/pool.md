@@ -187,7 +187,7 @@ can be broken down by pool, service and error type. See
 The `Promise` callback chain is, in order
 ([src/pool/Pool.ts:304-338](../../src/pool/Pool.ts#L304)):
 
-1. `_borrow.take(signal, asked, { database, timeout }, probe)` — takes a
+1. `_borrow.take({ signal, target, probe }, asked)`, `target` being `{ database, timeout }` — takes a
    connection ready for the statement, see
    [Borrow](#borrow-taking-and-giving-back-a-connection): the queue of
    mysql2 and an abort while the request waits, the probe of a connection
@@ -256,8 +256,8 @@ The status query of a health check is never told. For a node with a
 `healthCheck` block it does not run through `query()` at all: it is asked
 on the [check connection](#the-check-connection). For a node without the
 block it does run through `query()`, as in 4.6.0, and passive health does
-nothing for such a node. It passes `probe: false`, the last parameter of
-`query()`, which no other caller sets: the check draws a connection of the
+nothing for such a node. It passes `{ probe: false }`, the `IPoolCall`
+that is the last parameter of `query()`, which no other caller sets: the check draws a connection of the
 app as it is, with no probe, no retry and no signal.
 
 `multiStatementQuery()` tells every failure the same way, and a `ROLLBACK`
@@ -311,7 +311,7 @@ omitted — this method does not cache:
 
 [src/pool/Pool.ts:389-428](../../src/pool/Pool.ts#L389):
 
-1. `_borrow.take(undefined, {}, { database, timeout })` — the same borrow
+1. `_borrow.take({ target: { database, timeout } })` — the same borrow
    as `query()`, probe included, with no signal. Reject on its error.
 2. The borrow did the same reset of a dirty connection and `USE` as for
    `query()`. Packets out of order are not watched during the
@@ -441,9 +441,10 @@ texts and the reset with its time limit. `query()` and
   The statements `execute` prepares stay too, in the cache mysql2 keeps
   per connection, up to `maxPreparedStatements`, until a reset or a `USE`
   of another database closes them.
-- **A connection the app had.** `GaleraCluster.getConnection()` calls
-  `pool.lend(connection)`. The pool sees neither the `USE` nor the
-  transaction the app sends on it, so it marks the connection dirty and
+- **A connection the app had.** `Pool.getConnection()` lends it
+  (`_borrow.lend()`) before the cluster hands it out. The pool sees
+  neither the `USE` nor the transaction the app sends on it, so it marks
+  the connection dirty and
   on no known database, after it closed the statements `execute` prepared
   on it. The `release()` of the app goes (#93)
   through the borrow, which resets the connection before it goes back, see
@@ -472,7 +473,9 @@ The one place a connection of the pool is taken and given back: `query()`,
 its `execute` form, `multiStatementQuery()` and `getConnection()` all go
 through it, and no other code takes or releases a pooled connection.
 
-Taking, `take(signal, outcome, target?, probe)`:
+Taking, `take(options, outcome)`. `options` is `ITakeOptions` of
+Borrow.ts, `{ signal?, target?, probe? }`, internal and in no public type;
+`probe` is `true` unless the caller says `false`:
 
 1. **One request to mysql2** (`_request`), which waits in its queue while
    the pool is at its limit. An abort there takes the request out of the
@@ -480,14 +483,18 @@ Taking, `take(signal, outcome, target?, probe)`:
    error of mysql2 is told to passive health as one that came in place of
    a connection.
 2. **The probe** (`_probe`), when the connection was idle longer than
-   `probeIdle` (1000 ms by default). How long it was idle comes from the
+   `probeIdle` (1000 ms by default), or when a ping of the reaper is still
+   out on it, idle or not. How long it was idle comes from the
    reaper: `drawn(connection)` gives what `onAcquire` saw when mysql2 drew
    the connection from its idle ones, the later of its release and the
    last ping of the reaper it answered. A new connection was never idle,
    and neither was one mysql2 handed straight from one caller to the next
    that waited, so neither gets a probe. The probe is `connection.ping()`,
    or, when the reaper's ping is still out on the connection, its answer:
-   no second ping is sent. It has `probeTimeout` (1000 ms by default). A
+   no second ping is sent. That wait is bounded too: mysql2 starts the
+   timer of a query only after a ping queued before it, so a borrow that
+   went on behind the reaper's ping on a dead path would wait with no
+   limit. It has `probeTimeout` (1000 ms by default). A
    probe that fails, gets no answer in time or meets packets out of order
    drops the connection (`drop()` of
    [ServerFlags.ts](../../src/pool/ServerFlags.ts), with its socket), tells
@@ -495,7 +502,8 @@ Taking, `take(signal, outcome, target?, probe)`:
    next connection of the node: at most `connectionLimit + 1` tries, and a
    new connection ends it at the latest. An abort during the probe drops
    the connection, tells nothing, and rejects with the reason. The health
-   check of a node without a `healthCheck` block passes `probe: false`.
+   check of a node without a `healthCheck` block passes `probe: false`
+   through `IPoolCall` of `Pool.query()`.
 3. **For a statement** (`target` given), `_prepare` calls
    `SessionState.prepare()`: a reset when dirty, `USE` for another
    database. An error there is told to passive health and gives the
@@ -507,7 +515,9 @@ Giving back, `giveBack(connection, broken)`, goes through
 bounded reset, one the node answered 1047 on is dropped, a broken one is
 destroyed. The connection goes into the pool of mysql2 with the
 `release()` of mysql2 (`_putBack`), also when a lend replaced the one on
-the connection.
+the connection. Packets out of order are watched during that reset: the
+watch ends when the reset ends, and a warning drops the connection at
+once, not after `resetTimeout`.
 
 `lend(connection)` marks the connection dirty with an unknown database in
 `SessionState` and replaces its `release()` for the app: the first call
@@ -521,8 +531,8 @@ has a numeric `expected` and `received` when a packet comes with an
 unexpected sequence number, prints it, and goes on, often until the
 timeout of the statement. `watch(connection, outOfOrder)` puts one
 listener on the connection, during the probe, the reset and `USE`, the
-statement of `query()` or `execute()`, and the whole time a connection is
-lent. The listener drops the connection with the warning as the error of
+statement of `query()` or `execute()`, the reset of `giveBack()`, and the
+whole time a connection is lent. The listener drops the connection with the warning as the error of
 its socket, so a command still out on it fails with that warning, and
 `outOfOrder` gets an `Error` with code `MDC_PACKETS_OUT_OF_ORDER`,
 `expected`, `received` and `nodeId`. `query()` fails the call with it at
@@ -535,10 +545,14 @@ answered in order has none left. mysql2 also emits it for an
 number 0 when it closes an idle connection, which is a failed probe when
 it comes during one.
 
-`whenAborted(signal, aborted)` is the one shape of an abort listener: it
-calls `aborted` once, and the function it returns takes the listener off.
-A signal that keeps its listeners and calls them after that changes
-nothing. `abortReason(signal)` and `isBroken(error)` live there too.
+[src/utils/Abort.ts](../../src/utils/Abort.ts) holds the helpers Borrow,
+`Pool` and `GaleraCluster` share. `whenAborted(signal, aborted)` is the one
+shape of an abort listener: it calls `aborted` once, and the function it
+returns takes the listener off. A signal that keeps its listeners and calls
+them after that changes nothing. `abortReason(signal)` gives the reason of
+an aborted signal, see [A signal on getConnection](#a-signal-on-getconnection).
+`isBroken(error)` says whether an error leaves the connection unusable:
+`fatal`, or `PROTOCOL_SEQUENCE_TIMEOUT`.
 
 ## The check connection
 
@@ -768,18 +782,16 @@ not move. `GaleraCluster` calls them for the node API of
 [../node-api.md](../node-api.md). `_pool` stays private.
 
 - `getConnection(signal?, outcome?)` takes one connection through
-  `_borrow.take(signal, outcome)`: probed when it was idle longer than
-  `probeIdle`, since 5.0.0. It does not change the database, sets
+  `_borrow.take({ signal }, outcome)`: probed when it was idle longer than
+  `probeIdle`, since 5.0.0. Then it lends it, `_borrow.lend()`: the app's
+  `release()` resets the connection, and a second one does nothing. The
+  lend is inside, so no caller can forget it. It does not change the database, sets
   no timeout and records no metric. It rejects with the error object of
   mysql2, with the error of the last probe when every try failed, or with
   `POOL_NOT_CONNECTED` before `connect()` created the mysql2
   pool. An error of mysql2 is told to [passive health](#passive-health)
   first. Without a signal it does what it did before. With one, see
   [A signal on getConnection](#a-signal-on-getconnection).
-- `lend(connection)`, since 5.0.0, tells the pool that the app has the
-  connection: `_borrow.lend()`. `GaleraCluster.getConnection()` calls it,
-  not `getConnection()` of the pool. See
-  [Borrow](#borrow-taking-and-giving-back-a-connection).
 - `failWaiting(error)` empties `_connectionQueue` of the mysql2 pool, then
   calls every callback it took out with `error`, and returns how many. The
   queue is emptied first, so a callback that asks for a connection again is
@@ -865,8 +877,8 @@ So after a listener of the app threw, the connection is idle in the pool
 and the reaper knows it. The throw is logged at `warn` with `nodeId`, `pool`
 and `error`.
 
-`Pool.abortReason(signal)` is static, and calls `abortReason()` of Borrow.
-It returns `signal.reason`, or, when
+`abortReason(signal)` of [src/utils/Abort.ts](../../src/utils/Abort.ts)
+returns `signal.reason`, or, when
 the signal has none, an `Error` with the name `AbortError`, the code
 `ABORT_ERR` and the message `The operation was aborted`, as the `AbortError`
 of Node has them. The cluster uses it for a signal that is already aborted,
@@ -899,11 +911,9 @@ the waiting requests reject with it as before.
 | `status` | getter returning `PoolStatus` | [:23-25](../../src/pool/Pool.ts#L23) |
 | `connect(outcome?)` | `async (outcome?: ICheckOutcome) => Promise<void>` | [:104](../../src/pool/Pool.ts#L104) |
 | `disconnect()` | `() => void` | [:239](../../src/pool/Pool.ts#L239) |
-| `query<T>(sql, options?, outcome?, values?, valuesInText?, probe?)` | `async => Promise<T \| T[]>` | [:265](../../src/pool/Pool.ts#L265) |
+| `query<T>(sql, options?, outcome?, call?)` | `async => Promise<T \| T[]>`, `call` an internal `IPoolCall` `{ values?, valuesInText?, probe? }` | [:265](../../src/pool/Pool.ts#L265) |
 | `multiStatementQuery<T>(sqls, options)` | `async => Promise<T[]>` | [:347](../../src/pool/Pool.ts#L347) |
 | `getConnection(signal?, outcome?)` | `(signal?: AbortSignal, outcome?: IAbortOutcome) => Promise<PoolConnection>` | [`getConnection`](../../src/pool/Pool.ts) |
-| `Pool.abortReason(signal)` | `static (signal: AbortSignal) => unknown` | [`abortReason`](../../src/pool/Pool.ts) |
-| `lend(connection)` | `(connection: PoolConnection) => void` | [`lend`](../../src/pool/Pool.ts) |
 | `failWaiting(error)` | `(error: Error) => number` | [`failWaiting`](../../src/pool/Pool.ts) |
 | `stats()` | `() => { used, idle, pending }` | [`stats`](../../src/pool/Pool.ts) |
 | `checkError` | getter returning `INodeCheckError \| undefined` | [`checkError`](../../src/pool/Pool.ts) |

@@ -357,7 +357,8 @@ attempt is still logged with `Logger.error`. The single
 ### 10. `_queryRequest`
 
 `_queryRequest` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
-Wraps a single `pool.query(sql, queryOptions, outcome, values, valuesInText)` call. The pool
+Wraps a single `pool.query(sql, queryOptions, outcome, { values, valuesInText })` call. The
+pool
 records the attempt as `mysql_dynamic_cluster.operation.duration`. On
 success:
 
@@ -374,7 +375,8 @@ next node.
 ### The `signal` option
 
 Since 5.0.0 (#89). `signal` is an `AbortSignal` that ends the call when it
-aborts. The call then rejects with `Pool.abortReason(signal)`: the reason
+aborts. The call then rejects with `abortReason(signal)` of
+[src/utils/Abort.ts](../../src/utils/Abort.ts): the reason
 of the signal as it is, or, for a signal without a reason, an `Error`
 named `AbortError` with the code `ABORT_ERR`. Nothing is written on the
 reason: no `nodeId`, `errors` or `sent`.
@@ -554,8 +556,8 @@ signal by its members, a boolean `aborted` and the functions
 `addEventListener` and `removeEventListener`, not by its class. The signal
 goes to `Pool.getConnection(signal, outcome)`, which does the waiting, the
 probe and the abort through the borrow, see
-[pool.md](./pool.md#borrow-taking-and-giving-back-a-connection). Then
-`pool.lend(connection)` hands the `release()` of the connection to the
-borrow. The cluster adds `nodeId` to a rejection of the pool unless the
+[pool.md](./pool.md#borrow-taking-and-giving-back-a-connection). It also
+lends the connection, so the app's `release()` goes through the borrow;
+the cluster does nothing more to it. The cluster adds `nodeId` to a rejection of the pool unless the
 pool set `outcome.aborted`: the reason of an abort goes back to the app as
 it is.

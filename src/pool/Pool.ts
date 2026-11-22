@@ -19,7 +19,21 @@ import { IdleConnectionReaper, IIdlePing } from './IdleConnectionReaper';
 import { CheckConnection } from './CheckConnection';
 import { flagsForServer, IServerGreeting, IServerProbe, probeServer } from './ServerFlags';
 import { SessionState } from './SessionState';
-import { abortReason, Borrow, isBroken, whenAborted } from './Borrow';
+import { Borrow } from './Borrow';
+import { abortReason, isBroken, whenAborted } from '../utils/Abort';
+
+// What the cluster and the health check hand Pool.query() beside the options of the app. In
+// no type of the package's public interface
+export interface IPoolCall {
+    // the values the server binds, with the option `execute`. Not read without it
+    values?: QueryValues,
+    // the cluster wrote values into sql. The pool refuses to send such a statement on a
+    // connection with NO_BACKSLASH_ESCAPES: MDC_UNSAFE_SQL_MODE, `sent: false`
+    valuesInText?: boolean,
+    // false for the health check of a node without a block only: it draws the connection
+    // with no probe, see Borrow
+    probe?: boolean
+}
 
 // AKA galera node
 export class Pool {
@@ -291,16 +305,13 @@ export class Pool {
      * also writes it on its error, when the error can take it. Gets `aborted: true` when the
      * signal of the options ended the call, which then rejects with the reason of the signal
      * as it is: nothing is written on it, and passive health is not told
-     * @param values the values the server binds, with the option `execute`. Not read without it
-     * @param valuesInText the cluster wrote values into sql. The pool refuses to send such a
-     * statement on a connection with NO_BACKSLASH_ESCAPES: MDC_UNSAFE_SQL_MODE, `sent: false`
-     * @param probe false for the health check of a node without a block only: it draws the
-     * connection with no probe, see Borrow
+     * @param call the values, valuesInText and probe, see IPoolCall
      */
     public async query<T extends QueryResult>(
         sql: string, queryOptions?: IQueryOptions, outcome: IQueryOutcome = {},
-        values?: QueryValues, valuesInText = false, probe = true
+        call: IPoolCall = {}
     ): Promise<T | T[]> {
+        const { values, valuesInText = false, probe = true } = call;
         return new Promise(async (resolve, reject) => {
             outcome.sent = false;
             queryOptions = {
@@ -386,7 +397,8 @@ export class Pool {
             // sends USE for another database. An abort meanwhile is the borrow's as well
             const asked: IAbortOutcome = {};
             const { database, timeout } = queryOptions;
-            this._borrow.take(signal, asked, { database, timeout }, probe).then(conn => {
+            const target = { database, timeout };
+            this._borrow.take({ signal, target, probe }, asked).then(conn => {
                 held = conn;
                 // the signal aborted after the borrow took its listener off
                 if (signal?.aborted) return onAbort();
@@ -505,7 +517,7 @@ export class Pool {
             // The transaction ends with its own COMMIT or ROLLBACK, so a clean reply of it
             // sends the connection back with no reset
             const { database, timeout } = queryOptions;
-            this._borrow.take(undefined, {}, { database, timeout }).then(conn => {
+            this._borrow.take({ target: { database, timeout } }).then(conn => {
                 // queries run one after another; commit only after the last one succeeded
                 const runQuery = (index: number) => {
                     if (index >= sqls.length) {
@@ -617,39 +629,25 @@ export class Pool {
     }
 
     /**
-     * The app takes this connection through getConnection() of the cluster. The pool sees
-     * neither the database nor the transaction the app leaves on it, so the release() of the
-     * app resets it before it goes back, and a query of the pool that gets it sends USE first.
-     * A second release() does nothing, see Borrow.lend()
-     * @param connection the connection getConnection() resolved with
-     */
-    public lend(connection: PoolConnection): void {
-        this._borrow.lend(connection);
-    }
-
-    /**
-     * Take one connection out of the pool for the caller: probed on the way out when it was
-     * idle longer than probeIdle, with no database change, no timeout and no metric. One
-     * request to mysql2, which waits when the pool is at its limit. Rejects with the error
-     * object of mysql2, or with the error of the last probe when no connection passed.
+     * Take one connection out of the pool and lend it to the app: probed on the way out when
+     * it was idle longer than probeIdle, with no database change, no timeout and no metric.
+     * One request to mysql2, which waits when the pool is at its limit. The pool sees neither
+     * the database nor the transaction the app leaves on it, so the release() of the app resets
+     * it before it goes back, a second release() does nothing, and a query of the pool that
+     * gets it sends USE first, see Borrow.lend(). Rejects with the error object of mysql2, or
+     * with the error of the last probe when no connection passed.
      * With a signal the wait ends when the signal aborts: the call rejects with the reason of
      * the signal, its request leaves the queue of mysql2, and a connection that still arrives
      * for it is released. No listener stays on the signal once the call settled. See Borrow
      * @param signal ends the wait when it aborts
      * @param outcome filled with `aborted: true` when the call was rejected by the abort
      */
-    public getConnection(
+    public async getConnection(
         signal?: AbortSignal, outcome: IAbortOutcome = {}
     ): Promise<PoolConnection> {
-        return this._borrow.take(signal, outcome);
-    }
-
-    /**
-     * What a call is rejected with when its signal aborted, see abortReason() of Borrow
-     * @param signal the signal that aborted
-     */
-    public static abortReason(signal: AbortSignal): unknown {
-        return abortReason(signal);
+        const connection = await this._borrow.take({ signal }, outcome);
+        this._borrow.lend(connection);
+        return connection;
     }
 
     /**

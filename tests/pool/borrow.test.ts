@@ -18,6 +18,8 @@ const BEGIN = 'START TRANSACTION';
 // the defaults of probeIdle and probeTimeout
 const PROBE_IDLE = 1000;
 const PROBE_TIMEOUT = 1000;
+// the default resetTimeout
+const RESET_TIMEOUT = 1000;
 
 // loopback only: a hang here is a bug, not a slow network
 jest.setTimeout(20000);
@@ -50,6 +52,22 @@ const status = (connections: number) => [
     { Variable_name: 'wsrep_local_recv_queue_avg', Value: '0' }
 ];
 
+// The answer to a prepare of the protocol: a statement with no columns and no parameters,
+// in the shape writePacket() of mysql2's server class takes
+const prepareOk = (statementId: number) => {
+    // the header of 4 bytes, then 0, the id, and zeros for columns, parameters and warnings
+    const buffer = Buffer.alloc(16);
+    buffer.writeUInt32LE(statementId, 5);
+    return {
+        buffer,
+        length: () => buffer.length,
+        writeHeader: (sequenceId: number) => {
+            buffer.writeUIntLE(buffer.length - 4, 0, 3);
+            buffer[3] = sequenceId;
+        }
+    };
+};
+
 interface IServer {
     port: number,
     // what the pooled connections sent, in order: 'ping', 'reset', or the text of a query
@@ -62,9 +80,12 @@ interface IServer {
     answerPings: () => void,
     // close the connection a ping comes on, with no answer
     hangUpOnPing: () => void,
-    // answer the next query with a reply whose first packet has the wrong sequence number,
-    // and never finish that reply: mysql2 then waits for the rest until the query's timeout
+    // answer the next query or execute with a reply whose first packet has the wrong
+    // sequence number, and never finish that reply: mysql2 then waits for the rest until the
+    // query's timeout
     outOfOrder: () => void,
+    // answer every reset with the wrong sequence number from now on
+    resetOutOfOrder: () => void,
     // close every new connection before its login from now on
     hangUpOnLogin: () => void
 }
@@ -75,7 +96,11 @@ const listen = async (connections = 1): Promise<IServer> => {
     const checks = new Set<any>();
     const seen: { what: string, connection: any }[] = [];
     const held: any[] = [];
-    const modes = { holding: false, hangUp: false, outOfOrder: false, hangUpOnLogin: false };
+    const modes = {
+        holding: false, hangUp: false, outOfOrder: false, hangUpOnLogin: false,
+        resetOutOfOrder: false
+    };
+    let statements = 0;
     const ok = (connection: any, serverStatus = AUTOCOMMIT) => {
         connection.sequenceId = 1;
         connection.writeOk({ serverStatus });
@@ -102,6 +127,10 @@ const listen = async (connections = 1): Promise<IServer> => {
             if (known) return;
             if (code === COM_CHANGE_USER) checks.add(connection);
             if (code === COM_RESET_CONNECTION) note('reset');
+            if (code === COM_RESET_CONNECTION && modes.resetOutOfOrder) {
+                connection.sequenceId = 5;
+                return connection.writeOk({ serverStatus: AUTOCOMMIT });
+            }
             if (code === COM_CHANGE_USER || code === COM_RESET_CONNECTION) ok(connection);
         });
         connection.on('ping', () => {
@@ -110,14 +139,25 @@ const listen = async (connections = 1): Promise<IServer> => {
             if (modes.holding) return held.push(connection);
             ok(connection);
         });
+        // the client counts 1 for the first packet of a reply
+        const answerOutOfOrder = () => {
+            modes.outOfOrder = false;
+            connection.sequenceId = 5;
+            connection.writeColumns([column('a')]);
+        };
+        connection.on('stmt_prepare', (sql: string) => {
+            note('prepare ' + sql);
+            connection.sequenceId = 1;
+            connection.writePacket(prepareOk(++statements));
+        });
+        connection.on('stmt_execute', () => {
+            note('execute');
+            if (modes.outOfOrder) return answerOutOfOrder();
+            ok(connection);
+        });
         connection.on('query', (sql: string) => {
             note(sql);
-            if (modes.outOfOrder) {
-                modes.outOfOrder = false;
-                // the client counts 1 for the first packet of a reply
-                connection.sequenceId = 5;
-                return connection.writeColumns([column('a')]);
-            }
+            if (modes.outOfOrder) return answerOutOfOrder();
             if (sql === BEGIN) return ok(connection, IN_TRANSACTION | AUTOCOMMIT);
             if (sql !== 'SHOW GLOBAL STATUS;') return ok(connection);
             connection.sequenceId = 1;
@@ -140,6 +180,7 @@ const listen = async (connections = 1): Promise<IServer> => {
         },
         hangUpOnPing: () => { modes.hangUp = true; },
         outOfOrder: () => { modes.outOfOrder = true; },
+        resetOutOfOrder: () => { modes.resetOutOfOrder = true; },
         hangUpOnLogin: () => { modes.hangUpOnLogin = true; }
     };
 };
@@ -373,6 +414,24 @@ describe('the probe and the ping of the reaper', () => {
                 .toEqual([['ping'], 'answered', ['ping', APP_SQL]]);
         });
 
+    // The reaper pings every idle connection, also one used within probeIdle. A borrow that
+    // meets such a ping still out waits for it, within probeTimeout
+    it('a ping of the reaper still out on a connection used within probeIdle: bounded by ' +
+        'probeTimeout, the query is answered on a new connection', async () => {
+        const { server, cluster } = await idleNode({ ...QUIET, idleCheckInterval: 300 });
+        const [from, logins] = [server.order().length, server.logins()];
+        server.holdPings();
+        await until(() => since(server, from).includes('ping'), 'the ping', server.order);
+
+        const started = Date.now();
+        const answer = await Promise.race([ask(cluster), pause(3000).then(() => 'waiting')]);
+        const took = Date.now() - started;
+
+        expect([answer, since(server, from), server.logins() - logins])
+            .toEqual(['answered', ['ping', APP_SQL], 1]);
+        expect([took >= PROBE_TIMEOUT - 10, took < PROBE_TIMEOUT + 400]).toEqual([true, true]);
+    });
+
     it('the ping of the reaper that never answers: the next connection after probeTimeout',
         async () => {
             const { server, cluster } = await idleNode({ ...QUIET, idleCheckInterval: 1200 });
@@ -466,6 +525,26 @@ describe('packets out of order', () => {
         expect(second).not.toHaveBeenCalled();
     });
 
+    it('the same for execute(): rejected well before its timeout, no other node asked',
+        async () => {
+            const servers = [await listen(1), await listen(5)];
+            const cluster = await connectCluster(servers);
+            const second = jest.spyOn(cluster.pools[1], 'query');
+            servers[0].outOfOrder();
+
+            const started = Date.now();
+            const failure = await cluster.execute(APP_SQL, [1], { timeout: TIMEOUT })
+                .catch((e: any) => e);
+            const took = Date.now() - started;
+
+            expect([failure.code, failure.sent, failure.nodeId, failure.expected])
+                .toEqual(['MDC_PACKETS_OUT_OF_ORDER', true, 1, 1]);
+            expect([took < 500, servers[0].order()])
+                .toEqual([true, ['prepare ' + APP_SQL, 'execute']]);
+            await until(() => servers[0].open() === 0, 'the connection to close', servers[0].open);
+            expect(second).not.toHaveBeenCalled();
+        });
+
     it('a connection that answered in order has no warn listener left', async () => {
         const { cluster, pool } = await idleNode();
         expect(await ask(cluster)).toBe('answered');
@@ -525,6 +604,46 @@ describe('getConnection()', () => {
 
             // a lent connection is reset whether the app left anything on it or not
             expect(server.order()).toEqual(['reset', 'USE `d`', APP_SQL]);
+        });
+
+    it('an abort during the probe on the way out: rejected with the reason, the connection ' +
+        'destroyed, no login', async () => {
+        const { server, cluster } = await idleNode();
+        const logins = server.logins();
+        server.holdPings();
+        await pause(PROBE_IDLE + 100);
+        const controller = new AbortController();
+        const reason = new Error('the app gave up');
+
+        const asked = cluster.getConnection({ signal: controller.signal }).catch((e: any) => e);
+        await until(() => server.order().includes('ping'), 'the ping', server.order);
+        controller.abort(reason);
+
+        const failure = await asked;
+        await until(() => server.open() === 0, 'the connection to close', server.open);
+        expect([failure, failure.nodeId, server.logins() - logins])
+            .toEqual([reason, undefined, 0]);
+        expect(stats(cluster)).toEqual({ used: 0, idle: 0, pending: 0 });
+    });
+
+    it('a reset at release() answered out of order: the connection is dropped at once',
+        async () => {
+            const server = await listen();
+            const cluster = await connectCluster([server], { ...QUIET, connectionLimit: 1 });
+            const { connection } = await cluster.getConnection();
+            server.resetOutOfOrder();
+
+            const started = Date.now();
+            connection.release();
+            await until(() => server.open() === 0, 'the connection to close', server.open);
+            const took = Date.now() - started;
+
+            expect([server.order(), took < RESET_TIMEOUT / 2]).toEqual([['reset'], true]);
+            expect(stats(cluster)).toEqual({ used: 0, idle: 0, pending: 0 });
+            // the next caller gets a new connection
+            const next = await cluster.getConnection();
+            expect([next.connection === connection, server.logins()]).toEqual([false, 2]);
+            next.connection.release();
         });
 
     it('is probed on the way out after idle', async () => {

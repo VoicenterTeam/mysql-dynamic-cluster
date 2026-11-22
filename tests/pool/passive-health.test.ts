@@ -1366,7 +1366,7 @@ describe('passive health: what never counts', () => {
         const pool = cluster.pools[0];
         const handOut = node.mysqlPool.getConnection;
         node.mysqlPool.getConnection = (cb: Cb) => handOut((error: any, connection: any) => {
-            if (connection) pool.lend(connection);
+            if (connection) pool._session.lend(connection);
             cb(error, connection);
         });
         const call = failed(direct());

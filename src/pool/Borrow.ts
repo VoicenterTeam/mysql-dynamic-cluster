@@ -4,6 +4,7 @@ import { IAbortOutcome } from "../types/PoolInterfaces";
 import { PoolStatus } from "./PoolStatus";
 import { SessionState } from "./SessionState";
 import { IDrawn, IdleConnectionReaper } from "./IdleConnectionReaper";
+import { abortReason, isBroken, whenAborted } from "../utils/Abort";
 
 // What Borrow needs of the pool it takes connections from
 export interface IBorrowPool {
@@ -24,66 +25,33 @@ export interface IStatementTarget {
     timeout: number
 }
 
-/**
- * What a call is rejected with when its signal aborted: the reason of the signal as it is.
- * A signal without one, as on a Node that has no signal.reason yet, gives an Error named
- * AbortError
- * @param signal the signal that aborted
- */
-export function abortReason(signal: AbortSignal): unknown {
-    if (signal.reason !== undefined) return signal.reason;
-    // the name, the code and the message of the AbortError of Node itself
-    return Object.assign(new Error("The operation was aborted"), {
-        name: 'AbortError', code: 'ABORT_ERR'
-    });
-}
-
-/**
- * Run `aborted` once when the signal aborts, until the function this returns is called. Every
- * call that takes a signal listens this way, so no listener stays on the signal once the call
- * settled, and a signal that keeps its listeners and calls them later changes nothing. The
- * signal of the app runs `aborted` inside its abort(): nothing may be thrown there
- * @param signal the signal of the call, or nothing
- */
-export function whenAborted(signal: AbortSignal | undefined, aborted: () => void): () => void {
-    if (!signal) return () => undefined;
-    let stopped = false;
-    const stop = () => {
-        stopped = true;
-        signal.removeEventListener('abort', listener);
-    };
-    const listener = () => {
-        if (stopped) return;
-        stop();
-        aborted();
-    };
-    signal.addEventListener('abort', listener);
-    return stop;
-}
-
-/**
- * Whether an error leaves a connection that must not be used again: a dead socket, or one that
- * still runs a statement that timed out
- * @param error error from mysql2
- */
-export function isBroken(error: any): boolean {
-    return error?.fatal || error?.code === 'PROTOCOL_SEQUENCE_TIMEOUT';
+// How take() takes a connection
+export interface ITakeOptions {
+    // ends the call when it aborts. A connection the call holds by then is destroyed
+    signal?: AbortSignal,
+    // the statement the connection is for. Without it the connection is handed out as it is
+    target?: IStatementTarget,
+    // false for the health check of a node without a block only, which must draw the
+    // connections of the app as they are
+    probe?: boolean
 }
 
 /**
  * The one place a connection of a pool is taken and given back: by query(), its execute form,
  * multiStatementQuery() and getConnection(). Taking it:
  * - one request to mysql2, which waits in its queue while the pool is at its limit
- * - a connection idle longer than probeIdle answers a ping first, within probeTimeout. One
- *   that fails is destroyed, passive health hears of it, and the next connection of the node
- *   is taken: at most connectionLimit + 1 tries, and a new connection needs no ping
+ * - a connection idle longer than probeIdle answers a ping first, within probeTimeout, and
+ *   so does one the reaper's ping is still out on. One that fails is destroyed, passive
+ *   health hears of it, and the next connection of the node is taken: at most
+ *   connectionLimit + 1 tries, and a new connection needs no ping
  * - for a statement, a reset when the connection is dirty and USE when it is on another
  *   database, see SessionState
  * - a signal ends any of these steps
  *
  * A connection is given back through SessionState: at once when clean, reset first when dirty.
- * While a step or a statement runs, and while the app holds a lent connection, packets out of
- * order destroy the connection: mysql2 only warns of them and goes on waiting
+ * While a step, a statement or the reset at its release runs, and while the app holds a lent
+ * connection, packets out of order destroy the connection: mysql2 only warns of them and goes
+ * on waiting
  */
 export class Borrow {
     // the release() of mysql2 of every connection a lend replaced it on, see lend()
@@ -110,24 +78,23 @@ export class Borrow {
      * came, with the error of the last probe when no connection passed, with the error of the
      * reset or the USE, or with the reason of the signal. Passive health was told by then of
      * what it hears of, and the statement was not sent
-     * @param signal ends the call when it aborts, and `outcome` gets `aborted: true`. A
-     * connection the call holds by then is destroyed
-     * @param target the statement the connection is for. Without it, the connection is handed
-     * out as it is: getConnection()
-     * @param probe false for the health check of a node without a block only, which must
-     * draw the connections of the app as they are
+     * @param options the signal, the statement and whether to probe, see ITakeOptions
+     * @param outcome gets `aborted: true` when the signal ended the call
      */
     public async take(
-        signal?: AbortSignal, outcome: IAbortOutcome = {}, target?: IStatementTarget,
-        probe = true
+        options: ITakeOptions = {}, outcome: IAbortOutcome = {}
     ): Promise<PoolConnection> {
+        const { signal, target, probe = true } = options;
         // a new connection needs no probe, so the loop ends with one. This bounds it besides.
         // A pool with no limit, connectionLimit 0, has a limited number of idle connections
         const most = this._pool.connectionLimit ? this._pool.connectionLimit + 1 : Infinity;
         for (let tries = 1; ; tries++) {
             const connection = await this._request(signal, outcome);
             const drawn = this._reaper.drawn(connection);
-            if (probe && this._idle(drawn)) {
+            // a ping of the reaper that is still out is waited for, within probeTimeout, also
+            // on a connection used within probeIdle: mysql2 would queue the statement behind it
+            // with no time limit
+            if (probe && (drawn?.ping || this._idle(drawn))) {
                 try {
                     await this._probe(connection, drawn, signal, outcome);
                 } catch (error) {
@@ -140,12 +107,17 @@ export class Borrow {
     }
 
     /**
-     * Give a connection back, see SessionState.release(). The listener of watch() goes
+     * Give a connection back, see SessionState.release(). Packets out of order during the reset
+     * of a dirty connection drop it (#94 saw them on such a command of a node that was not
+     * Primary). The listener goes when the connection is back in the pool or destroyed
      * @param broken the socket is dead or still runs a statement: destroyed
      */
     public giveBack(connection: PoolConnection, broken = false): void {
-        this._unwatch(connection);
-        this._session.release(connection, broken, () => this._putBack(connection));
+        this.watch(connection, () => undefined);
+        this._session.release(connection, broken, () => {
+            this._unwatch(connection);
+            this._putBack(connection);
+        }, () => this._unwatch(connection));
     }
 
     /**
@@ -258,7 +230,8 @@ export class Borrow {
     /**
      * Whether a connection the pool drew was idle longer than probeIdle: since its release,
      * or since the last ping of the reaper it answered. A new connection was never idle, and
-     * neither was one mysql2 handed straight from one caller to the next
+     * neither was one mysql2 handed straight from one caller to the next. A ping of the
+     * reaper still out on it is waited for whatever this says, see take()
      * @private
      */
     private _idle(drawn?: IDrawn): boolean {
@@ -273,7 +246,7 @@ export class Borrow {
      * @private
      */
     private _probe(
-        connection: PoolConnection, drawn: IDrawn, signal: AbortSignal | undefined,
+        connection: PoolConnection, drawn: IDrawn | undefined, signal: AbortSignal | undefined,
         outcome: IAbortOutcome
     ): Promise<void> {
         return new Promise((resolve, reject) => {
@@ -304,7 +277,7 @@ export class Borrow {
             }
             const answered = (error?: any) => end(error || undefined);
             try {
-                if (drawn.ping) drawn.ping(answered);
+                if (drawn?.ping) drawn.ping(answered);
                 else connection.ping(answered);
             } catch (thrown) {
                 end(thrown || new Error("Probe failed"));

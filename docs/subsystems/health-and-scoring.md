@@ -756,12 +756,12 @@ it on and counts it as use.
   default. A path that drops the packets of a flow it forgot, where
   another path answers with a reset, gives no answer. After `timeout` the
   connection is destroyed with its socket. Until then it is in the pool. A
-  query that draws it in that time, when the connection was idle longer
-  than `probeIdle` since its release or its last answered ping, waits for
-  that ping within `probeTimeout` and sends no second one: no answer
-  destroys the connection, and the query takes the next one. A query that
-  draws it sooner waits behind the ping and ends at its own timeout, as it
-  would have without the ping. The same `timeout` means
+  query or a `getConnection()` that draws it in that time waits for that
+  ping within `probeTimeout` and sends no second one, whether or not the
+  connection was idle longer than `probeIdle`: no answer in that time
+  destroys the connection, and the call takes the next one. The health
+  check of a node without a `healthCheck` block, which is never probed,
+  waits behind the ping. The same `timeout` means
   two things: a check that takes longer costs one count toward `fall`, and
   a ping that takes longer costs the connection, so the next query pays
   for a login.

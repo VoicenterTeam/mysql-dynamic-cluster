@@ -104,7 +104,8 @@ describe('Pool.query() says whether the statement was sent', () => {
     ])('the reset of a connection the app had %s: sent is false', async (_name, reset) => {
         const connection = conn(cb => cb(null, ROWS), undefined, reset);
         const pool = makePool(1, handsOut(connection));
-        pool.lend(connection as any);
+        // the app had it through getConnection()
+        await pool.getConnection();
         const outcome: any = {};
         const { error } = await settle(pool.query('UPDATE t', {}, outcome));
 

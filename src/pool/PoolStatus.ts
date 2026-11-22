@@ -368,9 +368,8 @@ export class PoolStatus {
         if (this._healthCheck) return this._askOnCheckConnection(asked);
         const options = { redis: false, timeout: this._checkTimeout };
         // never probed: the check draws a connection of the app as it is, as in 4.6.0
-        const sql = `SHOW GLOBAL STATUS;`;
-        return this._pool.query(sql, options, {}, undefined, false, false) as
-            Promise<GlobalStatusResult[]>;
+        const answer = this._pool.query(`SHOW GLOBAL STATUS;`, options, {}, { probe: false });
+        return answer as Promise<GlobalStatusResult[]>;
     }
 
     /**

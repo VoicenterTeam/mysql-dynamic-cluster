@@ -133,7 +133,7 @@ describe('Pool.query connection hygiene', () => {
         conn.reset.mockImplementation(() => { throw thrown; });
         const pool = makePool(null, conn);
         // the app had the connection, so the query resets it first
-        pool.lend(conn as any);
+        await pool.getConnection();
 
         await expect(pool.query('SELECT 1')).rejects.toBe(thrown);
         expect((thrown as any).sent).toBe(false);
