@@ -218,7 +218,9 @@ there, the call rejects with the reason of the signal instead.
 
 `sql = this._formatSQL(sql, values)`, right after the `try`/`catch` and
 the check of the signal that follows it. Not for `execute`: its values stay
-apart from the text.
+apart from the text. The `formatSQL` debug line is logged for text queries
+only. `valuesInText` is `sql !== originalSql`: whether the formatting
+wrote a value into the text.
 `_formatSQL`:
 
 - Array `values` → `mysql2`'s `format(sql, values)` (positional `?`).
@@ -259,7 +261,7 @@ Runs before any pool query when `queryOptions.redis && !queryOptions.redisRefres
 The `for` loop.
 
 For `i` from `0` to `retryCount - 1`, calls
-`this._queryRequest(sql, activePools[i], queryOptions, outcome, values)`, with a
+`this._queryRequest(sql, activePools[i], queryOptions, outcome, values, valuesInText)`, with a
 new empty `outcome` for each node. First success records the query with
 source `pool` and returns. Each failure is kept as `{ nodeId, error }` in
 `errors`. The loop goes on to the next pool only when the statement cannot
@@ -350,7 +352,7 @@ attempt is still logged with `Logger.error`. The single
 ### 10. `_queryRequest`
 
 `_queryRequest` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
-Wraps a single `pool.query(sql, queryOptions, outcome, values)` call. The pool
+Wraps a single `pool.query(sql, queryOptions, outcome, values, valuesInText)` call. The pool
 records the attempt as `mysql_dynamic_cluster.operation.duration`. On
 success:
 
@@ -441,19 +443,24 @@ them:
   `USE` of another one, and the cache key has no database. So the pool
   closes every statement `execute` prepared on a connection before it
   sends a `USE` of another database there, and the next call prepares
-  again. That also covers a `USE` of the app, which the reply header
-  shows by bit `0x4000`: the next statement of the pool sends `USE`
-  first. `SessionState` keeps the texts, see
+  again. A `USE` back to the database they were prepared in keeps them,
+  such as the `USE` the pool sends after a reply header with bit `0x4000`
+  (session state changed: a `USE` of the app, or every write on a server
+  that tracks GTIDs). Before the pool lends a connection to the app
+  (`getConnection()`), it closes them too: an `execute()` of the app with
+  the same text would get the pool's statement. `SessionState` keeps the
+  texts and their database, see
   [pool.md](./pool.md#the-session-of-a-connection). mysql2 3.24 sends
   each close twice; the server ignores the second.
 - **A reset** forgets every prepared statement, on the server and in
   mysql2, so the next call prepares again.
 
-- **Values.** An array, or none (`undefined` or `null`). Everything else
-  rejects with the `TypeError` `execute: values must be an array, with no
-  undefined and no function in it`, before the service-name lookup and any
-  node, and is recorded as a failed query: an object, a string, a number,
-  and an array that holds `undefined`, a hole (`[, 'x']`) or a function.
+- **Values.** An array, or none (`undefined` or `null`). Anything but an
+  array, `null` or `undefined` rejects with the `TypeError` `execute: values
+  must be an array, with no undefined and no function in it`, before the
+  service-name lookup and any node, and is recorded as a failed query: an
+  object, a string, a number, a boolean, and so on. So does an array that
+  holds `undefined`, a hole (`[, 'x']`) or a function.
   mysql2 would throw for those, or fail the call after the prepare. Use
   `null` for SQL `NULL`.
 - **No Redis.** An `execute` call neither reads Redis nor writes it,

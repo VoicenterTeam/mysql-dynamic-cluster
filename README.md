@@ -225,7 +225,7 @@ The values are written into the query string and escaped, those of an object too
 Like [query](#query), but mysql2 prepares the statement and the server binds the values: they never become part of the query string. The same choice of node, retry and errors as `query`. No Redis. The same as `query` with the [query option](#query-options) `execute: true`. The connection keeps the prepared statement for the next call of the same text, up to `maxPreparedStatements` of the [pool settings](#pool-settings) <br>
 Params:
 1. **Query string** - request to the database, with `?` for each value
-2. **Query values** - an array of values, or none. A `TypeError` rejects the call before any node is asked when the values are an object, a string or a number, or an array that holds `undefined`, a hole (`[, 'x']`) or a function. Use `null` for SQL `NULL`
+2. **Query values** - an array of values, or none (`null` or `undefined`). A `TypeError` rejects the call before any node is asked for anything but an array, `null` or `undefined` (an object, a string, a number, a boolean...), and for an array that holds `undefined`, a hole (`[, 'x']`) or a function. Use `null` for SQL `NULL`
 3. [Query options](#query-options) - configuration only for this request
 
 ```javascript

@@ -396,12 +396,16 @@ texts and the reset with its time limit. `query()` and
 - **The texts of `execute`.** Since 5.0.0 (#91). mysql2 keeps one
   prepared statement per text and connection, whatever the database, and
   the server runs it in the database it was prepared in. `executed()`
-  notes each text, the one used last at the end. `prepare()` closes all of
-  them (`connection.unprepare(sql)`, `COM_STMT_CLOSE`) before it sends a
-  `USE` of another database, and forgets them. A header with `0x4000`
-  makes the database unknown, so the next statement sends `USE` and closes
-  them the same way. A reset forgets them too: mysql2 clears its own cache
-  when the reset is answered. Past `maxPreparedStatements` texts the one
+  notes each text, the one used last at the end, and the database they
+  were prepared in. `prepare()` closes all of them
+  (`connection.unprepare(sql)`, `COM_STMT_CLOSE`) before it sends a `USE`
+  of another database, and forgets them. A `USE` back to that database
+  keeps them: a header with `0x4000` makes the database unknown, and the
+  `USE` the next statement sends returns to it, so a write on a server that
+  tracks GTIDs does not cost a new prepare of everything. `lend()` closes
+  them before the app gets the connection, since an `execute()` of the app
+  with the same text would get the pool's statement. A reset forgets them
+  too: mysql2 clears its own cache when the reset is answered. Past `maxPreparedStatements` texts the one
   used longest ago is closed at once, so mysql2 never keeps a statement
   the list lost. A connection that takes no command any more makes
   `unprepare` throw. That is caught, and the `USE` or statement that
@@ -430,7 +434,8 @@ texts and the reset with its time limit. `query()` and
 - **A connection the app had.** `GaleraCluster.getConnection()` calls
   `pool.lend(connection)`. The pool sees neither the `USE` nor the
   transaction the app sends on it, so it marks the connection dirty and
-  on no known database. When a query or a transaction of the cluster gets
+  on no known database, after it closed the statements `execute` prepared
+  on it. When a query or a transaction of the cluster gets
   it after its `release()`, `prepare()` resets it first and then sends
   `USE`: one reset and one `USE`, once. A reset that fails there or runs
   out of time destroys the connection and rejects with `sent: false`, so
