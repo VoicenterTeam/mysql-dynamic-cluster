@@ -133,7 +133,7 @@ On that machine `up` takes about a minute, the suite under half a minute and `do
 
 ### The contract suite
 
-Each suite in `tests/galera` runs a cluster with the package's default settings, as the app user, with cluster hashing off (the app user may not create its schema; `bound-values.test.ts` runs its hashing part as root). None sets a timer or a limit, so they check the defaults: `probeIdle`, `probeTimeout`, `resetTimeout`, `errorRetryCount` and the legacy health check. Tables and routines are made as root on a connection of its own, and dropped at the end.
+Each suite in `tests/galera` runs a cluster with the package's default settings, as the app user, with cluster hashing off (the app user may not create its schema; `bound-values.test.ts` runs its hashing part as root). None changes a pool setting, apart from `bound-values.test.ts` (one connection and a health check ten minutes apart, so every call runs in the session its `SET` changed); `write_then_sleep()` is called with a query `timeout` of 1000, and the `INSERT` of `dead-connection.test.ts` with a signal of 10 s. So they check the defaults: `probeIdle`, `probeTimeout`, `resetTimeout`, `errorRetryCount` and the legacy health check. Tables and routines are made as root on a connection of its own, and dropped at the end.
 
 | Suite | Scenario | What it proves |
 | --- | --- | --- |
