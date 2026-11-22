@@ -21,6 +21,19 @@ describe('IdleConnectionReaper', () => {
         expect(conn.destroy).toHaveBeenCalledTimes(1);
     });
 
+    it('destroys the socket of the connection too, not only ends it', () => {
+        const reaper = new IdleConnectionReaper(0, 30_000, 10_000);
+        const conn = { destroy: jest.fn(), stream: { destroy: jest.fn() } };
+        const pool = { _freeConnections: { length: 1 } };
+        reaper.start(pool as any);
+        reaper.onRelease(conn);
+
+        jest.advanceTimersByTime(40_001);
+
+        expect([conn.destroy.mock.calls.length, conn.stream.destroy.mock.calls.length])
+            .toEqual([1, 1]);
+    });
+
     it('does not destroy when free count equals minConnections floor', () => {
         const reaper = new IdleConnectionReaper(1, 30_000, 10_000);
         const conn = makeConn();

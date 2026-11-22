@@ -229,9 +229,11 @@ The `Promise` callback chain is, in order
    success the connection goes back through `_borrow.giveBack()`: a clean
    one at once, a dirty one after a reset. On error it goes through
    `fail()`, which settles once and hands the connection back once:
-   `destroy()` after a fatal error or `PROTOCOL_SEQUENCE_TIMEOUT` (the
-   statement is still running on the server), `_borrow.giveBack()` after a
-   plain SQL error, which resets it first.
+   destroyed with its socket (`drop()` of
+   [ServerFlags.ts](../../src/pool/ServerFlags.ts)) after a fatal error or
+   `PROTOCOL_SEQUENCE_TIMEOUT` (the statement is still running on the
+   server), reset first after a plain SQL error. Both go through
+   `_borrow.giveBack()`.
 5. On success: stops the `QueryTimer`, records the attempt as
    `mysql_dynamic_cluster.operation.duration`, logs a slow-query
    warning if `queryTimer.get() >= _slowQueryTime`
@@ -368,7 +370,8 @@ texts and the reset with its time limit. `query()` and
   escaped by mysql2's `escapeId` goes first, as a query with the timeout
   of the query, so no timer of the package is left. A `USE` that fails or
   times out rejects with `sent: false`, and the next node may be tried. A
-  timed-out one destroys the connection, as a timed-out statement does.
+  timed-out one destroys the connection with its socket, as a timed-out
+  statement does.
 - **Dirty**, until the next reset: after an error reply on a connection
   that is still alive, since an error reply carries no status flags, or
   after an OK header with bit 1 (a transaction is open) set or bit 2
@@ -390,7 +393,9 @@ texts and the reset with its time limit. `query()` and
   it is Primary again (measured in #93). So a connection the node answered
   1047 on is destroyed at once, with no reset. The slot of the pool is
   free again either way. A broken connection, after a fatal error or a
-  timeout, is destroyed as before, and an aborted one too.
+  timeout, is destroyed with its socket too, never reset, and an aborted
+  one too. mysql2's own `destroy()` only ends the socket, which on a cut
+  path stays open until TCP gives up.
 - **A reset keeps the database.** `COM_RESET_CONNECTION` does not change
   the current database of the session, so the state keeps it.
 - **A `USE` of the app.** A statement can change the database itself: a
@@ -678,7 +683,8 @@ It does two things, each on a timer of its own, every `idleCheckInterval`,
 the two share the age rule runs first.
 
 **The age rule, for every node.** A connection that has been idle for
-longer than `idleTimeout` is destroyed, as long as the pool has more than
+longer than `idleTimeout` is destroyed with its socket (`drop()`), as
+long as the pool has more than
 `minConnections` free ones. With the defaults the pool keeps one idle
 connection whatever its age.
 

@@ -191,7 +191,8 @@ export class SessionState {
      * first and goes back clean, and one whose reset fails or runs out of time is destroyed.
      * One the node answered 1047 on is destroyed with no reset. A connection that was dropped
      * already is left alone. Exactly one of the two callbacks runs, once the release is over
-     * @param broken the socket is dead or still runs a statement: destroyed, never reset
+     * @param broken the socket is dead or still runs a statement: destroyed with its socket,
+     * never reset
      * @param putBack puts the connection into the pool of mysql2. Not connection.release():
      * the one of a lent connection is the app's, see Borrow
      * @param gone the connection was destroyed, or was already
@@ -202,7 +203,8 @@ export class SessionState {
         const session = this._sessions.get(connection);
         if (session?.dropped) return gone();
         if (broken) {
-            connection.destroy();
+            // with its socket: on a cut path an ended one stays open until TCP gives up
+            this.drop(connection);
             return gone();
         }
         if (session?.notReady) {

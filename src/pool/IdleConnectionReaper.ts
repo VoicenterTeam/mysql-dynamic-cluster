@@ -168,7 +168,7 @@ export class IdleConnectionReaper {
             if (freeCount <= this._minConnections) break;
             if (now - releasedAt > this._idleTimeout) {
                 try {
-                    connection.destroy();
+                    drop(connection);
                 } catch {
                     // ignore errors from already-dead connections
                 }

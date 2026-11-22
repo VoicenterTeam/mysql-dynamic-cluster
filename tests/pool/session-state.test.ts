@@ -66,6 +66,8 @@ const EARLY_DIRTY = 'SET autocommit = 0; SET autocommit = 1';
 // answered with 1047, as a Galera node outside the primary component does
 const NOT_READY = 'UPDATE t SET c = 1';
 const DEADLOCK = 1213;
+// never answered, so its query timeout runs out
+const HANG = 'SELECT SLEEP(10)';
 
 // What a node does from the moment a test says so. Until then it answers everything
 type Mode =
@@ -159,6 +161,7 @@ const listen = async (connections = 1): Promise<INode> => {
             if (sql === ROWS) return connection.writeTextResult([{ a: '1' }], [column('a')]);
             if (sql === FAIL) return refuse(DEADLOCK, 'Deadlock found when trying to get lock');
             if (sql === NOT_READY) return refuse(1047, 'WSREP has not yet prepared node');
+            if (sql === HANG) return;
             if (sql === EARLY_DIRTY) {
                 connection.writeOk({ serverStatus: MORE_RESULTS });
                 // the second result goes on with the sequence numbers of the first, as a
@@ -413,6 +416,24 @@ describe('a reset before release', () => {
 
         expect(node.closed()).toBe(1);
         await expectDropped(cluster, node, logins);
+    });
+});
+
+describe('a statement that runs out of time', () => {
+    it('destroys the socket of its connection, not only ends it', async () => {
+        const node = await listen();
+        const cluster = await clusterOf([node]);
+        await call(cluster, CLEAN);
+        const connection = cluster.pools[0]._pool._allConnections.get(0);
+
+        // read as the call fails: an ended socket stays open until the server closes its
+        // side, which a cut path never does
+        const failed = await cluster.pools[0].query(HANG, { timeout: 200 }).then(
+            () => ({ code: 'answered' }),
+            (error: any) => ({ code: error.code, destroyed: connection.stream.destroyed })
+        );
+
+        expect(failed).toEqual({ code: 'PROTOCOL_SEQUENCE_TIMEOUT', destroyed: true });
     });
 });
 
