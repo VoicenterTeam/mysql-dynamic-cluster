@@ -105,3 +105,9 @@ dist
 
 # Editors configs
 .idea/
+
+# Superpowers plan workspace (ledgers, task briefs, review packages)
+.superpowers/
+
+# oh-my-claudecode session state
+.omc/
