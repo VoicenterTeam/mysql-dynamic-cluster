@@ -146,6 +146,9 @@ Signature:
 - `redisRefreshCache` defaults to `false`.
 - `escapeNamedValues` defaults to the `escapeNamedValues` setting, `false` unless set.
 - `retryNotReady` gets no default here. Left out it counts as `true`, see step 8.
+- `signal` gets no default. `null` counts as no signal. Right after the
+  `record` helper of step 2 the call checks it, before step 3: see
+  [The `signal` option](#the-signal-option).
 
 ### 2. Metrics
 
@@ -203,6 +206,8 @@ Service-id resolution and active-pool selection share a single
 `try`/`catch`. The lookup of a service name catches its own errors, so
 the one error that reaches it is `MDC_NO_NODE_AVAILABLE`: it is recorded
 as a failed query and rethrown as it is (the `catch` of that block).
+When the signal aborted by then, or while Redis is read for stale data
+there, the call rejects with the reason of the signal instead.
 
 ### 6. SQL formatting
 
@@ -264,6 +269,7 @@ the loop reads the outcome: a frozen error, or one the app handed
 | errno 1047, not ready, with `sent: true` | yes, unless `retryNotReady: false` |
 | an error reply, a timeout, a connection lost after the statement went out | no |
 | anything from a pool that left `sent` unset | no, unless errno 1047 |
+| anything, once the signal of the query aborted | no, checked before every other row |
 
 A refused login is the same on every node: Galera replicates the accounts,
 and a lockout policy counts each new login. The list is not the one the
@@ -293,6 +299,8 @@ nodes were tried. `nodeId` is also set on the error itself. When the loop
 ends without a result, because every node it tried failed or step 8
 stopped it:
 
+- If the signal aborted, in a node or after one failed, reject with the
+  reason of the signal as it is. No stale data, no `nodeId`, no `errors`.
 - If `redisData` is non-null (cache existed but was expired), log a
   warning, record the query with source `stale_cache`, and **return the
   stale payload** anyway.
@@ -337,6 +345,47 @@ outcome says whether the statement was sent. `updateNodeForService`
 catches its own errors. Anything it still throws is logged as a warning
 and the result is returned: the statement ran, so it must not go to the
 next node.
+
+### The `signal` option
+
+Since 5.0.0 (#89). `signal` is an `AbortSignal` that ends the call when it
+aborts. The call then rejects with `Pool.abortReason(signal)`: the reason
+of the signal as it is, or, for a signal without a reason, an `Error`
+named `AbortError` with the code `ABORT_ERR`. Nothing is written on the
+reason: no `nodeId`, `errors` or `sent`.
+
+| The signal aborts | What happens |
+| --- | --- |
+| before `query()` is called | rejects at once: no service name is looked up, Redis is not read, no node is asked, no listener is added |
+| while no valid node is found (step 4) | rejects before stale data of Redis is read, or after the read, before it is served |
+| while the request waits for a connection | `Pool.getConnection(signal)` takes the request out of mysql2's queue. A connection whose login was still running goes back to the pool when it arrives |
+| during the change of database or the statement | the pool destroys the connection with its socket (`drop()` of [ServerFlags.ts](../../src/pool/ServerFlags.ts)) and never releases it: the statement may still run. mysql2 opens a new connection in its place for the next request |
+| after a node failed, before the next one | `mayTryNextNode` says no, and the call rejects with the reason |
+| after the answer | nothing: no listener is left |
+
+An abort does not stop a statement the server already has: the server may
+finish it. An abort is never tried on the next node, also when the
+statement was not sent: `mayTryNextNode` reads `outcome.aborted`, which
+`Pool.query` sets, and `signal.aborted`. Stale data of Redis is never
+served after an abort, since the caller gave up. A fresh cache hit of step
+7 is served as before: the signal is not read there, and a call whose
+entry was expired goes on to a node, whose pool rejects it at once.
+
+`Pool.query` takes its connection through `Pool.getConnection(signal,
+outcome)`, which does the queue, so `getConnection()` and `query()` leave
+it the same way. From the arrival of the connection until the call
+settled, `Pool.query` holds a listener of its own. Neither listener stays
+once the call settled, whatever way it ends. The abort is recorded as the
+error of the attempt (`mysql_dynamic_cluster.operation.duration`) and of
+the call (`mysql_dynamic_cluster.query.duration`), as any other rejection;
+a falsy reason counts as a failure too. Passive health is never told of
+it.
+
+A `signal` that is no `AbortSignal` rejects with the `TypeError`
+`query: options.signal must be an AbortSignal`, recorded as a failed
+query. `_isAbortSignal` tells a signal by its members, as for
+`getConnection()`. The status query of a node without a `healthCheck`
+block passes no signal. `multiStatementQuery()` reads no signal.
 
 ## Public API summary
 

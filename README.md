@@ -1090,6 +1090,11 @@ Used in each [query](#query)
             <td>boolean</td>
         </tr>
         <tr>
+            <td>signal</td>
+            <td>Cancels the query when it aborts: the call rejects with the reason of the signal as it is, and no other node is tried. A connection the query holds then is destroyed, so a statement the server already got may still finish. No stale Redis data is served after an abort</td>
+            <td>AbortSignal</td>
+        </tr>
+        <tr>
             <td>redis</td>
             <td>Use redis for current query or not</td>
             <td>boolean</td>

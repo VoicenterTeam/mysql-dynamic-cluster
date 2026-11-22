@@ -184,11 +184,15 @@ can be broken down by pool, service and error type. See
 The `Promise` callback chain is, in order
 ([src/pool/Pool.ts:304-338](../../src/pool/Pool.ts#L304)):
 
-1. `_pool.getConnection((err, conn) => { ... })` — checks out a raw
-   `mysql2.PoolConnection`. On error, records the
+1. `this.getConnection(signal, asked)` — checks out a raw
+   `mysql2.PoolConnection` through [`getConnection`](#a-signal-on-getconnection),
+   which does the queue and an abort while the request waits. Since 5.0.0.
+   On error, records the
    attempt with its `error.type` and rejects; if `conn` is falsy a
    second guard rejects with `"Can't find connection. Maybe it was
-   unexpectedly closed."`.
+   unexpectedly closed."`. With the `signal` query option, an abort from
+   the arrival of the connection on destroys it, see
+   [cluster.md](./cluster.md#the-signal-option).
 2. `conn.changeUser({ database: queryOptions.database }, ...)` — swaps
    the database on the borrowed connection so the same `Pool` can serve
    queries against multiple databases.
@@ -213,7 +217,8 @@ The `Promise` callback chain is, in order
 Every failure of `query()` goes through `fail(error, conn?)`. It calls
 `status.realFailure(error, !conn)` before it rejects:
 without a connection the error came in place of one, with one it came on a
-connection the pool had handed out. `PoolStatus` decides what the error
+connection the pool had handed out. An error of `getConnection()` is told
+there, once, and `fail()` does not tell it again. An abort is never told. `PoolStatus` decides what the error
 says about the node, and does nothing for a node without a `healthCheck`
 block. See
 [health-and-scoring.md](health-and-scoring.md#passive-health).
