@@ -66,14 +66,17 @@ export const untilEveryNode = async (
 // to the env file. A lock whose process is gone is taken over
 const lock = (): string => envFile() + '.lock';
 
-const holderGone = (): boolean => {
-    let pid: number;
+// The pid in the lock. Undefined when the lock was just made and the pid is not written yet,
+// or just removed
+const holder = (): number | undefined => {
     try {
-        pid = Number(fs.readFileSync(lock() + '/pid', 'utf8'));
+        return Number(fs.readFileSync(lock() + '/pid', 'utf8')) || undefined;
     } catch {
-        // just made, the pid not written yet, or just removed
-        return false;
+        return undefined;
     }
+};
+
+const gone = (pid: number): boolean => {
     try {
         process.kill(pid, 0);
         return false;
@@ -82,12 +85,31 @@ const holderGone = (): boolean => {
     }
 };
 
+// Remove the lock of a process that is gone. Under a second lock, and only when the lock still
+// names that process: a waiter that read the pid, then waited, would otherwise remove the lock
+// another waiter took in between
+const takeOver = (pid: number): void => {
+    const guard = lock() + '.takeover';
+    try {
+        fs.mkdirSync(guard);
+    } catch (error) {
+        if (error.code === 'EEXIST') return;
+        throw error;
+    }
+    try {
+        if (holder() === pid && gone(pid)) fs.rmSync(lock(), { recursive: true, force: true });
+    } finally {
+        fs.rmSync(guard, { recursive: true, force: true });
+    }
+};
+
 const take = (): boolean => {
     try {
         fs.mkdirSync(lock());
     } catch (error) {
         if (error.code !== 'EEXIST') throw error;
-        if (holderGone()) fs.rmSync(lock(), { recursive: true, force: true });
+        const pid = holder();
+        if (pid !== undefined && gone(pid)) takeOver(pid);
         return false;
     }
     fs.writeFileSync(lock() + '/pid', String(process.pid));
@@ -99,7 +121,13 @@ export const describeRig = (name: string, suite: () => void): void => {
     describe(name, () => {
         let held = false;
         beforeAll(async () => {
-            await until(() => (held = take()), 'the other suites on the rig', 280000);
+            try {
+                await until(() => (held = take()), 'the other suites on the rig', 280000);
+            } catch (error) {
+                throw new Error(`${error.message}: the lock ${lock()} is held by pid ` +
+                    `${holder() ?? 'unknown'}. Once no suite runs, remove it, and ` +
+                    `${lock()}.takeover if that is there`);
+            }
         }, 290000);
         suite();
         // never the lock of another suite, when this one gave up waiting
