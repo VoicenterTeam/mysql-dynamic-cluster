@@ -96,6 +96,8 @@ cmd_up() {
     echo "MDC_GALERA_USER=$DB_USER"
     echo "MDC_GALERA_PASSWORD=$APP_PW"
     echo "MDC_GALERA_DATABASE=$DB_NAME"
+    # for a suite that must create a schema and stored routines, such as cluster hashing
+    echo "MDC_GALERA_ROOT_PASSWORD=$ROOT_PW"
   } > "$ENVFILE"
   echo "$ENVFILE"
 }
