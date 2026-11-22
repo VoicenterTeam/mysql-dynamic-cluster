@@ -258,8 +258,11 @@ falls back to the pure load-sorted order; nothing forces the query to
 wait for the pinned node to come back. A pin is a *bias*, not a
 constraint. The retry loop in `query`
 ([src/cluster/GaleraCluster.ts:217-233](../../src/cluster/GaleraCluster.ts#L217))
-walks the resulting array left-to-right, so a transient failure on
-the pinned pool simply falls through to the next-best candidate.
+walks the resulting array left-to-right. When the pinned pool fails
+before the statement went out, or answers 1047, the query moves on to
+the next-best candidate. After an error reply, a timeout or a lost
+connection it does not: the statement may have run on the pinned pool.
+The rule is in [cluster.md](cluster.md#8-retry-loop).
 
 The `isValid` check on the filter is what allows the pin to be
 silently bypassed when the pinned node has been downgraded by
@@ -267,8 +270,10 @@ silently bypassed when the pinned node has been downgraded by
 that subsystem. Note one subtle behaviour: the prepend step finds the
 pinned pool in `_pools` without re-checking `isValid`, so an invalid
 pinned pool will still be unshifted if it exists in the pool list.
-The downstream retry will fail on it once, then fall through to the
-sorted tail.
+The query goes to it first. When that attempt fails before the
+statement went out, or with 1047, the loop moves on to the sorted tail.
+Any other failure ends the call there, see
+[cluster.md](cluster.md#8-retry-loop).
 
 ## `stop()`
 

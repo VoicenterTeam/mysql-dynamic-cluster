@@ -656,9 +656,11 @@ What it touches and what it does not:
 - It fails waiting `getConnection()` calls. They reject with `error`, plus `nodeId`. A call
   that its `signal` already ended does not wait any more and is not failed again.
 - It also fails the cluster's own queries that wait on that node. `cluster.query()` then
-  retries on another node, as it does after any failed attempt, within `maxRetry` and the
-  valid nodes that are left. A query that has no node left rejects with `error` itself,
-  with `nodeId` and `errors` set on it. All those queries share that one object, so its
+  tries another node, since the statement was never sent, within `maxRetry` and the valid
+  nodes that are left. After an error reply, a timeout or a lost connection it tries no
+  other node, see [the rule](subsystems/cluster.md#8-retry-loop). A query that has no node
+  left rejects with `error` itself, with `nodeId` and `errors` set on it. All those queries
+  share that one object, so its
   `nodeId` and `errors` are those of the query that rejected last. An entry that would lead
   back to it is left out of `errors`, so the errors never refer to each other in a cycle. A
   health check of the legacy check that waits is failed too and counts as a failed check.

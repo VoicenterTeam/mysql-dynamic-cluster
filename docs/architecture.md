@@ -94,13 +94,19 @@ Each call walks the following steps:
 5. **Retry loop** — up to `retryCount` (capped by
    `_maxRetryCount(maxRetry, activePools.length)`)
    pools are tried in order; the first success returns the result
-   (the `for` loop in `query`).
+   (the `for` loop in `query`). The next pool is tried only when the
+   statement cannot have run on the one before: it was never sent, or
+   the node answered 1047. Never after an error reply, a timeout or a
+   lost connection, see
+   [subsystems/cluster.md](subsystems/cluster.md#8-retry-loop).
    On success, `_queryRequest`
    also updates the hashing map so a follow-up request for the same
    `serviceId` lands on the same node.
-6. **Stale fallback** — if every pool failed but a Redis payload was
-   read earlier (even if expired), it is returned with a warning;
-   otherwise the accumulated per-pool error messages are thrown
+6. **Stale fallback** — if the loop ends without a result, because
+   every pool it tried failed or it stopped early, but a Redis payload
+   was read earlier (even if expired), it is returned with a warning;
+   otherwise the error of the node tried last is thrown, with the
+   earlier ones in its `errors`
    (the end of `query`, after the loop).
 7. **Metrics on every exit.** The call is timed from entry, and each
    way out records one `mysql_dynamic_cluster.query.duration` sample with

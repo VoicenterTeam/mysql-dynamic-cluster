@@ -7,7 +7,7 @@ hit (and if the in-payload freshness check passes) it returns the cached
 rows without ever touching MySQL. On a miss the query falls through to
 the normal pool loop and `Pool.query` writes the successful result back
 to Redis. The cache also doubles as a **stale-while-down** fallback when
-every pool fails.
+the query fails on its nodes.
 
 The cache is **off by default** in the V3 schema
 ([src/configs/schema.ts](../../src/configs/schema.ts) —
@@ -171,12 +171,15 @@ back by the write path above.
 
 [src/cluster/GaleraCluster.ts:240-245](../../src/cluster/GaleraCluster.ts#L240).
 
-After every pool in the retry loop has failed, `GaleraCluster.query`
+When the retry loop ends without a result, `GaleraCluster.query`
 checks whether it has a stashed `redisData` from the earlier read
 attempt. If so, it logs a warning, records the cluster query with source
 `stale_cache`, and returns the **expired**
 cached `data` rather than throwing. The behaviour:
 
+- Runs when every node the loop tried failed, and also when the loop
+  stopped early after a statement that may have run, see
+  [cluster.md](cluster.md#8-retry-loop).
 - Only triggers when the entry was found in Redis but was older than
   `expired`; a clean cache miss does not provide a fallback.
 - Returns potentially stale data without surfacing it to the caller as

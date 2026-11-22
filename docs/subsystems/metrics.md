@@ -332,7 +332,7 @@ Notes on cardinality and content:
   attempt.
 - **`stale_cache` shows outages hidden by the cache.** Those queries succeed
   for the caller although no pool answered, either because no pool was valid
-  or because every pool failed.
+  or because the query failed on the nodes it tried.
 - **Two values come from the caller.** `mysql_dynamic_cluster.service.name`
   and `db.namespace` are whatever the query passes as `serviceName` (or
   `serviceId`) and `database`. Passing per-tenant or per-request values there

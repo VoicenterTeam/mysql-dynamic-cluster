@@ -656,8 +656,9 @@ connection a query meets before that fails one attempt with
 `ECONNRESET`, as in 4.6.0 and as with `passive: false`. No node goes down
 for it: the first loss starts a check, which passes, and the losses after
 it in the same `interval` are kept for the check of the timer, which
-passes too. `cluster.query()` sends a query that failed to the next node,
-where it can meet one more of them. What an app behind such a path sets
+passes too. The reset comes on the change of user, before the statement
+went out, so `cluster.query()` sends the query to the next node, where it
+can meet one more of them. What an app behind such a path sets
 is in [A quiet app behind a path with an idle
 timeout](#a-quiet-app-behind-a-path-with-an-idle-timeout).
 
@@ -722,9 +723,10 @@ it on and counts it as use.
 - **Behind a path with a shorter idle timeout the defaults still fail.**
   The path forgets the connection before the first ping. The first query
   after the pause is rejected with `ECONNRESET`, on every node whose
-  pooled connection the path forgot. `cluster.query()` sends it to the
-  next node, where it can meet the same, and rejects when it failed on all
-  of them. No node goes down: the check that starts passes. Set
+  pooled connection the path forgot. The reset comes on the change of
+  user, before the statement went out, so `cluster.query()` sends it to
+  the next node, where it can meet the same, and rejects when it failed
+  on all of them. No node goes down: the check that starts passes. Set
   `idleCheckInterval` below the idle timeout of the path there.
 - **A ping that fails closes its connection.** When the path forgot a
   connection before its ping, the path answers that ping with a reset. The
@@ -1148,9 +1150,11 @@ fails due to deadlock. Deadlocks are not dangerous. Just try again."
 ([How to minimize and handle deadlocks](https://dev.mysql.com/doc/refman/8.0/en/innodb-deadlocks-handling.html)).
 The same holds for the limits of a Galera cluster, see
 [Percona XtraDB Cluster limitations](https://docs.percona.com/percona-xtradb-cluster/8.0/limitation.html).
-`cluster.query()` already sends a failed query to the next node. An app
-that runs a transaction on a connection of `getConnection()` runs it again
-itself.
+`cluster.query()` does not run it again: the statement reached the node,
+so since 5.0.0 a deadlock, like any error reply, goes to the caller without
+another node, see [cluster.md](cluster.md#8-retry-loop). The app runs it
+again itself, as an app that runs a transaction on a connection of
+`getConnection()` does.
 
 #### Time to leave rotation once a call of the app fails
 
