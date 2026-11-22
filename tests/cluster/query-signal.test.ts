@@ -64,6 +64,8 @@ type Mode =
     | 'stays silent'
     // never answers the USE the pool sends before a statement on another database
     | 'ignores USE'
+    // never answers the reset the pool sends before it uses a connection the app had
+    | 'ignores the reset'
     // keeps each new login waiting until the test calls letIn()
     | 'holds the login';
 
@@ -129,6 +131,7 @@ const listen = async (connections: number): Promise<INode> => {
         connection.on('packet', (_packet: object, known: boolean, code: number) => {
             if (known || (code !== COM_CHANGE_USER && code !== COM_RESET_CONNECTION)) return;
             if (code === COM_RESET_CONNECTION) count('resets');
+            if (code === COM_RESET_CONNECTION && mode === 'ignores the reset') return;
             connection.sequenceId = 1;
             connection.writeOk({ serverStatus: AUTOCOMMIT });
         });
@@ -357,6 +360,31 @@ describe('an abort during the USE of another database', () => {
         // the statement was not sent, and still node 2 is not asked
         expect(second).not.toHaveBeenCalled();
         expect(n2.seen('logins')).toBe(n2logins);
+        expect(listeners(controller.signal)).toBe(0);
+        await expectDropped(cluster, n1, n2, closed);
+    });
+});
+
+describe('an abort during the reset of a connection the app had', () => {
+    it('rejects with the reason as it is and destroys the connection', async () => {
+        const { cluster, n1, n2 } = await twoNodes();
+        const { connection, nodeId } = await cluster.getConnection();
+        expect(nodeId).toBe(1);
+        connection.release();
+        n1.become('ignores the reset');
+        const controller = new AbortController();
+        const reason = reasonOf();
+        const reset = n1.next('resets');
+        const second = jest.spyOn(cluster.pools[1], 'query');
+        const pending = call(cluster, { signal: controller.signal });
+        await reset;
+        const closed = n1.next('closed');
+
+        controller.abort(reason);
+
+        expect((await pending).error).toBe(reason);
+        expect(seen('statements', n1, n2)).toEqual([0, 0]);
+        expect(second).not.toHaveBeenCalled();
         expect(listeners(controller.signal)).toBe(0);
         await expectDropped(cluster, n1, n2, closed);
     });

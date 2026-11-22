@@ -125,6 +125,20 @@ describe('Pool.query connection hygiene', () => {
         expect(conn.query.mock.calls.map(([options]) => options.sql)).toEqual(['SELECT 1']);
     });
 
+    it('a reset that throws: rejects at once with sent false, and destroys', async () => {
+        const conn = makeConn({ rows: [{ a: 1 }] });
+        const thrown = new Error('reset threw');
+        conn.reset.mockImplementation(() => { throw thrown; });
+        const pool = makePool(null, conn);
+        // the app had the connection, so the query resets it first
+        pool.lend(conn as any);
+
+        await expect(pool.query('SELECT 1')).rejects.toBe(thrown);
+        expect((thrown as any).sent).toBe(false);
+        expect(conn.query).not.toHaveBeenCalled();
+        expect(conn.destroy).toHaveBeenCalledTimes(1);
+    });
+
     it('USE fails: rejects with sent false, never sends the statement, resets', async () => {
         const conn = makeConn({ useErr: { code: 'ER_BAD_DB_ERROR', errno: 1049 } });
         await expect(makePool(null, conn).query('SELECT 1', { database: 'nope' }))

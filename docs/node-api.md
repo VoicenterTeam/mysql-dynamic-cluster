@@ -278,7 +278,9 @@ connection after it handed it to you. See
 
 ### You own the connection
 
-The cluster does nothing to the connection before it hands it over, and nothing after.
+The cluster does nothing to the connection before it hands it over. After you release it,
+the cluster resets it and selects its database again before its own next use of it, see
+[Reset before you release](#reset-before-you-release).
 
 - No timeout. A statement you send has the timeout you give it, or none. `queryTimeout` of
   the settings is not applied.
@@ -288,7 +290,8 @@ The cluster does nothing to the connection before it hands it over, and nothing 
 - No metric. Nothing you run on it shows in `mysql_dynamic_cluster.query.duration` or
   `mysql_dynamic_cluster.operation.duration`. The connection itself counts as `used` in
   `mysql_dynamic_cluster.connection.count` while you hold it.
-- No reset, neither on the way out nor on the way back.
+- No reset on the way out, and none at `release()`. A query of the cluster that gets the
+  connection later resets it first. Another `getConnection()` caller gets it as you left it.
 
 The events `acquire`, `connection` and `release` fire for it as they do for the cluster's own
 connections.

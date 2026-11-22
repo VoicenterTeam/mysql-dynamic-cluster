@@ -61,6 +61,10 @@ const CALL_OPEN = 'CALL open_transaction()';
 const CALL_CLEAN = 'CALL read_rows()';
 // a USE the app sends as its own statement
 const APP_USE = 'USE other_db';
+// two results: the header of the first says autocommit is off, the one of the second is clean
+const EARLY_DIRTY = 'SET autocommit = 0; SET autocommit = 1';
+// answered with 1047, as a Galera node outside the primary component does
+const NOT_READY = 'UPDATE t SET c = 1';
 const DEADLOCK = 1213;
 
 // What a node does from the moment a test says so. Until then it answers everything
@@ -154,6 +158,11 @@ const listen = async (connections = 1): Promise<INode> => {
             }
             if (sql === ROWS) return connection.writeTextResult([{ a: '1' }], [column('a')]);
             if (sql === FAIL) return refuse(DEADLOCK, 'Deadlock found when trying to get lock');
+            if (sql === NOT_READY) return refuse(1047, 'WSREP has not yet prepared node');
+            if (sql === EARLY_DIRTY) {
+                connection.writeOk({ serverStatus: MORE_RESULTS });
+                return ok();
+            }
             if (sql === BEGIN || sql === CALL_OPEN) session.inTransaction = true;
             if (sql === 'COMMIT' || sql === 'ROLLBACK') session.inTransaction = false;
             if (sql === AUTOCOMMIT_OFF) session.autocommit = false;
@@ -319,7 +328,8 @@ describe('a query that leaves the session dirty', () => {
         ['an error reply', FAIL],
         ['a header with a transaction open', BEGIN],
         ['a header with autocommit off', AUTOCOMMIT_OFF],
-        ['a procedure whose last header has a transaction open', CALL_OPEN]
+        ['a procedure whose last header has a transaction open', CALL_OPEN],
+        ['a reply of many results whose earlier header only is dirty', EARLY_DIRTY]
     ])('%s: one reset before the next caller', async (_what, sql) => {
         const node = await listen();
         const cluster = await clusterOf([node]);
@@ -402,7 +412,49 @@ describe('a reset before release', () => {
     });
 });
 
+describe('an answer 1047, not ready', () => {
+    // a node outside the primary component answers no reset (#93): the slot would wait for
+    // resetTimeout
+    it('drops the connection at once, with no reset', async () => {
+        const node = await listen();
+        const cluster = await clusterOf([node]);
+
+        const { error } = await call(cluster, NOT_READY);
+        const failed = Date.now();
+        const logins = node.logins();
+        await until(() => node.closed() === 1);
+        const took = Date.now() - failed;
+
+        expect([error.errno, node.closed()]).toEqual([1047, 1]);
+        expect(took).toBeLessThan(RESET / 2);
+        await expectDropped(cluster, node, logins);
+        expect(node.app()).toEqual([NOT_READY, CLEAN]);
+    });
+});
+
 describe('multiStatementQuery()', () => {
+    it('a USE among its statements: the next query sends USE', async () => {
+        const node = await listen();
+        const cluster = await clusterOf([node]);
+
+        await cluster.pools[0].multiStatementQuery([APP_USE], {});
+        await call(cluster, CLEAN);
+
+        expect(node.app()).toEqual([BEGIN, APP_USE, 'COMMIT', 'USE `d`', CLEAN]);
+    });
+
+    it('autocommit turned off among its statements: a reset before the next caller',
+        async () => {
+            const node = await listen();
+            const cluster = await clusterOf([node]);
+
+            await cluster.pools[0].multiStatementQuery([AUTOCOMMIT_OFF], {});
+            const { result } = await call(cluster, CLEAN);
+
+            expect(node.app()).toEqual([BEGIN, AUTOCOMMIT_OFF, 'COMMIT', 'reset', CLEAN]);
+            expect(result.serverStatus).toBe(AUTOCOMMIT);
+        });
+
     it('sends no reset after its own COMMIT or ROLLBACK', async () => {
         const node = await listen();
         const cluster = await clusterOf([node]);

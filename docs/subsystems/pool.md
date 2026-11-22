@@ -284,10 +284,14 @@ omitted — this method does not cache:
 1. `_pool.getConnection(...)` — same guards as `query()`. Reject on
    error or missing `conn`.
 2. `_session.prepare(conn, database, timeout, ...)` — the same reset of a
-   dirty connection and `USE` as in `query()`. It is the only part of the
-   session state `multiStatementQuery()` uses: the dirty rule does not
-   look at its replies, since the transaction ends with its own `COMMIT`
-   or `ROLLBACK`. After either, the connection goes back with no reset.
+   dirty connection and `USE` as in `query()`. Inside the transaction
+   every header says a transaction is open, so only the rule for the
+   database (`observeDatabase()`) reads the replies of the statements: a
+   `USE` among them makes the next query send `USE` again. The reply of
+   its own `COMMIT` or `ROLLBACK` goes through the whole rule and the
+   connection back through `_session.release()`: a clean one with no
+   reset, one that the transaction left with autocommit off after a reset.
+   A failed `ROLLBACK` destroys it.
 3. `START TRANSACTION` (sent with `queryOptions.timeout`) — open a transaction. On error,
    `conn.release()` and reject.
 4. Run the statements one after another: each `conn.query` starts from
@@ -348,9 +352,11 @@ limit. `query()` and `multiStatementQuery()` call it.
   within `resetTimeout` (1000 ms by default) destroys the connection with
   its socket (`drop()` of [ServerFlags.ts](../../src/pool/ServerFlags.ts)),
   logged at `warn`. mysql2 has no time limit for a reset, and a Galera
-  node outside the primary component never answers one. The slot of the
-  pool is free again either way. A broken connection, after a fatal error
-  or a timeout, is destroyed as before, and an aborted one too.
+  node outside the primary component never answers one, also 8 s after
+  it is Primary again (measured in #93). So a connection the node answered
+  1047 on is destroyed at once, with no reset. The slot of the pool is
+  free again either way. A broken connection, after a fatal error or a
+  timeout, is destroyed as before, and an aborted one too.
 - **A reset keeps the database.** `COM_RESET_CONNECTION` does not change
   the current database of the session, so the state keeps it.
 - **A `USE` of the app.** A statement can change the database itself: a
@@ -364,10 +370,11 @@ limit. `query()` and `multiStatementQuery()` call it.
   `session_track_schema=OFF` the pool cannot see such a `USE`: an app must
   not send `USE` through `query()` there, and should use the `database`
   option instead.
-- **What a clean query leaves stays.** A user variable or a session
-  variable that a statement sets with `SET` answers with a clean header,
-  so it stays on the connection for the next query that gets it. Up to 4.x
-  the change of user cleared it.
+- **What a clean query leaves stays.** A statement whose reply is clean
+  leaves its session state on the connection for the next query that gets
+  it: user variables, session variables set with `SET`, named locks of
+  `GET_LOCK()`, tables locked with `LOCK TABLES`, temporary tables and
+  prepared statements. Up to 4.x the change of user released all of them.
 - **A connection the app had.** `GaleraCluster.getConnection()` calls
   `pool.lend(connection)`. The pool sees neither the `USE` nor the
   transaction the app sends on it, so it marks the connection dirty and

@@ -428,14 +428,17 @@ export class Pool {
                 this._status.realFailure(error, !conn);
                 // a broken connection can't roll back; destroying it makes the server discard the transaction
                 if (rollback && !Pool._isBroken(error)) {
-                    conn.query({ sql: 'ROLLBACK', timeout: queryOptions.timeout }, (errorR) => {
+                    const rollback = { sql: 'ROLLBACK', timeout: queryOptions.timeout };
+                    conn.query(rollback, (errorR, resultR) => {
                         if (errorR) {
                             Logger.error("Rollback failed in pool by host " + this.host + ": " + errorR.message);
                             // the connection may have been lost under the rollback
                             this._status.realFailure(errorR, false);
-                            conn.destroy();
+                            this._session.release(conn, true);
                         } else {
-                            conn.release();
+                            // clean, unless the transaction turned autocommit off
+                            this._session.observe(conn, undefined, resultR);
+                            this._session.release(conn);
                         }
                         reject(error);
                     });
@@ -454,14 +457,17 @@ export class Pool {
                 const runQuery = (index: number) => {
                     if (index >= sqls.length) {
                         Logger.debug("Commit transaction in pool by host " + this.host);
-                        conn.query({ sql: 'COMMIT', timeout: queryOptions.timeout }, errorC => {
+                        const commit = { sql: 'COMMIT', timeout: queryOptions.timeout };
+                        conn.query(commit, (errorC, resultC) => {
                             if (errorC) return fail(errorC, conn, true);
                             if (settled) return;
                             settled = true;
 
                             queryTimer.end();
                             Metrics.recordOperation(queryTimer.get(), poolMetricOption);
-                            conn.release();
+                            // clean, unless the transaction turned autocommit off
+                            this._session.observe(conn, undefined, resultC);
+                            this._session.release(conn);
                             resolve(results);
                         });
                         return;
@@ -469,14 +475,16 @@ export class Pool {
 
                     conn.query({ sql: sqls[index], timeout: queryOptions.timeout }, (errorQ, result: T) => {
                         if (errorQ) return fail(errorQ, conn, true);
+                        // every header here says a transaction is open: the database rule only
+                        this._session.observeDatabase(conn, result);
                         results.push(result);
                         runQuery(index + 1);
                     });
                 }
 
                 // A reset when the connection is dirty, a USE when it is on another database.
-                // That is all it takes from the session state: the transaction ends with its
-                // own COMMIT or ROLLBACK, so the connection goes back with no reset
+                // The transaction ends with its own COMMIT or ROLLBACK, so a clean reply of it
+                // sends the connection back with no reset
                 const { database, timeout } = queryOptions;
                 this._session.prepare(conn, database, timeout, (error) => {
                     if (error) return fail(error, conn);

@@ -11,6 +11,9 @@ interface ISession {
     // the session may hold what the next user must not get, such as an open transaction.
     // It stays dirty until a reset
     dirty: boolean,
+    // the node answered 1047, not ready: it answers no reset either, so the connection is
+    // dropped instead
+    notReady?: boolean,
     // a reset failed and destroyed the connection: nothing is done with it any more
     dropped?: boolean
 }
@@ -19,6 +22,8 @@ interface ISession {
 const IN_TRANSACTION = 1;
 const AUTOCOMMIT = 2;
 const SESSION_STATE_CHANGED = 0x4000;
+// the errno of a Galera node that is not ready, outside the primary component
+const NOT_READY = 1047;
 
 /**
  * The session of the connections of one pool: which database each is on, and whether it is
@@ -30,12 +35,12 @@ export class SessionState {
     private readonly _sessions = new WeakMap<object, ISession>();
 
     /**
-     * @param pool name of the pool, for the log
+     * @param poolName name of the pool, for the log
      * @param database the database mysql2 logs every connection of the pool in with
      * @param resetTimeout time in ms a reset may take before the connection is destroyed
      */
     constructor(
-        private readonly _pool: string,
+        private readonly _poolName: string,
         private readonly _database: string,
         private readonly _resetTimeout: number
     ) {}
@@ -78,45 +83,64 @@ export class SessionState {
     }
 
     /**
-     * Apply the dirty rule to the reply of a statement. The connection is dirty after an error
+     * Apply the rules to the reply of a statement. The connection is dirty after an error
      * reply, since an error reply carries no status flags, or after a header with a
      * transaction open or autocommit off. Every header of a reply of many results counts. A
      * reply of rows only has no header, and cannot open a transaction while autocommit is on.
-     * A header that says the session state changed makes the database of the connection
-     * unknown, so the next statement sends USE first
+     * The rule for the database applies too, see observeDatabase()
      * @param error the error the statement failed with
      * @param result the reply of mysql2
      */
     public observe(connection: object, error?: unknown, result?: unknown): void {
-        const flags = SessionState._flags(result);
-        const dirty = !!error ||
-            flags.some(status => (status & IN_TRANSACTION) !== 0 || (status & AUTOCOMMIT) === 0);
+        this.observeDatabase(connection, result);
+        const dirty = !!error || SessionState._flags(result).some(status => {
+            return (status & IN_TRANSACTION) !== 0 || (status & AUTOCOMMIT) === 0;
+        });
+        if (!dirty) return;
+        const session = this._session(connection);
+        session.dirty = true;
+        if ((error as { errno?: unknown })?.errno === NOT_READY) session.notReady = true;
+    }
+
+    /**
+     * The rule for the database alone: a header that says the session state changed makes
+     * the database of the connection unknown, so the next statement sends USE first. Inside a
+     * transaction of multiStatementQuery() only this rule applies, since every header there
+     * says a transaction is open
+     * @param result the reply of mysql2
+     */
+    public observeDatabase(connection: object, result?: unknown): void {
         // A statement of the app can change the database itself: a USE it sends through
         // query(), or one in a multi-statement. The header tells only through session
         // tracking, which mysql2 asks for and MySQL 8 has on by default. Without it such a
         // USE goes unseen
-        const changed = flags.some(status => (status & SESSION_STATE_CHANGED) !== 0);
-        if (!dirty && !changed) return;
-        const session = this._session(connection);
-        if (dirty) session.dirty = true;
-        if (changed) session.database = undefined;
+        const flags = SessionState._flags(result);
+        if (!flags.some(status => (status & SESSION_STATE_CHANGED) !== 0)) return;
+        this._session(connection).database = undefined;
     }
 
     /**
      * Give a connection back to the pool. A clean one goes back at once. A dirty one is reset
      * first and goes back clean, and one whose reset fails or runs out of time is destroyed.
-     * A connection a failed reset destroyed already is left alone
+     * One the node answered 1047 on is destroyed with no reset. A connection a failed reset
+     * destroyed already is left alone
      * @param broken the socket is dead or still runs a statement: destroyed, never reset
      */
     public release(connection: mysql.PoolConnection, broken = false): void {
         const session = this._sessions.get(connection);
         if (session?.dropped) return;
         if (broken) return connection.destroy();
+        if (session?.notReady) {
+            // the reset would get no answer and hold the slot for resetTimeout, see _reset()
+            session.dropped = true;
+            return drop(connection);
+        }
         if (!session?.dirty) return connection.release();
         this._reset(connection, session, error => {
             if (!error) return connection.release();
-            Logger.warn("Pool " + this._pool + ": the reset of a connection before its release " +
-                "failed, the connection was closed", { pool: this._pool, code: error?.code });
+            const pool = this._poolName;
+            Logger.warn("Pool " + pool + ": the reset of a connection before its release " +
+                "failed, the connection was closed", { pool, code: error?.code });
         });
     }
 
@@ -136,9 +160,9 @@ export class SessionState {
 
     /**
      * Reset a connection, within resetTimeout: mysql2 has no time limit for a reset, and a
-     * Galera node outside the primary component never answers one. After a reset the session
-     * is clean and on the same database. One that fails or runs out of time destroys the
-     * connection with its socket
+     * Galera node outside the primary component never answers one, also 8 s after it is
+     * Primary again (measured in #93). After a reset the session is clean and on the same
+     * database. One that fails or runs out of time destroys the connection with its socket
      * @private
      */
     private _reset(
@@ -164,7 +188,12 @@ export class SessionState {
         }, this._resetTimeout);
         // the socket keeps the process alive while the reset runs. This timer alone does not
         timer.unref();
-        connection.reset(error => finish(error ?? undefined));
+        try {
+            connection.reset(error => finish(error ?? undefined));
+        } catch (thrown) {
+            // a reset that could not be sent fails here, so no call waits for it
+            finish(thrown || new Error("Reset failed"));
+        }
     }
 
     /**
