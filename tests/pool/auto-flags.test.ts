@@ -131,8 +131,8 @@ describe('a pool without flags in its settings', () => {
         await settled;
 
         // an option added to one of the two and not the other, such as ssl, fails here
-        const { connectionLimit, ...poolOptions } = createPoolOptions();
-        expect(connectionLimit).toBe(10);
+        const { connectionLimit, maxPreparedStatements, ...poolOptions } = createPoolOptions();
+        expect([connectionLimit, maxPreparedStatements]).toEqual([10, 100]);
         expect(poolOptions).toStrictEqual(probeOptions);
     });
 
@@ -152,7 +152,7 @@ describe('a pool without flags in its settings', () => {
 
         expect(createPoolOptions()).toStrictEqual({
             host: 'node-a', port: 3306, user: 'u', password: 'secret-password', database: 'd',
-            connectionLimit: 10
+            connectionLimit: 10, maxPreparedStatements: 100
         });
         expect(probe().end).toHaveBeenCalledTimes(1);
     });

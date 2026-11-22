@@ -136,10 +136,12 @@ const started = async (settings?: object) => {
 };
 
 describe('the check connection: what it is opened with', () => {
-    it('the options of the pool of the node, without its limit', async () => {
+    it('the options of the pool of the node, without its limits', async () => {
         await started({ flags: ['-FOUND_ROWS'], healthCheck: {} });
 
-        const { connectionLimit, ...ofThePool } = createPool.mock.calls[0][0];
+        // the check connection prepares no statement: it takes neither of the two
+        const options = createPool.mock.calls[0][0];
+        const { connectionLimit, maxPreparedStatements, ...ofThePool } = options;
         expect(createConnection.mock.calls).toEqual([[ofThePool]]);
         expect(ofThePool).toStrictEqual({
             host: 'db.example', port: 3306, user: 'u', password: 'p', database: 'd',

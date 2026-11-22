@@ -108,7 +108,7 @@ describe('the flags pool setting', () => {
         const options = await createPoolOptions(base());
         expect(options[0]).toStrictEqual({
             host: '127.0.0.1', port: 3306, user: 'u', password: 'p', database: 'd',
-            connectionLimit: 10
+            connectionLimit: 10, maxPreparedStatements: 100
         });
     });
 
