@@ -2,6 +2,8 @@ import mysql from 'mysql2';
 import { AddressInfo } from 'net';
 import { createPoolCluster } from '../../index';
 import { parseSettings } from '../../src/configs/schema';
+import { Pool } from '../../src/pool/Pool';
+import { Settings } from '../../src/utils/Settings';
 
 // The session of a pooled connection, with the cluster of createPoolCluster and the real mysql2
 // against mysql2's own server class on the loopback interface. The fake server keeps the
@@ -562,6 +564,15 @@ describe('the health check of a node without a healthCheck block', () => {
 describe('the resetTimeout setting', () => {
     it('defaults to 1000 ms', () => {
         expect(parseSettings({}).defaultPoolSettings.resetTimeout).toBe(1000);
+    });
+
+    it('is 1000 ms for a Pool built without the settings schema, as its siblings', () => {
+        // the settings of a host, less the one key
+        const settings = Settings.mixSettings({ hosts: [{ host: 'h' }] } as any);
+        const { resetTimeout, ...host } = settings.hosts[0];
+        const pool: any = new Pool({ id: 1, ...host } as any, 'test');
+
+        expect(pool._session._resetTimeout).toBe(1000);
     });
 
     it.each([0, -1])('refuses %d: a reset always has a time limit', (value) => {

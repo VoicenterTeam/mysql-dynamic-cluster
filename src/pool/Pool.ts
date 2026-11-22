@@ -113,7 +113,7 @@ export class Pool {
         // idle connections and resets a connection after many statements
         this._maxPreparedStatements = settings.maxPreparedStatements ?? 100;
         this._session = new SessionState(
-            this.name, this._database, settings.resetTimeout, this._maxPreparedStatements,
+            this.name, this._database, settings.resetTimeout ?? 1000, this._maxPreparedStatements,
             settings.resetAfterStatements ?? 1000
         );
 
