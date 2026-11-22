@@ -32,6 +32,11 @@ describeRig('a node drops out of the cluster, on Galera', () => {
     const ask = async (): Promise<{ host: string, n: number }> =>
         (await cluster.query<any>(WHO))[0];
     const isValid = (n: number): boolean => cluster.nodes().find(node => node.id === n).isValid;
+    // the node the cluster asks first, as it orders them: the valid one with the lowest load
+    // score, the one listed first on a tie
+    const first = (): number | undefined => cluster.nodes()
+        .filter(node => node.isValid)
+        .sort((a, b) => a.loadScore - b.loadScore)[0]?.id;
 
     beforeAll(async () => {
         const env = readEnv();
@@ -77,19 +82,23 @@ describeRig('a node drops out of the cluster, on Galera', () => {
 
     it('a query answers from another node within one call', async () => {
         expect(cluster.nodes().map(node => node.isValid)).toEqual([true, true, true]);
-        // the node the cluster asks first, the valid one with the lowest load score
-        const { host } = await ask();
-        out = Number(Object.keys(hostnames).find(n => hostnames[Number(n)] === host));
+        out = first();
+        const host = hostnames[out];
 
         await isolate(out, 1);
         // It answers until it sees that it is out, about 6 s later (evs.suspect_timeout). The
-        // call after that asks it first, gets 1047 and goes on to the next node. The check of
-        // the node is up to 15 s away, so the cluster still has the node as valid then
+        // call after that asks it first, gets 1047 and goes on to the next node. A call counts
+        // only when the node was the first valid one by load score just before it: the check
+        // of the node, up to 15 s away, can reorder the nodes or take this one out first
         let answer: { host: string, n: number };
         let took = 0;
-        let wasValid = true;
         await until(async () => {
-            wasValid = isValid(out);
+            if (!isValid(out)) {
+                throw new Error(`the check took node ${out} out before a call met its 1047: ` +
+                    'the scenario was not shown, run the suite again');
+            }
+            // another node is asked first for now: no call shows the scenario
+            if (first() !== out) return false;
             const started = Date.now();
             answer = await ask();
             took = Date.now() - started;
@@ -100,8 +109,7 @@ describeRig('a node drops out of the cluster, on Galera', () => {
         expect(took).toBeLessThan(1000);
         const refused = log.error.mock.calls.map(([message]) => message).filter(message =>
             message.startsWith(`Query failed in pool node${out}: WSREP has not yet prepared`));
-        // in the rare case the check took the node out just before that call, it was not asked
-        if (wasValid) expect(refused).toHaveLength(1);
+        expect(refused).toHaveLength(1);
         expect(await status(out, 'wsrep_cluster_status')).toBe('non-Primary');
     });
 
