@@ -379,6 +379,12 @@ export class GaleraCluster {
             record(undefined, error);
             throw error;
         }
+        // as queryTimeout in the settings: a negative one fired at once. 0 means none
+        if (queryOptions.timeout < 0) {
+            const error = new TypeError("query: options.timeout must not be negative");
+            record(undefined, error);
+            throw error;
+        }
         // mysql2 throws for other values, or fails after the prepare. Before any node.
         // includes() counts the holes of a sparse array as undefined
         const unbindable = queryOptions.execute && values !== undefined && values !== null

@@ -76,8 +76,8 @@ const poolFields = {
     timerCheckMultiplier: z.number(),
     // a node that has it is checked by its rules, and ignores the two keys above
     healthCheck,
-    // time in ms. 0 means none
-    queryTimeout: z.number().max(LONGEST_TIMER),
+    // time in ms. 0 means none. A negative one fired at once
+    queryTimeout: z.number().min(0).max(LONGEST_TIMER),
     // time in ms a reset of a dirty connection may take before the connection is destroyed.
     // A reset always has a limit: the server may never answer it
     resetTimeout: limitMs,

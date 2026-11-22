@@ -229,6 +229,14 @@ describe('settings validation', () => {
             .toThrow();
     });
 
+    // a negative one fired at once (#120)
+    it('refuses a negative queryTimeout, and takes 0, no limit', () => {
+        expect(parseSettings({ defaultPoolSettings: { queryTimeout: 0 } })
+            .defaultPoolSettings.queryTimeout).toBe(0);
+        expect(() => parseSettings({ defaultPoolSettings: { queryTimeout: -1 } })).toThrow();
+        expect(() => parseSettings({ hosts: [{ host: 'a', queryTimeout: -1 }] })).toThrow();
+    });
+
     it('lists every problem in one error', () => {
         const message = errorOf({ ...base(), errorRetryCount: 'abc', bogusKey: 1 });
         expect(message).toContain('→ at errorRetryCount');
