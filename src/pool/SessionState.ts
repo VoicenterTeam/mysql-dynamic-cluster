@@ -15,13 +15,18 @@ interface ISession {
     // dropped instead
     notReady?: boolean,
     // a reset failed and destroyed the connection: nothing is done with it any more
-    dropped?: boolean
+    dropped?: boolean,
+    // the last header on the connection had NO_BACKSLASH_ESCAPES: the server reads a
+    // backslash in a string as a character, so a value escaped into the text is not safe.
+    // Unknown after a reset, which counts as off, as for a new connection
+    noBackslashEscapes?: boolean
 }
 
 // status flags of the header of an OK reply
 const IN_TRANSACTION = 1;
 const AUTOCOMMIT = 2;
 const SESSION_STATE_CHANGED = 0x4000;
+const NO_BACKSLASH_ESCAPES = 512;
 // the errno of a Galera node that is not ready, outside the primary component
 const NOT_READY = 1047;
 
@@ -29,7 +34,8 @@ const NOT_READY = 1047;
  * The session of the connections of one pool: which database each is on, and whether it is
  * dirty. The pool sends no change of user. A query for another database sends USE first, and
  * a dirty connection is reset before anyone uses it again. The rule for dirty and the reset
- * with its time limit live here and nowhere else
+ * with its time limit live here and nowhere else, and so does the sql_mode bit a query() with
+ * values reads, see noBackslashEscapes()
  */
 export class SessionState {
     private readonly _sessions = new WeakMap<object, ISession>();
@@ -87,13 +93,19 @@ export class SessionState {
      * reply, since an error reply carries no status flags, or after a header with a
      * transaction open or autocommit off. Every header of a reply of many results counts. A
      * reply of rows only has no header, and cannot open a transaction while autocommit is on.
-     * The rule for the database applies too, see observeDatabase()
+     * The rule for the database applies too, see observeDatabase(). The last header of the
+     * reply sets noBackslashEscapes, or clears it. A reply without a header leaves it
      * @param error the error the statement failed with
      * @param result the reply of mysql2
      */
     public observe(connection: object, error?: unknown, result?: unknown): void {
         this.observeDatabase(connection, result);
-        const dirty = !!error || SessionState._flags(result).some(status => {
+        const flags = SessionState._flags(result);
+        if (flags.length > 0) {
+            const last = flags[flags.length - 1];
+            this._session(connection).noBackslashEscapes = (last & NO_BACKSLASH_ESCAPES) !== 0;
+        }
+        const dirty = !!error || flags.some(status => {
             return (status & IN_TRANSACTION) !== 0 || (status & AUTOCOMMIT) === 0;
         });
         if (!dirty) return;
@@ -117,6 +129,16 @@ export class SessionState {
         const flags = SessionState._flags(result);
         if (!flags.some(status => (status & SESSION_STATE_CHANGED) !== 0)) return;
         this._session(connection).database = undefined;
+    }
+
+    /**
+     * Whether the last header on the connection had bit 512, NO_BACKSLASH_ESCAPES: the server
+     * then reads a backslash in a string as a character, and the escaping of mysql2 does not
+     * protect a value written into the text. False before the first header, and after a reset
+     * until the next one: mysql2 does not show the header of the reply to a reset
+     */
+    public noBackslashEscapes(connection: object): boolean {
+        return this._sessions.get(connection)?.noBackslashEscapes === true;
     }
 
     /**
@@ -162,7 +184,9 @@ export class SessionState {
      * Reset a connection, within resetTimeout: mysql2 has no time limit for a reset, and a
      * Galera node outside the primary component never answers one, also 8 s after it is
      * Primary again (measured in #93). After a reset the session is clean and on the same
-     * database. One that fails or runs out of time destroys the connection with its socket
+     * database, and its sql_mode is the one of the server, which counts as no
+     * NO_BACKSLASH_ESCAPES. One that fails or runs out of time destroys the connection with
+     * its socket
      * @private
      */
     private _reset(
@@ -178,6 +202,7 @@ export class SessionState {
                 drop(connection);
             } else {
                 session.dirty = false;
+                session.noBackslashEscapes = false;
             }
             done(error);
         };

@@ -43,9 +43,6 @@ export class GaleraCluster {
     private readonly _serviceNames: ServiceNames;
     private readonly _errorRetryCount: number; // retry count after query error
     private readonly _useRedis: boolean;
-    private readonly _escapeNamedValues: boolean;
-    // the warning about named values that are not escaped is logged once
-    private _warnedNamedValues: boolean = false;
 
     private readonly _clusterName: string;
     private readonly _nullServiceName: string = "mdc"
@@ -87,7 +84,6 @@ export class GaleraCluster {
         this._clusterName = config.current.clusterName
         this._errorRetryCount = config.current.errorRetryCount
         this._useRedis = config.current.redis.enabled
-        this._escapeNamedValues = config.current.escapeNamedValues
         const poolIds: number[] = this._sortPoolIds(config.current.hosts);
 
         config.current.hosts.forEach(poolSettings => {
@@ -323,9 +319,25 @@ export class GaleraCluster {
     }
 
     /**
+     * Run one statement with its values bound by the server: query() with the option
+     * `execute`. mysql2 prepares the statement once per connection and keeps it, and the values
+     * never become part of the text. The same choice of node, retry rule, error, signal,
+     * metrics and passive health as query(). No Redis
+     * @param sql MySQL query, with a ? for each value
+     * @param values the values, as an array
+     * @param queryOptions params for configure query
+     */
+    public async execute<T extends QueryResult>(
+        sql: string, values?: unknown[], queryOptions?: IQueryOptions
+    ): Promise<T> {
+        return this.query<T>(sql, values, { ...queryOptions, execute: true });
+    }
+
+    /**
      * Cluster mysql query
      * @param sql MySQL query
-     * @param values values what passed in sql string
+     * @param values values what passed in sql string. Written into the text and escaped, unless
+     * the option `execute` asks the server to bind them
      * @param queryOptions params for configure query
      */
     public async query<T extends QueryResult>(sql: string, values?: QueryValues, queryOptions?: IQueryOptions): Promise<T> {
@@ -335,8 +347,8 @@ export class GaleraCluster {
             redisRefreshCache: false,
             ...queryOptions
         }
-        // after the spread: an option passed as undefined or null must not turn the setting off
-        queryOptions.escapeNamedValues ??= this._escapeNamedValues;
+        // a bound statement is neither read from Redis nor written to it, in this version
+        if (queryOptions.execute) queryOptions.redis = false;
 
         let activePools: Pool[]; // available pools for query what passed the validator
         let retryCount; // max retry query count after error
@@ -363,6 +375,16 @@ export class GaleraCluster {
         const signal = queryOptions.signal ?? undefined;
         if (signal !== undefined && !GaleraCluster._isAbortSignal(signal)) {
             const error = new TypeError("query: options.signal must be an AbortSignal");
+            record(undefined, error);
+            throw error;
+        }
+        // mysql2 throws for other values instead of failing the call. Before any node
+        const unbindable = queryOptions.execute && values !== undefined && values !== null
+            && !(Array.isArray(values)
+                && values.every(value => value !== undefined && typeof value !== 'function'));
+        if (unbindable) {
+            const error = new TypeError("execute: values must be an array, with no undefined " +
+                "and no function in it");
             record(undefined, error);
             throw error;
         }
@@ -394,7 +416,7 @@ export class GaleraCluster {
             stopIfAborted();
             // no pool passed the validator: serve cached data, even expired, as when every pool fails
             if (queryOptions.redis && !queryOptions.redisRefreshCache) {
-                const redisResult = await Redis.get(this._formatSQL(sql, values, queryOptions.escapeNamedValues));
+                const redisResult = await Redis.get(this._formatSQL(sql, values));
                 // or while Redis was read
                 stopIfAborted();
                 if (redisResult) {
@@ -420,7 +442,8 @@ export class GaleraCluster {
         // no node
         stopIfAborted();
 
-        sql = this._formatSQL(sql, values, queryOptions.escapeNamedValues);
+        // bound values stay apart from the text
+        if (!queryOptions.execute) sql = this._formatSQL(sql, values);
         Logger.debug("formatSQL", {sql, values})
         let redisData: IRedisData = null;
         if (queryOptions.redis && !queryOptions.redisRefreshCache) {
@@ -463,7 +486,7 @@ export class GaleraCluster {
             const outcome: IQueryOutcome = {};
             try {
                 Logger.debug("Query use host: " + pool.host);
-                const res = await this._queryRequest(sql, pool, queryOptions, outcome) as T;
+                const res = await this._queryRequest(sql, pool, queryOptions, outcome, values) as T;
                 record('pool');
                 return res;
             } catch (e) {
@@ -512,12 +535,14 @@ export class GaleraCluster {
      * @param pool active pool
      * @param queryOptions options to configure query
      * @param outcome handed to the pool, which says in it whether the statement was sent
+     * @param values the values of the caller, see Pool.query()
      * @private
      */
     private async _queryRequest<T extends QueryResult>(
-        sql: string, pool: Pool, queryOptions: IQueryOptions, outcome: IQueryOutcome
+        sql: string, pool: Pool, queryOptions: IQueryOptions, outcome: IQueryOutcome,
+        values: QueryValues
     ): Promise<T> {
-        const result = await pool.query(sql, queryOptions, outcome) as T;
+        const result = await pool.query(sql, queryOptions, outcome, values) as T;
 
         if (queryOptions?.serviceId && this._clusterHashing.connected) {
             // the statement ran: a failure from here on must not send it to another node
@@ -549,13 +574,12 @@ export class GaleraCluster {
     }
 
     /**
-     * Mix together values and sql string
+     * Mix together values and sql string. Every value is escaped, those of an object too
      * @param sql MySQL query
      * @param values values to mix with sql
-     * @param escapeNamed escape the values of an object. Array and string values are always escaped
      * @private
      */
-    private _formatSQL(sql: string, values: QueryValues, escapeNamed?: boolean): string {
+    private _formatSQL(sql: string, values: QueryValues): string {
         if (values) {
             if (Array.isArray(values)) {
                 return MySQLFormat(sql, values);
@@ -566,26 +590,12 @@ export class GaleraCluster {
                 return sql.replace(/:(\w+)/g, (txt, key) => {
                     if (!Object.prototype.hasOwnProperty.call(values, key)) return txt;
                     // true: a plain object becomes a quoted string, not `key` = value pairs
-                    if (escapeNamed) return MySQLEscape(values[key], true);
-                    this._warnNamedValues();
-                    return values[key];
+                    return MySQLEscape(values[key], true);
                 })
             }
         }
 
         return sql;
-    }
-
-    /**
-     * Named values go into the sql as text unless escapeNamedValues is on.
-     * Logged once per cluster, without the sql and the values
-     * @private
-     */
-    private _warnNamedValues(): void {
-        if (this._warnedNamedValues) return;
-        this._warnedNamedValues = true;
-        Logger.warn("Named query values are put into the sql without escaping. " +
-            "Set escapeNamedValues to true to escape them");
     }
 
     /**

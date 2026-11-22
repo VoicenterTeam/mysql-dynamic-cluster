@@ -138,8 +138,6 @@ export const settingsSchema = z.strictObject({
     defaultPoolSettings: defaultPoolSettings.prefault({}),
     // retry count after a query error
     errorRetryCount: z.number().default(2),
-    // escape the values of query(sql, {name: value}). Off: they go into the sql as text
-    escapeNamedValues: z.boolean().default(false),
     useClusterHashing: z.boolean().default(true),
     clusterHashing: z.strictObject({
         // time in ms

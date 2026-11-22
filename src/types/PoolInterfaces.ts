@@ -46,8 +46,9 @@ export interface IQueryOptions {
     redisFactor?: number,
     redisExpire?: number,
     redisRefreshCache?: boolean,
-    // escape the values of an object of values, for this query. Default: the escapeNamedValues setting
-    escapeNamedValues?: boolean,
+    // Send the statement with mysql2's execute(): prepared once per connection, the values
+    // bound by the server and never written into the text. Values must be an array. No Redis
+    execute?: boolean,
     // Try the next node after a node answered 1047, not ready. Default true. False for a
     // statement that can do part of its work before the 1047, such as a procedure that commits
     // on its way

@@ -8,13 +8,17 @@ import { IQueryOptions, IQueryOutcome } from "../types/PoolInterfaces";
 const REFUSED_LOGIN: ReadonlySet<number> = new Set([1045, 1698, 1044, 3118, 3955, 1130]);
 // Galera refused the statement because the node is not ready, and it did not run
 const NOT_READY = 1047;
+// The pool refused to send values written into the text on a connection whose server has
+// NO_BACKSLASH_ESCAPES. Another node can have the same sql_mode: the app has to use execute
+const UNSAFE_SQL_MODE = 'MDC_UNSAFE_SQL_MODE';
 
 /**
  * Whether cluster.query() may send the statement to the next node after a node failed it.
  * The only place that decides it. Yes when the statement cannot have run on that node: it was
  * never sent, or the node answered 1047 and the query did not set retryNotReady to false.
- * Never after a refused login, although its statement was not sent. Never once the signal of
- * the query aborted: in the call of the node, as the pool says, or since that call failed
+ * Never after a refused login or an MDC_UNSAFE_SQL_MODE refusal, although its statement was
+ * not sent. Never once the signal of the query aborted: in the call of the node, as the pool
+ * says, or since that call failed
  * @param error what the query of the node was rejected with
  * @param outcome what Pool.query() said of the call. A node that tells nothing counts as one
  * the statement was sent to
@@ -25,8 +29,8 @@ export function mayTryNextNode(
 ): boolean {
     // the caller gave up: no node gets the statement after that
     if (outcome.aborted || options.signal?.aborted) return false;
-    const errno = typeof error === 'object' && error !== null ? (error as any).errno : undefined;
-    if (REFUSED_LOGIN.has(errno)) return false;
+    const { errno, code } = (typeof error === 'object' && error !== null ? error : {}) as any;
+    if (REFUSED_LOGIN.has(errno) || code === UNSAFE_SQL_MODE) return false;
     if (outcome.sent === false) return true;
     return errno === NOT_READY && options.retryNotReady !== false;
 }

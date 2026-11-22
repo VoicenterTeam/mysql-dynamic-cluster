@@ -7,7 +7,7 @@ import Logger from "../utils/Logger";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
 import {
-    IAbortOutcome, ICheckOutcome, IQueryOptions, IQueryOutcome, QueryResult
+    IAbortOutcome, ICheckOutcome, IQueryOptions, IQueryOutcome, QueryResult, QueryValues
 } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
 import { IHealthCheck, IUserPoolSettings } from "../types/PoolSettingsInterfaces";
@@ -271,9 +271,13 @@ export class Pool {
      * also writes it on its error, when the error can take it. Gets `aborted: true` when the
      * signal of the options ended the call, which then rejects with the reason of the signal
      * as it is: nothing is written on it, and passive health is not told
+     * @param values the values of the caller. With the option `execute` the server binds them.
+     * Without it they are in sql already, and the pool refuses to send sql on a connection
+     * with NO_BACKSLASH_ESCAPES: MDC_UNSAFE_SQL_MODE, with `sent: false`
      */
     public async query<T extends QueryResult>(
-        sql: string, queryOptions?: IQueryOptions, outcome: IQueryOutcome = {}
+        sql: string, queryOptions?: IQueryOptions, outcome: IQueryOutcome = {},
+        values?: QueryValues
     ): Promise<T | T[]> {
         return new Promise(async (resolve, reject) => {
             outcome.sent = false;
@@ -362,11 +366,16 @@ export class Pool {
                 const { database, timeout } = queryOptions;
                 this._session.prepare(conn, database, timeout, (error) => {
                     if (error) return fail(error, conn);
+                    const bound = queryOptions.execute;
+                    // values in the text, where the server reads a backslash as a character
+                    if (values && !bound && this._session.noBackslashEscapes(conn)) {
+                        return fail(Pool._unsafeSqlMode(), conn);
+                    }
 
                     Logger.debug(`Query in pool by host ${this.host}`);
                     // from here on the statement can run on the server, whatever comes back
                     outcome.sent = true;
-                    conn.query({ sql, timeout }, (error, result: T) => {
+                    const onReply = (error: mysql.QueryError | null, result: T) => {
                         this._session.observe(conn, error, result);
                         if (error) return fail(error, conn);
                         if (settled) return;
@@ -390,7 +399,10 @@ export class Pool {
                         }
 
                         resolve(result);
-                    });
+                    };
+                    // the only step a bound statement does differently
+                    if (bound) conn.execute({ sql, values, timeout }, onReply);
+                    else conn.query({ sql, timeout }, onReply);
                 })
             }, error => {
                 if (asked.aborted) return abort(error);
@@ -511,6 +523,19 @@ export class Pool {
             port: this.port,
             database
         }
+    }
+
+    /**
+     * The error of a query() whose values are in its text, on a connection with
+     * NO_BACKSLASH_ESCAPES: the escaping of mysql2 does not protect a value there
+     * @private
+     */
+    private static _unsafeSqlMode(): Error {
+        const error: any = new Error("The server has NO_BACKSLASH_ESCAPES on for this " +
+            "connection: values written into the SQL text are not safe, so the statement was " +
+            "not sent. Use execute() to send the values bound by the server");
+        error.code = 'MDC_UNSAFE_SQL_MODE';
+        return error;
     }
 
     /**

@@ -36,8 +36,6 @@ const defaultsOf322 = {
     useClusterHashing: true,
     clusterName: 'demo',
     errorRetryCount: 2,
-    // not in 3.2.2: added off, which is what 3.2.2 did
-    escapeNamedValues: false,
     redis: {
         enabled: false, keyPrefix: 'mdc:', expire: 1000000, expiryMode: 'EX',
         algorithm: 'md5', encoding: 'base64', clearOnStart: false
@@ -185,7 +183,9 @@ describe('settings validation', () => {
         ['showMetricKeys', { showMetricKeys: true }],
         ['amqp_logs', { amqp_logs: {} }],
         ['redisSettings', { redisSettings: { enabled: true } }],
-        ['globalPoolSettings', { globalPoolSettings: {} }]
+        ['globalPoolSettings', { globalPoolSettings: {} }],
+        // 4.x only: 5.0.0 always escapes named values
+        ['escapeNamedValues', { escapeNamedValues: false }]
     ])('rejects the removed or misnamed key %s', (key, extra) => {
         expect(errorOf({ ...base(), ...extra })).toContain(`Unrecognized key: "${key}"`);
     });
@@ -198,7 +198,6 @@ describe('settings validation', () => {
 
     it.each([
         ['errorRetryCount', { errorRetryCount: 'abc' }],
-        ['escapeNamedValues', { escapeNamedValues: 'yes' }],
         ['defaultPoolSettings.port', { defaultPoolSettings: { port: '3306' } }],
         ['redis.enabled', { redis: { enabled: 'yes' } }],
         ['redis.algorithm', { redis: { algorithm: 'sha1' } }],
