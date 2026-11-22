@@ -84,10 +84,11 @@ const makeNode = (steps: Step[]) => {
 type FakeNode = ReturnType<typeof makeNode>;
 
 // The pool bounds the status query with the timeout the check hands it, by a timer of its own:
-// mysql2 is handed none (#120). The node of the host keeps that timeout
+// mysql2 is handed none (#120). The node of the host keeps that timeout. A host with no fake
+// node has nothing to keep it
 const poolQuery = Pool.prototype.query;
 Pool.prototype.query = function (this: Pool, sql: string, options: any, ...rest: any[]) {
-    if (sql === 'SHOW GLOBAL STATUS;') nodes[this.host].timeouts.push(options.timeout);
+    if (sql === 'SHOW GLOBAL STATUS;') nodes[this.host]?.timeouts.push(options?.timeout);
     return poolQuery.call(this, sql, options, ...rest);
 } as typeof poolQuery;
 

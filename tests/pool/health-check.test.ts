@@ -1096,18 +1096,21 @@ describe('health check with a healthCheck block: the two legacy keys', () => {
         const b = fakeNode([PASS, PASS, 'refused'], 'node-b');
         // only the legacy check asks through the pool
         const asked = jest.spyOn(Pool.prototype, 'query');
-        await start({}, [{ host: 'node-a' }, { host: 'node-b', healthCheck: {} }]);
+        try {
+            await start({}, [{ host: 'node-a' }, { host: 'node-b', healthCheck: {} }]);
 
-        await pass(39538);
+            await pass(39538);
 
-        // node-a: 10000 * 1.3, held at 15000, then 15000 / 1.3
-        expect(waits(a)).toEqual([13000, 15000, 11538]);
-        expect(waits(b)).toEqual([5000, 5000, 5000, 5000, 5000, 5000, 5000]);
-        // the legacy check hands its timeout to the pool, whose timer bounds the status
-        // query. The check of a block has its own timer. mysql2 gets no timeout (#120)
-        expect(asked.mock.calls[0][1].timeout).toBe(15000);
-        expect([a.timeouts[0], b.timeouts[0]]).toEqual([undefined, undefined]);
-        asked.mockRestore();
+            // node-a: 10000 * 1.3, held at 15000, then 15000 / 1.3
+            expect(waits(a)).toEqual([13000, 15000, 11538]);
+            expect(waits(b)).toEqual([5000, 5000, 5000, 5000, 5000, 5000, 5000]);
+            // the legacy check hands its timeout to the pool, whose timer bounds the status
+            // query. The check of a block has its own timer. mysql2 gets no timeout (#120)
+            expect(asked.mock.calls[0][1].timeout).toBe(15000);
+            expect([a.timeouts[0], b.timeouts[0]]).toEqual([undefined, undefined]);
+        } finally {
+            asked.mockRestore();
+        }
     });
 
     it('in one cluster the host without the block is back with one pass', async () => {
