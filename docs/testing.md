@@ -22,8 +22,9 @@ tests/
     hashing-upgrade.test.ts      # Hashing schema: backward compatible upgrade in place
     hashing-restart.test.ts      # Cluster hashing after stop(): a second connect, a check that ends late
     no-valid-pool-cache.test.ts  # GaleraCluster.query when no pool is valid: stale cache fallback
-    named-values.test.ts         # object values: escapeNamedValues on, off, per query, the one-time warning
-    named-values-setting.test.ts # the escapeNamedValues setting through createPoolCluster
+    named-values.test.ts         # object values: always escaped, the 4.x option ignored, the setting refused
+    named-values-setting.test.ts # named values through createPoolCluster: escaped, the setting refused
+    execute.test.ts              # execute() and the execute option on loopback: prepare, bound values, NO_BACKSLASH_ESCAPES
     host-ids.test.ts             # Host ids: which id each host gets, with and without an id in the settings
     query-pool-order.test.ts     # The order query() tries its pools in: load score, the pool of the service first
     query-error.test.ts          # What a failed query() rejects with, real mysql2 on loopback: the mysql2 error, nodeId, errors, MDC_NO_NODE_AVAILABLE

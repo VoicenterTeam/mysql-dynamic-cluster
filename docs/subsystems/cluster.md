@@ -26,7 +26,6 @@ Fields populated from `config.current`, at the top of the constructor:
 - `_clusterName` ← `clusterName`.
 - `_errorRetryCount` ← `errorRetryCount`.
 - `_useRedis` ← `redis.enabled`.
-- `_escapeNamedValues` ← `escapeNamedValues`.
 - `_nullServiceName` is a constant `"mdc"` initialized on the field
   ([src/cluster/GaleraCluster.ts:48](../../src/cluster/GaleraCluster.ts#L48));
   the fallback service name becomes `${clusterName}_mdc`.
@@ -131,7 +130,9 @@ Thin pass-through to `Events.on`. The full event list is in
 ## `query()`
 
 `query` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
-Steps 1 to 9 are all in that one method, in this order.
+Steps 1 to 9 are all in that one method, in this order. `execute()` is
+this method with the option `execute`, see
+[`execute()` and bound values](#execute-and-bound-values).
 
 Signature:
 `query<T>(sql: string, values?: QueryValues, queryOptions?: IQueryOptions): Promise<T>`.
@@ -139,16 +140,19 @@ Signature:
 ### 1. Option defaults
 
 `queryOptions` is rebuilt via spread so caller-supplied keys win
-(the first two statements of `query`; the second sets `escapeNamedValues`):
+(the first two statements of `query`; the second turns `redis` off for
+`execute`):
 
 - `redis` defaults to `_useRedis` (i.e. `config.current.redis.enabled`).
+  With `execute` it is `false`, whatever the caller passed.
 - `maxRetry` defaults to `_errorRetryCount`.
 - `redisRefreshCache` defaults to `false`.
-- `escapeNamedValues` defaults to the `escapeNamedValues` setting, `false` unless set.
+- `execute` gets no default. Left out, the values go into the text (step 6).
 - `retryNotReady` gets no default here. Left out it counts as `true`, see step 8.
 - `signal` gets no default. `null` counts as no signal. Right after the
   `record` helper of step 2 the call checks it, before step 3: see
-  [The `signal` option](#the-signal-option).
+  [The `signal` option](#the-signal-option). The values of an `execute`
+  call are checked right after it.
 
 ### 2. Metrics
 
@@ -212,18 +216,25 @@ there, the call rejects with the reason of the signal instead.
 ### 6. SQL formatting
 
 `sql = this._formatSQL(sql, values)`, right after the `try`/`catch` and
-the check of the signal that follows it.
+the check of the signal that follows it. Not for `execute`: its values stay
+apart from the text.
 `_formatSQL`:
 
 - Array `values` → `mysql2`'s `format(sql, values)` (positional `?`).
 - String `values` → same `format()` call.
 - Object `values` → regex `:paramName` substitution: `sql.replace(/:(\w+)/g, ...)`
   swaps in the value when the object has the key as its own property,
-  otherwise leaves the placeholder verbatim. With `escapeNamedValues` on
-  the value goes through `mysql2.escape`. With it off, the default, the
-  value goes in as text, not escaped, and the first such value of the
-  cluster logs one warning. See
-  [../configuration.md](../configuration.md#escapenamedvalues).
+  otherwise leaves the placeholder verbatim. The value goes through
+  `mysql2.escape(value, true)`, so a plain object becomes the string
+  `'[object Object]'`, not SQL. Since 5.0.0 always: the setting and the
+  query option `escapeNamedValues` of 4.x, which left the value as text by
+  default, are gone, and so is their warning. A `mysql2.raw()` value, or
+  any object with a `toSqlString` function, is still written as SQL.
+
+Every escaped value relies on the server reading a backslash in a string
+as an escape. A connection whose server has `NO_BACKSLASH_ESCAPES` does
+not, so `Pool.query` refuses such a statement, see
+[Values in the text under `NO_BACKSLASH_ESCAPES`](#values-in-the-text-under-no_backslash_escapes).
 
 ### 7. Redis read
 
@@ -247,7 +258,7 @@ Runs before any pool query when `queryOptions.redis && !queryOptions.redisRefres
 The `for` loop.
 
 For `i` from `0` to `retryCount - 1`, calls
-`this._queryRequest(sql, activePools[i], queryOptions, outcome)`, with a
+`this._queryRequest(sql, activePools[i], queryOptions, outcome, values)`, with a
 new empty `outcome` for each node. First success records the query with
 source `pool` and returns. Each failure is kept as `{ nodeId, error }` in
 `errors`. The loop goes on to the next pool only when the statement cannot
@@ -270,6 +281,7 @@ the loop reads the outcome: a frozen error, or one the app handed
 | The node failed with | Next node |
 | --- | --- |
 | errno 1045, 1698, 1044, 3118, 3955 or 1130, a refused login | no, although `sent` is `false` |
+| `MDC_UNSAFE_SQL_MODE`, values in the text under `NO_BACKSLASH_ESCAPES` | no, although `sent` is `false` |
 | any other error with `sent: false` | yes |
 | errno 1047, not ready, with `sent: true` | yes, unless `retryNotReady: false` |
 | an error reply, a timeout, a connection lost after the statement went out | no |
@@ -337,7 +349,7 @@ attempt is still logged with `Logger.error`. The single
 ### 10. `_queryRequest`
 
 `_queryRequest` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
-Wraps a single `pool.query(sql, queryOptions, outcome)` call. The pool
+Wraps a single `pool.query(sql, queryOptions, outcome, values)` call. The pool
 records the attempt as `mysql_dynamic_cluster.operation.duration`. On
 success:
 
@@ -394,6 +406,71 @@ query. `_isAbortSignal` tells a signal by its members, as for
 `getConnection()`. The status query of a node without a `healthCheck`
 block passes no signal. `multiStatementQuery()` reads no signal.
 
+### `execute()` and bound values
+
+Since 5.0.0 (#91). `execute<T>(sql, values?, queryOptions?)` is
+`query(sql, values, { ...queryOptions, execute: true })`, and the option
+works the same on `query()` itself. Nothing is switched to it for a caller:
+`query()` without the option writes its values into the text, as before.
+
+The two forms take the same path: the choice of node, the retry rule of
+step 8, the error of step 9, the signal, the metrics and passive health.
+The one difference is in `Pool.query`, which hands the statement to
+mysql2's `conn.execute({ sql, values, timeout })` in place of
+`conn.query({ sql, timeout })`. mysql2 prepares the statement on that
+connection and keeps it in a cache of its own (`maxPreparedStatements`,
+16000 by default), so the second call of the same text on that connection
+is one command. The values go in the execute packet as parameters and
+never become part of the text. A reset of the connection clears that
+cache, so the next call prepares again: the connection forgets its
+prepared statements on a reset too.
+
+- **Values.** An array, or none (`undefined` or `null`). An object or a
+  string rejects with the `TypeError` `execute: values must be an array,
+  with no undefined and no function in it`, before the service-name
+  lookup and any node, and is recorded as a failed query. So does an array
+  that holds `undefined` or a function: mysql2 would throw for those
+  instead of failing the call. Use `null` for SQL `NULL`.
+- **No Redis.** An `execute` call neither reads Redis nor writes it,
+  whatever the `redis` option says, also when no node is valid.
+- **Errors.** A prepare that fails, such as a syntax error, comes back as
+  the error of the call, with `sent: true`: the prepare went to the server.
+- **Timeout.** mysql2 times the execute with the `timeout` of the query,
+  not the prepare before it. The signal ends either.
+- **Metrics.** The same records and attributes as `query()`.
+
+### Values in the text under `NO_BACKSLASH_ESCAPES`
+
+Since 5.0.0 (#91). Escaping a value into the text puts a backslash before
+each quote. A server whose `sql_mode` has `NO_BACKSLASH_ESCAPES` reads that
+backslash as a character, so the quote ends the string and the rest of the
+value is SQL. The server says so in bit 512 of the status flags of every OK
+header. `SessionState` keeps the bit of the last header on each connection,
+see [pool.md](./pool.md#the-session-of-a-connection).
+
+A `query()` with values and without `execute` takes its connection and gets
+it ready as any other. If the state of that connection says
+`NO_BACKSLASH_ESCAPES`, `Pool.query` rejects before the statement is sent,
+with an `Error` whose `code` is `MDC_UNSAFE_SQL_MODE` and whose message
+names the mode and `execute()`. Always: there is no setting.
+
+- The error has `sent: false` and `nodeId`. Step 8 tries no other node:
+  another node can have the same mode, and the fix is the caller's.
+- The connection goes back to the pool as it is: no reset, not destroyed.
+  Passive health is not told.
+- `execute`, and a `query()` without values, run as before.
+- "With values" is what `_formatSQL` formats: any truthy `values`, so an
+  empty array or object counts too.
+- A connection the pool has seen no header on yet, a new one or one just
+  reset, counts as without the mode: the pool does not read the status
+  flags of the server greeting, and mysql2 does not show the header of the
+  reply to a reset. So on a server whose global `sql_mode` has the mode,
+  the first statement with values on such a connection is not refused.
+  Use `execute` there.
+- The bit of each later header is read again: one without it lets values
+  through again. A reply of rows has no header and leaves the state as it
+  was.
+
 ## Public API summary
 
 | Member | Source | Notes |
@@ -404,6 +481,7 @@ block passes no signal. `multiStatementQuery()` reads no signal.
 | `disconnect(): Promise<void>` | [`disconnect`](../../src/cluster/GaleraCluster.ts) | Synchronous in practice — does not await pool disconnects. |
 | `on(event, callback)` | [`on`](../../src/cluster/GaleraCluster.ts) | Pass-through to the shared `Events` emitter. |
 | `query<T>(sql, values?, queryOptions?)` | [`query`](../../src/cluster/GaleraCluster.ts) | The full routing pipeline described above. |
+| `execute<T>(sql, values?, queryOptions?)` | [`execute`](../../src/cluster/GaleraCluster.ts) | Since 5.0.0. `query()` with the option `execute`: values bound by the server. No Redis. |
 | `ready: Promise<INodeReadyResult[]>` (getter) | [`ready`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Resolves once every pool finished the first connect of the current `connect()` call. Never rejects. Since 4.6.0 a result has `checkError` when the health check of that connect did not get its answer. |
 | `firstReady: Promise<INodeReadyResult[]>` (getter) | [`firstReady`](../../src/cluster/GaleraCluster.ts) | Since 4.6.0. Resolves when the first pool passed the first connect of the current `connect()` call, with the results that are in by then. With every result when none passed. Never rejects. |
 | `getConnection(options?)` | [`getConnection`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. One connection of the valid node with the lowest load score. The caller owns it. The `signal` option, which came after 4.6.0, ends the wait: the call rejects with the reason of the signal. |

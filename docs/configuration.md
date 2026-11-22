@@ -12,7 +12,6 @@ Before 4.0.0 the schema was convict, with an environment overlay. See [Migrating
 | `hosts` | array of [hosts](#hosts) | `[]` |
 | `defaultPoolSettings` | object | see [below](#defaultpoolsettings) |
 | `errorRetryCount` | `number` | `2` |
-| `escapeNamedValues` | `boolean` | `false`, see [below](#escapenamedvalues) |
 | `useClusterHashing` | `boolean` | `true` |
 | `clusterHashing` | object | see [below](#clusterhashing) |
 | `serviceMetrics` | object | see [below](#servicemetrics) |
@@ -276,48 +275,34 @@ A multiplier below 1 turns the legacy rule around: the wait shrinks after an ans
 12. **The check no longer uses a connection of the pool, and the idle ones get a ping instead.** The legacy check draws an idle connection of the pool each time it runs, so a balancer or firewall with an idle timeout does not forget the one connection that `minConnections: 1` keeps. With the block the check asks on its own connection. So the timer that closes idle connections also sends a ping on every idle connection of such a node, once every `idleCheckInterval`, 10 s by default. Keep `idleCheckInterval` below the idle timeout of the path. Behind a path that forgets a flow sooner than that, a quiet app on the defaults still loses its first query after a pause: it fails with `ECONNRESET` on each node it tries, and the node stays up. A ping that fails, or has no answer within `timeout`, closes that connection, and the next query opens a new one. A ping is no check and no query of the app: it moves no node, emits no event and is no record of a metric. Measured in [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#a-quiet-app-behind-a-path-with-an-idle-timeout). Idle connections the path forgot while others were in use fail one query each, unless a ping finds them first.
 13. **A call that can open no connection makes the next check open one.** After a call of the app found no route or ran into the connect timeout, the check that starts asks on a new connection, opened beside the one the node holds, so a node that takes no new connection does not pass on the old one. A new one that logs in replaces the old one. A new one that finds no route leaves the old one, and the check counts toward `fall`: a node goes down by `fall` only while calls go on failing, and it comes back by `rise` on the old connection once no call is sent to it. A new one that fails any other way takes the node down and the old connection with it. With `passive: false` the node is told of no call: its checks ask on the connection the node holds, and the node stays up for as long as that one answers. See [A check after a call that could open no connection](subsystems/health-and-scoring.md#a-check-after-a-call-that-could-open-no-connection).
 
-## `escapeNamedValues`
+## Named values (`escapeNamedValues`, removed in 5.0.0)
 
-Added in 4.3.0. It decides what `cluster.query(sql, values)` does with an object of values.
+`cluster.query(sql, values)` takes an object of values for `:name` placeholders.
 
 ```js
 await cluster.query('SELECT * FROM users WHERE email = :email', { email });
 ```
 
-| `escapeNamedValues` | SQL sent for `email = "o'neil@example.com"` |
-|---|---|
-| `true` | `... WHERE email = 'o\'neil@example.com'` |
-| `false` (default) | `... WHERE email = o'neil@example.com` |
+Since 5.0.0 each named value is always escaped, as array and string values are. The setting `escapeNamedValues` (added in 4.3.0, off by default) and the query option of the same name are gone, and so is the `warn` line that named them. Strict validation refuses the setting with `Unrecognized key: "escapeNamedValues"`, and the query option is ignored. For `email = "o'neil@example.com"` the SQL sent is `... WHERE email = 'o\'neil@example.com'`. In 4.x, with the setting off, it was `... WHERE email = o'neil@example.com`.
 
-**On.** Each named value goes through mysql2's `escape`. A string arrives quoted and escaped, a number as a number, `null` and `undefined` as `NULL`, an array as a comma-separated list, a `Date` as a quoted date. A plain object arrives as the string `'[object Object]'`, never as SQL. To send SQL through a value on purpose, wrap it: `require('mysql2').raw('NOW()')`. Any object with a `toSqlString` function is sent as SQL the same way. JSON cannot carry a function, so a parsed request body cannot hold one.
+Each named value goes through mysql2's `escape`. A string arrives quoted and escaped, a number as a number, `null` and `undefined` as `NULL`, an array as a comma-separated list, a `Date` as a quoted date. A plain object arrives as the string `'[object Object]'`, never as SQL. To send SQL through a value on purpose, wrap it: `require('mysql2').raw('NOW()')`. Any object with a `toSqlString` function is sent as SQL the same way. JSON cannot carry a function, so a parsed request body cannot hold one.
 
-**Escaping protects a placeholder that stands where a value stands, and nowhere else.** A placeholder inside quotes, backticks or a `/* */` comment stays open to injection with the setting on: for `name = ':n'` the value ` OR 1=1 -- ` gives `name = '' OR 1=1 -- ''`. See [Turning it on in an existing service](#turning-it-on-in-an-existing-service).
+**Escaping protects a placeholder that stands where a value stands, and nowhere else.** A placeholder inside quotes, backticks or a `/* */` comment stays open to injection: for `name = ':n'` the value ` OR 1=1 -- ` gives `name = '' OR 1=1 -- ''`. See [Upgrading from 4.x](#upgrading-from-4x).
 
 **Check the type of a value that comes from a request.** An array becomes a list, so `LIMIT :n` with `[0, 100000]` gives `LIMIT 0, 100000`, a nested array gives `(1, 2), (3, 4)`, and an empty array gives `IN ()`. Where the SQL expects one number or one string, make sure the value is one.
 
-**Off.** Each `:name` is replaced by the value as text, as in every version before. Nothing is quoted or escaped. A value that comes from a user can then change the statement, which is SQL injection, unless the caller escapes or validates it first. The first value of a cluster that goes in this way logs one `warn` line that names this setting. The line holds neither the SQL nor the values.
+**The escaping needs a server without `NO_BACKSLASH_ESCAPES`**, as for array values. On a connection whose server reports that mode, `query()` refuses values in the text with `MDC_UNSAFE_SQL_MODE`. `cluster.execute()` sends them bound by the server instead, with no escaping, see [subsystems/cluster.md](subsystems/cluster.md#execute-and-bound-values).
 
-The default is off because turning it on changes the SQL of existing callers. It becomes on in the next major version. Turn it on now in new code.
+### Upgrading from 4.x
 
-Array and string values are escaped in both modes. Only the object form depends on the setting.
+A service that ran with the setting off, the 4.x default, sent named values as text. Before it moves to 5.0.0:
 
-### Per query
-
-`escapeNamedValues` is also a query option, and the option wins over the setting. An option of `undefined` or `null` counts as not passed. A service can move one query at a time:
-
-```js
-await cluster.query(sql, { email }, { escapeNamedValues: true });
-```
-
-### Turning it on in an existing service
-
+- **Remove `escapeNamedValues` from the settings.** Strict validation refuses it.
 - **Remove the quotes around placeholders.** `name = ':name'` becomes `name = :name`. This step is not optional. With the quotes left in, the value's own quotes close the literal early, and a value written for it changes the statement without a single quote character in it. The same holds for a placeholder inside backticks or a block comment.
-- **Move SQL fragments out of the values.** A value such as `NOW()`, a column name or `ASC` is sent as a quoted string once the setting is on. Write those into the SQL text, from a fixed list the code owns, or wrap them in mysql2's `raw()`.
+- **Move SQL fragments out of the values.** A value such as `NOW()`, a column name or `ASC` is now sent as a quoted string. Write those into the SQL text, from a fixed list the code owns, or wrap them in mysql2's `raw()`.
 - **`LIKE` patterns.** Put the wildcards in the value: `name LIKE :pattern` with `{ pattern: '%' + text + '%' }`, not `'%:text%'`, which is a placeholder inside quotes.
 - **A `:name` inside a string literal is still replaced** when the object has that key, now with quotes, which breaks out of the literal as above. Rename the key or the text.
-- **Redis cache keys change.** The formatted SQL is the cache key, so each query misses the cache once after the switch.
-
-The escaping is mysql2's. It assumes the server does not run with `NO_BACKSLASH_ESCAPES` in its `sql_mode`, the same as for array values.
+- **Redis cache keys change.** The formatted SQL is the cache key, so each such query misses the cache once after the upgrade.
 
 ## `hosts`
 

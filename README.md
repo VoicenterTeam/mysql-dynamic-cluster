@@ -219,6 +219,19 @@ Params:
 cluster.query(`SELECT SLEEP(?)`, [100], { redis: true })
 ```
 
+The values are written into the query string and escaped, those of an object too. A server whose `sql_mode` has `NO_BACKSLASH_ESCAPES` does not read that escaping, so on such a connection a query with values rejects with the code `MDC_UNSAFE_SQL_MODE` and is not sent. Use [execute](#execute) there.
+
+### execute
+Like [query](#query), but mysql2 prepares the statement and the server binds the values: they never become part of the query string. The same choice of node, retry and errors as `query`. No Redis. The same as `query` with the [query option](#query-options) `execute: true` <br>
+Params:
+1. **Query string** - request to the database, with `?` for each value
+2. **Query values** - an array of values. An object or a string rejects with a `TypeError`
+3. [Query options](#query-options) - configuration only for this request
+
+```javascript
+cluster.execute(`SELECT * FROM users WHERE email = ?`, [email])
+```
+
 ## Configs
 ### User settings
 Settings to [configure library](#configure-cluster)
@@ -1095,6 +1108,11 @@ Used in each [query](#query)
         <tr>
             <td>retryNotReady</td>
             <td>Try the next node after a node answered 1047 (not ready). Default <code>true</code>. Set <code>false</code> for a procedure that commits part of its work before it can fail</td>
+            <td>boolean</td>
+        </tr>
+        <tr>
+            <td>execute</td>
+            <td>Send the query with values bound by the server, as <a href="#execute">execute</a> does. The values must be an array. Redis is not used</td>
             <td>boolean</td>
         </tr>
         <tr>

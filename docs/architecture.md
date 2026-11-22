@@ -83,8 +83,10 @@ Each call walks the following steps:
    service id, prepends that pool to the head of the list.
    If nothing survives the filter, an error is thrown.
 3. **Format SQL** — `_formatSQL(sql, values)` applies `mysql2`'s array
-   or string escaping, or a `:name` substitution for object values (escaped only with `escapeNamedValues` on).
-   `query` calls it right after the `try`/`catch`.
+   or string escaping, or an escaped `:name` substitution for object values.
+   `query` calls it right after the `try`/`catch`. A call with the option
+   `execute` (`cluster.execute()`) skips it: mysql2 sends the values bound
+   by the server, and Redis is not used.
 4. **Redis read** — when `queryOptions.redis` is true and
    `redisRefreshCache` is false, the formatted SQL is looked up in
    Redis. If a payload is returned and its `expired` timestamp is

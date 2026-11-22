@@ -155,9 +155,12 @@ helper.
 [src/pool/Pool.ts:265-340](../../src/pool/Pool.ts#L265).
 
 `async query<T extends QueryResult>(sql: string, queryOptions?:
-IQueryOptions): Promise<T | T[]>`. The body wraps a callback-style
-mysql2 chain in `new Promise(...)`. The method is the single execution
-point used by `GaleraCluster.query` once a node has been picked.
+IQueryOptions, outcome?: IQueryOutcome, values?: QueryValues): Promise<T | T[]>`.
+The body wraps a callback-style mysql2 chain in `new Promise(...)`. The
+method is the single execution point used by `GaleraCluster.query` once a
+node has been picked, for a text statement and for a bound one alike.
+`values` are those of the caller: with the option `execute` the server
+binds them, without it the cluster wrote them into `sql` already.
 
 ### Option defaults
 
@@ -199,15 +202,24 @@ The `Promise` callback chain is, in order
    database. Most of the time it sends nothing. No change of user is sent,
    since 5.0.0. The statement is only sent from its success callback. A
    failed or timed-out reset or `USE` rejects with `sent: false`.
-3. `conn.query({ sql, timeout: queryOptions.timeout }, ...)` — runs the
-   SQL. `_session.observe()` applies the dirty rule to the reply. On
+3. The guard, since 5.0.0: a call with `values` and without `execute`, on
+   a connection whose `_session.noBackslashEscapes(conn)` is true, rejects
+   with `MDC_UNSAFE_SQL_MODE` and `sent: false` through `fail()`. Nothing
+   is sent, and the connection goes back as it is. See
+   [cluster.md](./cluster.md#values-in-the-text-under-no_backslash_escapes).
+4. The send step, the one step a bound statement does differently:
+   `conn.query({ sql, timeout })` for text, `conn.execute({ sql, values,
+   timeout })` with the option `execute`. mysql2 prepares a bound statement
+   once per connection and keeps it until a reset. Both hand their reply
+   to the same callback. `_session.observe()` applies the dirty rule to
+   the reply. On
    success the connection goes back through `_session.release()`: a clean
    one at once, a dirty one after a reset. On error it goes through
    `fail()`, which settles once and hands the connection back once:
    `destroy()` after a fatal error or `PROTOCOL_SEQUENCE_TIMEOUT` (the
    statement is still running on the server), `_session.release()` after a
    plain SQL error, which resets it first.
-4. On success: stops the `QueryTimer`, records the attempt as
+5. On success: stops the `QueryTimer`, records the attempt as
    `mysql_dynamic_cluster.operation.duration`, logs a slow-query
    warning if `queryTimer.get() >= _slowQueryTime`
    ([src/pool/Pool.ts:322-324](../../src/pool/Pool.ts#L322)),
@@ -249,7 +261,8 @@ successful result is serialised into an `IRedisData`:
 
 `Redis.set(sql, JSON.stringify(redisData), queryOptions.redisExpire)`
 writes the entry with the key-level TTL set to `redisExpire`
-seconds. The cache key is the raw SQL string.
+seconds. The cache key is the raw SQL string. A bound statement never gets
+here: the cluster turns `redis` off for `execute`.
 
 ### Error handling before 3.2.2
 
@@ -322,10 +335,11 @@ per query, a reset of the whole session each time, and on a Galera node
 outside the primary component a change of user gets no answer, so the
 query waited for its whole timeout instead of failing with 1047 at once.
 
-`SessionState` keeps two things per connection, in a `WeakMap`: the
-database the session is on, and whether it is dirty. It is the one place
-for the switch of database, the dirty rule and the reset with its time
-limit. `query()` and `multiStatementQuery()` call it.
+`SessionState` keeps three things per connection, in a `WeakMap`: the
+database the session is on, whether it is dirty, and whether its server
+has `NO_BACKSLASH_ESCAPES`. It is the one place for the switch of database,
+the dirty rule, that bit and the reset with its time limit. `query()` and
+`multiStatementQuery()` call it.
 
 - **A connection seen for the first time** is on the `database` of the
   pool, the one mysql2 logged it in with, and clean.
@@ -370,11 +384,24 @@ limit. `query()` and `multiStatementQuery()` call it.
   `session_track_schema=OFF` the pool cannot see such a `USE`: an app must
   not send `USE` through `query()` there, and should use the `database`
   option instead.
+- **`noBackslashEscapes`.** Since 5.0.0 (#91). `observe()` sets it from
+  bit 512 of the last header of a reply (`SERVER_STATUS_NO_BACKSLASH_ESCAPES`)
+  and clears it when that header lacks the bit, each time: it is not
+  sticky. A reply without a header, rows only or an error, leaves it. A
+  connection seen for the first time has it off. A reset turns it off: the
+  session gets the `sql_mode` of the server back, and mysql2 does not show
+  the header of the reply to a reset, so it counts as off until the next
+  header says otherwise. `query()` reads it through
+  `noBackslashEscapes(connection)` to refuse values written into the
+  text. Inside a transaction of `multiStatementQuery()` only the
+  `COMMIT` or `ROLLBACK` sets it, as for the dirty rule.
 - **What a clean query leaves stays.** A statement whose reply is clean
   leaves its session state on the connection for the next query that gets
   it: user variables, session variables set with `SET`, named locks of
   `GET_LOCK()`, tables locked with `LOCK TABLES`, temporary tables and
   prepared statements. Up to 4.x the change of user released all of them.
+  The statements `execute` prepares stay too, in the cache mysql2 keeps
+  per connection, until a reset clears both.
 - **A connection the app had.** `GaleraCluster.getConnection()` calls
   `pool.lend(connection)`. The pool sees neither the `USE` nor the
   transaction the app sends on it, so it marks the connection dirty and
@@ -742,7 +769,7 @@ the waiting requests reject with it as before.
 | `status` | getter returning `PoolStatus` | [:23-25](../../src/pool/Pool.ts#L23) |
 | `connect(outcome?)` | `async (outcome?: ICheckOutcome) => Promise<void>` | [:104](../../src/pool/Pool.ts#L104) |
 | `disconnect()` | `() => void` | [:239](../../src/pool/Pool.ts#L239) |
-| `query<T>(sql, options?)` | `async => Promise<T \| T[]>` | [:265](../../src/pool/Pool.ts#L265) |
+| `query<T>(sql, options?, outcome?, values?)` | `async => Promise<T \| T[]>` | [:265](../../src/pool/Pool.ts#L265) |
 | `multiStatementQuery<T>(sqls, options)` | `async => Promise<T[]>` | [:347](../../src/pool/Pool.ts#L347) |
 | `getConnection(signal?, outcome?)` | `(signal?: AbortSignal, outcome?: IAbortOutcome) => Promise<PoolConnection>` | [`getConnection`](../../src/pool/Pool.ts) |
 | `Pool.abortReason(signal)` | `static (signal: AbortSignal) => unknown` | [`abortReason`](../../src/pool/Pool.ts) |
