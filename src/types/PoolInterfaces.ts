@@ -59,14 +59,12 @@ export interface IQueryOptions {
 
 // How far one Pool.query() call got. The caller hands in an empty object and the pool fills
 // it, so the caller knows also for an error that cannot take a property: a frozen one, or one
-// the app handed failWaiting(), which many queries can share
-export interface IQueryOutcome {
+// the app handed failWaiting(), which many queries can share. `aborted` as for getConnection()
+export interface IQueryOutcome extends IAbortOutcome {
     // False from the start of the call, true once the statement was handed to the connection:
     // from then on it may run on the server, whatever the call ends with. It stays false when
     // no connection came or the change of database failed. Not set by a pool that tells nothing
-    sent?: boolean,
-    // true when the call was rejected because its signal aborted. Not set in any other case
-    aborted?: boolean
+    sent?: boolean
 }
 
 // How the health check of one connect() ended. The caller of Pool.connect() hands in an empty

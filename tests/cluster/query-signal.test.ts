@@ -5,6 +5,7 @@ import { createPoolCluster } from '../../index';
 import { GaleraCluster } from '../../src/cluster/GaleraCluster';
 import Metrics from '../../src/metrics/Metrics';
 import Redis from '../../src/Redis/Redis';
+import Logger from '../../src/utils/Logger';
 
 // The signal query option of cluster.query(), against the real mysql2 and mysql2's own server
 // class on the loopback interface. An abort ends the call with the reason of the signal as it
@@ -348,6 +349,34 @@ describe('an abort during the change of database', () => {
     });
 });
 
+describe('an abort right after the connection arrived', () => {
+    it('before the change of database: the connection is destroyed, nothing is sent',
+        async () => {
+            const { cluster, n1, n2 } = await twoNodes();
+            // a first call leaves an idle connection, which mysql2 hands out on a tick
+            await call(cluster);
+            const changes = n1.seen('changesOfUser');
+            const controller = new AbortController();
+            const reason = reasonOf();
+            // mysql2 emits acquire and then queues the tick that hands the connection out.
+            // A tick queued from the tick before it runs after that one and before any
+            // promise job: getConnection() has taken its listener off, and Pool.query()
+            // has not added its own yet
+            cluster.pools[0]._pool.once('acquire', () => {
+                process.nextTick(() => process.nextTick(() => controller.abort(reason)));
+            });
+            const closed = n1.next('closed');
+
+            expect((await call(cluster, { signal: controller.signal })).error).toBe(reason);
+
+            expect(n1.seen('changesOfUser')).toBe(changes);
+            expect(seen('statements', n1, n2)).toEqual([1, 0]);
+            expect(listeners(controller.signal)).toBe(0);
+            await closed;
+            expect(stats(cluster, 1)).toMatchObject({ used: 0, idle: 0, pending: 0 });
+        });
+});
+
 describe('an abort during the statement', () => {
     it('rejects with the reason, destroys the connection, tries no other node', async () => {
         const { cluster, n1, n2 } = await twoNodes();
@@ -402,6 +431,38 @@ describe('an abort during the statement', () => {
             expect(operation.mock.calls.map(([, options]) => options.error)).toEqual([reason]);
             expect(query.mock.calls.map(([, options]) => options.error)).toEqual([reason]);
             expect(told).not.toHaveBeenCalled();
+        });
+
+    it('a destroy that throws is logged, and the abort() of the app throws nothing',
+        async () => {
+            const { cluster, n1 } = await twoNodes();
+            n1.become('stays silent');
+            const warned = jest.spyOn(Logger, 'warn');
+            let connection: any;
+            cluster.pools[0]._pool.once('acquire', (acquired: any) => {
+                connection = acquired;
+                jest.spyOn(acquired, 'destroy').mockImplementation(() => {
+                    throw new Error('destroy failed');
+                });
+            });
+            const controller = new AbortController();
+            const reason = reasonOf();
+            const sent = n1.next('statements');
+            const pending = call(cluster, { signal: controller.signal });
+            await sent;
+
+            expect(() => controller.abort(reason)).not.toThrow();
+
+            expect((await pending).error).toBe(reason);
+            expect(warned).toHaveBeenCalledWith(
+                expect.stringContaining('could not destroy the connection of an aborted query'),
+                expect.objectContaining({ nodeId: 1, error: 'destroy failed' })
+            );
+            expect(listeners(controller.signal)).toBe(0);
+            // the socket the pool could not close is closed here, so the file can end
+            connection.destroy.mockRestore();
+            connection.destroy();
+            connection.stream.destroy();
         });
 });
 
@@ -517,5 +578,45 @@ describe('an abort while the nodes are looked for', () => {
 
         expect(failure).toBe(reason);
         expect(redis).not.toHaveBeenCalled();
+    });
+
+    it('serves no stale data of Redis when the signal aborts while Redis is read', async () => {
+        const controller = new AbortController();
+        const reason = reasonOf();
+        const cluster = fakeCluster([]);
+        jest.spyOn(cluster, '_getActivePools').mockRejectedValue(
+            Object.assign(new Error('no node'), { code: 'MDC_NO_NODE_AVAILABLE' })
+        );
+        jest.spyOn(Redis, 'get').mockImplementation(async () => {
+            controller.abort(reason);
+            return JSON.stringify({ data: 'stale', expired: 0 });
+        });
+
+        const failure = await cluster
+            .query(APP_SQL, undefined, { signal: controller.signal, redis: true })
+            .catch((e: any) => e);
+
+        expect(failure).toBe(reason);
+    });
+
+    it('with valid nodes: reads no Redis and asks no node', async () => {
+        const { cluster, n1, n2 } = await twoNodes();
+        const controller = new AbortController();
+        const reason = reasonOf();
+        jest.spyOn(cluster._serviceNames, 'getID').mockImplementation(async () => {
+            controller.abort(reason);
+            return undefined;
+        });
+        const fresh = JSON.stringify({ data: 'fresh', expired: Date.now() + LONG });
+        const redis = jest.spyOn(Redis, 'get').mockResolvedValue(fresh);
+        const operation = jest.spyOn(Metrics, 'recordOperation');
+        const logins = seen('logins', n1, n2);
+
+        const options = { signal: controller.signal, serviceName: 'svc', redis: true };
+        expect((await call(cluster, options)).error).toBe(reason);
+
+        expect(redis).not.toHaveBeenCalled();
+        expect(operation).not.toHaveBeenCalled();
+        expect(seen('logins', n1, n2)).toEqual(logins);
     });
 });

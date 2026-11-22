@@ -416,6 +416,9 @@ export class GaleraCluster {
             record(undefined, e);
             throw e;
         }
+        // the signal aborted during the lookup of the service name or of the nodes: no Redis,
+        // no node
+        stopIfAborted();
 
         sql = this._formatSQL(sql, values, queryOptions.escapeNamedValues);
         Logger.debug("formatSQL", {sql, values})

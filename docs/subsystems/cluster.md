@@ -211,7 +211,8 @@ there, the call rejects with the reason of the signal instead.
 
 ### 6. SQL formatting
 
-`sql = this._formatSQL(sql, values)`, right after the `try`/`catch`.
+`sql = this._formatSQL(sql, values)`, right after the `try`/`catch` and
+the check of the signal that follows it.
 `_formatSQL`:
 
 - Array `values` → `mysql2`'s `format(sql, values)` (positional `?`).
@@ -357,6 +358,7 @@ reason: no `nodeId`, `errors` or `sent`.
 | The signal aborts | What happens |
 | --- | --- |
 | before `query()` is called | rejects at once: no service name is looked up, Redis is not read, no node is asked, no listener is added |
+| during the service-name lookup or the choice of nodes (steps 3 and 4) | rejects right after them: Redis is not read and no node is asked |
 | while no valid node is found (step 4) | rejects before stale data of Redis is read, or after the read, before it is served |
 | while the request waits for a connection | `Pool.getConnection(signal)` takes the request out of mysql2's queue. A connection whose login was still running goes back to the pool when it arrives |
 | during the change of database or the statement | the pool destroys the connection with its socket (`drop()` of [ServerFlags.ts](../../src/pool/ServerFlags.ts)) and never releases it: the statement may still run. mysql2 opens a new connection in its place for the next request |
@@ -367,9 +369,10 @@ An abort does not stop a statement the server already has: the server may
 finish it. An abort is never tried on the next node, also when the
 statement was not sent: `mayTryNextNode` reads `outcome.aborted`, which
 `Pool.query` sets, and `signal.aborted`. Stale data of Redis is never
-served after an abort, since the caller gave up. A fresh cache hit of step
-7 is served as before: the signal is not read there, and a call whose
-entry was expired goes on to a node, whose pool rejects it at once.
+served after an abort, since the caller gave up. The signal is not read
+after the Redis read of step 7: an abort during that read still gets a
+fresh hit, and a call whose entry was expired goes on to a node, whose
+pool rejects it at once.
 
 `Pool.query` takes its connection through `Pool.getConnection(signal,
 outcome)`, which does the queue, so `getConnection()` and `query()` leave

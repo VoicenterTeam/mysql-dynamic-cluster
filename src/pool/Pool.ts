@@ -299,7 +299,7 @@ export class Pool {
             // the connection of the call, from its arrival until the call settled
             let held: mysql.PoolConnection | undefined;
             const stopListening = () => signal?.removeEventListener('abort', onAbort);
-            // told: getConnection() told passive health of it already
+            // told: getConnection() told passive health of what it had to tell
             const fail = (error: any, conn?: mysql.PoolConnection, told = false) => {
                 if (settled) return;
                 settled = true;
@@ -331,6 +331,9 @@ export class Pool {
             // is destroyed, never handed back: the pool opens a new one in its place
             const onAbort = () => {
                 if (settled) return;
+                // before the connection is destroyed, so no callback destroy() runs can win
+                settled = true;
+                outcome.aborted = true;
                 stopListening();
                 try {
                     drop(held);
