@@ -1,7 +1,7 @@
 import net, { AddressInfo } from 'net';
 import mysqlPromise from 'mysql2/promise';
 import { createPoolCluster } from '../../index';
-import { describeRig, logger, readEnv, rootTo } from './support';
+import { cleanUp, describeRig, logger, readEnv, rootTo } from './support';
 
 // #93 on the Galera rig: a pooled connection whose path died without a close is probed after
 // probeIdle (1 s by default) and replaced, and the write of the call runs once, on a new
@@ -76,12 +76,12 @@ describeRig('a connection whose path died silently, on Galera', () => {
         await cluster.ready;
     });
 
-    afterAll(async () => {
-        await cluster?.disconnect();
-        proxy?.close();
-        await root?.query(`DROP TABLE IF EXISTS ${TABLE}`);
-        await root?.end();
-    });
+    afterAll(() => cleanUp(
+        () => cluster?.disconnect(),
+        () => proxy?.close(),
+        () => root?.query(`DROP TABLE IF EXISTS ${TABLE}`),
+        () => root?.end()
+    ));
 
     it('after 1 s idle the next call answers from a new connection, and its write runs once',
         async () => {

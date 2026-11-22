@@ -1,7 +1,7 @@
 import { PoolConnection } from 'mysql2';
 import mysqlPromise from 'mysql2/promise';
 import { createPoolCluster } from '../../index';
-import { describeRig, logger, readEnv, rootTo } from './support';
+import { cleanUp, describeRig, logger, readEnv, rootTo } from './support';
 
 // #90 and #93 on the Galera rig: a transaction a caller left open, with a row lock, is rolled
 // back before the connection goes to the next caller. The package's default settings, as the
@@ -89,12 +89,12 @@ describeRig('a transaction left open, on Galera', () => {
         await cluster.ready;
     });
 
-    afterAll(async () => {
-        await cluster?.disconnect();
-        await root?.query('DROP PROCEDURE IF EXISTS leave_open');
-        await root?.query(`DROP TABLE IF EXISTS ${TABLE}`);
-        await root?.end();
-    });
+    afterAll(() => cleanUp(
+        () => cluster?.disconnect(),
+        () => root?.query('DROP PROCEDURE IF EXISTS leave_open'),
+        () => root?.query(`DROP TABLE IF EXISTS ${TABLE}`),
+        () => root?.end()
+    ));
 
     it('a query: the next caller on its connection sees no transaction, another session ' +
         'takes the row lock at once', async () => {

@@ -116,6 +116,20 @@ const take = (): boolean => {
     return true;
 };
 
+// Run every step of a cleanup in order, also after one that failed, then fail with the first
+// error: an afterAll that stops half way leaves tables, routines and open handles behind
+export const cleanUp = async (...steps: (() => unknown)[]): Promise<void> => {
+    const errors: unknown[] = [];
+    for (const step of steps) {
+        try {
+            await step();
+        } catch (error) {
+            errors.push(error);
+        }
+    }
+    if (errors.length > 0) throw errors[0];
+};
+
 export const describeRig = (name: string, suite: () => void): void => {
     if (!process.env.MDC_TEST_GALERA) return describe.skip(name, suite);
     describe(name, () => {

@@ -1,6 +1,6 @@
 import mysql from 'mysql2/promise';
 import { createPoolCluster } from '../../index';
-import { describeRig, logger, readEnv, rootTo, untilEveryNode } from './support';
+import { cleanUp, describeRig, logger, readEnv, rootTo, untilEveryNode } from './support';
 
 // #87 on the three-node Galera rig: a statement the server got is never sent to a second
 // node, so one call writes once. The package's default settings (two nodes per call, the
@@ -58,13 +58,13 @@ describeRig('a call that fails after its write, on Galera', () => {
         await cluster.ready;
     });
 
-    afterAll(async () => {
-        await cluster?.disconnect();
-        await root?.query('DROP PROCEDURE IF EXISTS write_then_fail');
-        await root?.query('DROP PROCEDURE IF EXISTS write_then_sleep');
-        await root?.query(`DROP TABLE IF EXISTS ${TABLE}`);
-        await root?.end();
-    });
+    afterAll(() => cleanUp(
+        () => cluster?.disconnect(),
+        () => root?.query('DROP PROCEDURE IF EXISTS write_then_fail'),
+        () => root?.query('DROP PROCEDURE IF EXISTS write_then_sleep'),
+        () => root?.query(`DROP TABLE IF EXISTS ${TABLE}`),
+        () => root?.end()
+    ));
 
     it('every node is valid, so a second node could be tried', () => {
         expect(cluster.nodes().map(node => node.isValid)).toEqual([true, true, true]);

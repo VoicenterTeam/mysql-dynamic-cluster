@@ -1,6 +1,6 @@
 import { RowDataPacket } from 'mysql2';
 import { createPoolCluster } from '../../index';
-import { describeRig, logger, readEnv, rootTo } from './support';
+import { cleanUp, describeRig, logger, readEnv, rootTo } from './support';
 
 // The contract test of #91 on the three-node Galera rig (tests/rig/galera.sh), MySQL 8.0.42.
 // Skipped unless MDC_TEST_GALERA is set. The second part loads the package from dist/, so run
@@ -117,18 +117,11 @@ describeRig('a node whose global sql_mode has NO_BACKSLASH_ESCAPES', () => {
         await cluster.ready;
     });
 
-    // every step, also when one before it fails
-    afterAll(async () => {
-        try {
-            await cluster?.disconnect();
-        } finally {
-            try {
-                if (before !== undefined) await root.query('SET GLOBAL sql_mode = ?', [before]);
-            } finally {
-                await root?.end();
-            }
-        }
-    });
+    afterAll(() => cleanUp(
+        () => cluster?.disconnect(),
+        () => before !== undefined && root.query('SET GLOBAL sql_mode = ?', [before]),
+        () => root?.end()
+    ));
 
     it('a new connection that only returned rows refuses query() with values', async () => {
         // rows only: no header tells the pool the mode
