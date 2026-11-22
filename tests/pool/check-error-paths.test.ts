@@ -189,20 +189,16 @@ describe('a health check that runs out of time', () => {
     beforeEach(() => jest.useFakeTimers());
     afterEach(() => jest.useRealTimers());
 
-    // like mysql2: the timer of the query starts when the query is sent, and calls back once
+    // A server that never answers the status query. mysql2 is handed no timeout (#120), so it
+    // never calls back: only the timer of the pool, with the same TIMEOUT, ends the query
     const silentConn = () => {
         const conn = makeConn();
-        conn.query.mockImplementation((options: any, cb: Cb) => {
-            setTimeout(() => cb(driverTimeout()), options.timeout);
-        });
+        conn.query.mockImplementation(() => undefined);
         return conn;
     };
 
     it('ends by the timer of the check, which is set before the one of the pool', async () => {
-        // mysql2 is handed no timeout (#120): the server never answers, and only the timer of
-        // the pool, with the same TIMEOUT, ends the query
-        const conn = makeConn();
-        conn.query.mockImplementation(() => undefined);
+        const conn = silentConn();
         const pool = handsOut(conn);
         pool.status.active = true;
         const checking = pool.status.checkStatus();
@@ -216,21 +212,24 @@ describe('a health check that runs out of time', () => {
         expect(pool.checkError).toStrictEqual({});
     });
 
-    it('drops the timeout of mysql2 that comes after it, and destroys the connection', async () => {
-        const conn = silentConn();
-        const pool = handsOut(conn);
-        pool.status.active = true;
-        const checking = pool.status.checkStatus();
-        await turns();
-        jest.advanceTimersByTime(TIMEOUT);
-        await checking;
-        await turns();
-        pool.status.stopTimerCheck();
+    it('drops the timeout of the pool that comes after it, and destroys the connection',
+        async () => {
+            const conn = silentConn();
+            const pool = handsOut(conn);
+            pool.status.active = true;
+            const checking = pool.status.checkStatus();
+            await turns();
+            jest.advanceTimersByTime(TIMEOUT - 1);
+            expect(conn.destroy).not.toHaveBeenCalled();
+            jest.advanceTimersByTime(1);
+            await checking;
+            await turns();
+            pool.status.stopTimerCheck();
 
-        expect(conn.destroy).toHaveBeenCalledTimes(1);
-        expect(failed).toHaveLength(1);
-        expect(pool.checkError).toStrictEqual({});
-    });
+            expect(conn.destroy).toHaveBeenCalledTimes(1);
+            expect(failed).toHaveLength(1);
+            expect(pool.checkError).toStrictEqual({});
+        });
 });
 
 describe('checkError of a pool over connect() and disconnect()', () => {
