@@ -312,7 +312,7 @@ export class Pool {
         call: IPoolCall = {}
     ): Promise<T | T[]> {
         const { values, valuesInText = false, probe = true } = call;
-        return new Promise(async (resolve, reject) => {
+        return new Promise((resolve, reject) => {
             outcome.sent = false;
             queryOptions = {
                 timeout: this._queryTimeout,
