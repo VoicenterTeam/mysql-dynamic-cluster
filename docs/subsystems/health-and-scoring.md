@@ -759,12 +759,10 @@ it on and counts it as use.
   query or a `getConnection()` that draws it in that time waits for that
   ping within `probeTimeout` and sends no second one, whether or not the
   connection was idle longer than `probeIdle`: no answer in that time
-  destroys the connection, and the call takes the next one. The health
-  check of a node without a `healthCheck` block, which is never probed,
-  waits behind the ping. The same `timeout` means
-  two things: a check that takes longer costs one count toward `fall`, and
-  a ping that takes longer costs the connection, so the next query pays
-  for a login.
+  destroys the connection, and the call takes the next one. The same
+  `timeout` means two things: a check that takes longer costs one count
+  toward `fall`, and a ping that takes longer costs the connection, so the
+  next query pays for a login.
 - **Nothing is opened in place of a closed connection.** `idleTimeout` and
   `minConnections` mean what they meant: the timer closes the connections
   that are too old first, and pings the ones it keeps.

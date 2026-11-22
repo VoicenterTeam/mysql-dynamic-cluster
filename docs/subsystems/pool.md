@@ -187,11 +187,12 @@ can be broken down by pool, service and error type. See
 The `Promise` callback chain is, in order
 ([src/pool/Pool.ts:304-338](../../src/pool/Pool.ts#L304)):
 
-1. `_borrow.take({ signal, target, probe }, asked)`, `target` being `{ database, timeout }` — takes a
-   connection ready for the statement, see
-   [Borrow](#borrow-taking-and-giving-back-a-connection): the queue of
+1. `_borrow.take({ signal, target, probe }, asked)`, `target` being
+   `{ database, timeout }` — takes a connection ready for the statement,
+   see [Borrow](#borrow-taking-and-giving-back-a-connection): the queue of
    mysql2 and an abort while the request waits, the probe of a connection
-   that was idle longer than `probeIdle`, then a reset when it is dirty
+   that was idle longer than `probeIdle`, or one the reaper's ping is
+   still out on, then a reset when it is dirty
    and `USE` when it is on another database, see
    [The session of a connection](#the-session-of-a-connection). Most of
    the time it sends nothing. No change of user is sent, since 5.0.0. On
@@ -783,10 +784,11 @@ not move. `GaleraCluster` calls them for the node API of
 
 - `getConnection(signal?, outcome?)` takes one connection through
   `_borrow.take({ signal }, outcome)`: probed when it was idle longer than
-  `probeIdle`, since 5.0.0. Then it lends it, `_borrow.lend()`: the app's
-  `release()` resets the connection, and a second one does nothing. The
-  lend is inside, so no caller can forget it. It does not change the database, sets
-  no timeout and records no metric. It rejects with the error object of
+  `probeIdle`, or one the reaper's ping is still out on, since 5.0.0. Then
+  it lends it, `_borrow.lend()`: the app's `release()` resets the
+  connection, and a second one does nothing. The lend is inside, so no
+  caller can forget it. It does not change the database, sets no timeout
+  and records no metric. It rejects with the error object of
   mysql2, with the error of the last probe when every try failed, or with
   `POOL_NOT_CONNECTED` before `connect()` created the mysql2
   pool. An error of mysql2 is told to [passive health](#passive-health)

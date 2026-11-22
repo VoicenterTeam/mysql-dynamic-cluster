@@ -1,6 +1,7 @@
 import mysql from 'mysql2';
 import { AddressInfo } from 'net';
 import { createPoolCluster } from '../../index';
+import Logger from '../../src/utils/Logger';
 
 // The one place a pooled connection is taken and given back (#93, #94), with the cluster of
 // createPoolCluster and the real mysql2 against mysql2's own server class on the loopback
@@ -626,12 +627,15 @@ describe('getConnection()', () => {
         expect(stats(cluster)).toEqual({ used: 0, idle: 0, pending: 0 });
     });
 
+    // mysql2 still runs the reset on the packet it warned of, and reports it answered. The
+    // release counts it as failed all the same: the connection is gone, never put back
     it('a reset at release() answered out of order: the connection is dropped at once',
         async () => {
             const server = await listen();
             const cluster = await connectCluster([server], { ...QUIET, connectionLimit: 1 });
             const { connection } = await cluster.getConnection();
             server.resetOutOfOrder();
+            const warned = jest.spyOn(Logger, 'warn');
 
             const started = Date.now();
             connection.release();
@@ -640,6 +644,8 @@ describe('getConnection()', () => {
 
             expect([server.order(), took < RESET_TIMEOUT / 2]).toEqual([['reset'], true]);
             expect(stats(cluster)).toEqual({ used: 0, idle: 0, pending: 0 });
+            const failed = warned.mock.calls.filter(([message]) => /reset .* failed/.test(message));
+            expect(failed).toHaveLength(1);
             // the next caller gets a new connection
             const next = await cluster.getConnection();
             expect([next.connection === connection, server.logins()]).toEqual([false, 2]);

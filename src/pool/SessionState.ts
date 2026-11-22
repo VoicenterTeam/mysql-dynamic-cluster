@@ -261,6 +261,9 @@ export class SessionState {
             if (finished) return;
             finished = true;
             clearTimeout(timer);
+            // dropped while the reset ran, by packets out of order: mysql2 warns, then still
+            // runs the reset on that packet and reports it answered. It failed all the same
+            if (!error && session.dropped) error = new Error("Dropped during the reset");
             if (error) {
                 this.drop(connection);
             } else {
