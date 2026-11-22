@@ -27,11 +27,13 @@ const makeQuery = (existing: Existing, fail: (q: string) => Error | undefined = 
         return [];
     });
 
-// hashing built without the config singletons; the schema already exists at the current version
-const makeHashing = (query: jest.Mock): ClusterHashing => {
+// hashing built without the config singletons; the schema already exists at the current version.
+// execute() answers as query() does, from the same mock unless a test hands in its own
+const makeHashing = (query: jest.Mock, execute: jest.Mock = query): ClusterHashing => {
     const hashing = new ClusterHashing({
         pools: [{ id: 1, name: 'a', host: 'h1', port: 3306 }, { id: 2, name: 'b', host: 'h2', port: 33061 }],
-        query
+        query,
+        execute
     } as any, 'c', { nextCheckTime: 5000, dbName: 'mdc' } as any);
     (hashing as any)._isDatabaseVersionEquals = jest.fn().mockResolvedValue(true);
     // the asset path is dist-relative (known-issues #7), so hand the routine files in directly
@@ -102,6 +104,37 @@ describe('hashing schema: backward compatible upgrade', () => {
         expect(hashing.connected).toBe(false);
         hashing.stop();
     });
+
+    it('sends every statement that has values through execute(), never through query()',
+        async () => {
+            const query = makeQuery(SCHEMA_BUILT_BY_321);
+            const execute = makeQuery(SCHEMA_BUILT_BY_321);
+            const hashing = makeHashing(query, execute);
+            await hashing.connect();
+            await hashing.updateNodeForService(5, 2);
+            hashing.stop();
+
+            // the mock takes the sql only; the cluster hands it values and options too
+            const [asked, executed] = [query, execute].map(mock => mock.mock.calls as any[][]);
+            expect(asked.filter(call => call[1] != null)).toEqual([]);
+            const bound = executed.map(([sql, values]) => [sql.split(' ')[0], values]);
+            expect(bound).toEqual([
+                ['SELECT', ['c_mdc']],
+                ['SELECT', ['c_mdc']],
+                ['SELECT', ['c_mdc']],
+                ['CALL', [1, 'a', 'h1', 3306]],
+                ['CALL', [2, 'b', 'h2', 33061]],
+                ['CALL', [5, 2]]
+            ]);
+            expect(executed.map(call => call[0]).slice(3)).toEqual([
+                'CALL SP_NodeInsert( ? , ? , ? , ? );',
+                'CALL SP_NodeInsert( ? , ? , ? , ? );',
+                'CALL SP_NodeServiceUpdate(?, ?);'
+            ]);
+            executed.forEach(call => {
+                expect(call[2]).toEqual({ maxRetry: 1, database: 'c_mdc', redis: false });
+            });
+        });
 
     it('connected is true after a successful hashing check', async () => {
         const hashing = makeHashing(makeQuery(SCHEMA_CURRENT));

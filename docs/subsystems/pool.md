@@ -202,8 +202,10 @@ The `Promise` callback chain is, in order
    database. Most of the time it sends nothing. No change of user is sent,
    since 5.0.0. The statement is only sent from its success callback. A
    failed or timed-out reset or `USE` rejects with `sent: false`.
-3. The guard, since 5.0.0: a call with `values` and without `execute`, on
-   a connection whose `_session.noBackslashEscapes(conn)` is true, rejects
+3. The guard, since 5.0.0: a call without `execute` whose `values` hold at
+   least one value (`_writesValues`: a non-empty array, an object with an
+   own key, a string or a number), on a connection whose
+   `_session.noBackslashEscapes(conn)` is true, rejects
    with `MDC_UNSAFE_SQL_MODE` and `sent: false` through `fail()`. Nothing
    is sent, and the connection goes back as it is. See
    [cluster.md](./cluster.md#values-in-the-text-under-no_backslash_escapes).

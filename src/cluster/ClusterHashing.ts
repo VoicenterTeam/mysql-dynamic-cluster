@@ -87,7 +87,7 @@ export class ClusterHashing {
      */
     public async updateNodeForService(serviceId: number, nodeId: number) {
         try {
-            await this._cluster.query('CALL SP_NodeServiceUpdate(?, ?);', [serviceId, nodeId], {
+            await this._cluster.execute('CALL SP_NodeServiceUpdate(?, ?);', [serviceId, nodeId], {
                 maxRetry: 1,
                 database: this._database,
                 redis: false
@@ -183,7 +183,7 @@ export class ClusterHashing {
 
         // ports above 32767 (signed smallint) were rejected
         await step('node.port smallint unsigned', async () => {
-            const res: any[] = await this._cluster.query(
+            const res: any[] = await this._cluster.execute(
                 `SELECT COLUMN_TYPE AS type FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'node' AND COLUMN_NAME = 'port';`,
                 [this._database], options);
             return res.length > 0 && !/unsigned/i.test(res[0].type);
@@ -191,14 +191,14 @@ export class ClusterHashing {
 
         // MySQL 8 with binary logging refuses the function without READS SQL DATA (error 1418)
         await step('FN_GetServiceNodeMapping READS SQL DATA', async () => {
-            const res: any[] = await this._cluster.query(
+            const res: any[] = await this._cluster.execute(
                 `SELECT SQL_DATA_ACCESS AS access FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ? AND ROUTINE_NAME = 'FN_GetServiceNodeMapping';`,
                 [this._database], options);
             return res[0]?.access !== 'READS SQL DATA';
         }, () => routine('FN_GetServiceNodeMapping', 'FUNCTION'));
 
         await step('SP_NodeInsert _Port smallint unsigned', async () => {
-            const res: any[] = await this._cluster.query(
+            const res: any[] = await this._cluster.execute(
                 `SELECT DTD_IDENTIFIER AS type FROM information_schema.PARAMETERS WHERE SPECIFIC_SCHEMA = ? AND SPECIFIC_NAME = 'SP_NodeInsert' AND PARAMETER_NAME = '_Port';`,
                 [this._database], options);
             return !/unsigned/i.test(res[0]?.type ?? '');
@@ -263,8 +263,8 @@ export class ClusterHashing {
     private async _insertNodes() {
         for (const pool of this._cluster.pools) {
             try {
-                await this._cluster.query('CALL SP_NodeInsert( ? , ? , ? , ? );', [pool.id, pool.name, pool.host, pool.port],
-                {
+                const values = [pool.id, pool.name, pool.host, pool.port];
+                await this._cluster.execute('CALL SP_NodeInsert( ? , ? , ? , ? );', values, {
                     maxRetry: 1,
                     database: this._database,
                     redis: false

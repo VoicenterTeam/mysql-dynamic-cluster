@@ -273,7 +273,7 @@ export class Pool {
      * as it is: nothing is written on it, and passive health is not told
      * @param values the values of the caller. With the option `execute` the server binds them.
      * Without it they are in sql already, and the pool refuses to send sql on a connection
-     * with NO_BACKSLASH_ESCAPES: MDC_UNSAFE_SQL_MODE, with `sent: false`
+     * with NO_BACKSLASH_ESCAPES when they hold a value: MDC_UNSAFE_SQL_MODE, with `sent: false`
      */
     public async query<T extends QueryResult>(
         sql: string, queryOptions?: IQueryOptions, outcome: IQueryOutcome = {},
@@ -368,7 +368,8 @@ export class Pool {
                     if (error) return fail(error, conn);
                     const bound = queryOptions.execute;
                     // values in the text, where the server reads a backslash as a character
-                    if (values && !bound && this._session.noBackslashEscapes(conn)) {
+                    const inText = !bound && Pool._writesValues(values);
+                    if (inText && this._session.noBackslashEscapes(conn)) {
                         return fail(Pool._unsafeSqlMode(), conn);
                     }
 
@@ -523,6 +524,17 @@ export class Pool {
             port: this.port,
             database
         }
+    }
+
+    /**
+     * Whether the values of a query() put at least one value into its text: a non-empty
+     * array, an object with an own key, a string or a number. [] and {} write nothing
+     * @private
+     */
+    private static _writesValues(values: unknown): boolean {
+        if (Array.isArray(values)) return values.length > 0;
+        if (typeof values === 'string' || typeof values === 'number') return true;
+        return typeof values === 'object' && values !== null && Object.keys(values).length > 0;
     }
 
     /**

@@ -62,6 +62,9 @@ Since 3.2.2 it:
   binary logging on);
 - recreates `SP_NodeInsert` if its `_Port` parameter is not unsigned.
 
+Since 5.0.0 the three `information_schema` checks go through
+`cluster.execute()`, with the schema name bound by the server.
+
 Each step is checked first, only widens or recreates with the same
 signature (so 3.2.1 instances keep working against the result), drops no
 data, and logs and moves on if it fails (it is retried on the next start).
@@ -145,7 +148,9 @@ nodes / 127 services). The asset paths are resolved against
 [src/cluster/ClusterHashing.ts](../../src/cluster/ClusterHashing.ts).
 
 Iterates `cluster.pools` and calls
-`SP_NodeInsert(pool.id, pool.name, pool.host, pool.port)` for each.
+`SP_NodeInsert(pool.id, pool.name, pool.host, pool.port)` for each,
+through `cluster.execute()` since 5.0.0: the values are bound by the
+server, so a node with `NO_BACKSLASH_ESCAPES` takes them too.
 The procedure is idempotent — the `(ip, port)` unique constraint on
 `node` means re-running this on an already-populated helper schema is
 safe.
@@ -193,7 +198,7 @@ after a successful single-pool query, but only when both:
 - `_clusterHashing.connected` is true.
 
 The method runs `CALL SP_NodeServiceUpdate(?, ?)` against the helper
-database, then writes the same `(serviceId, nodeId)` pair into
+database, through `cluster.execute()` since 5.0.0, then writes the same `(serviceId, nodeId)` pair into
 `_serviceNodeMap` so subsequent reads observe the update without
 waiting for the next refresh tick. Errors are caught and logged; the
 caller never sees a failure from the hashing write.

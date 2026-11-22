@@ -167,7 +167,8 @@ The first lines of the `try` block.
 
 - If the caller passed `serviceName` but no `serviceId`, look it up via
   `ServiceNames.getID(serviceName)` and write it back onto
-  `queryOptions.serviceId`.
+  `queryOptions.serviceId`. Since 5.0.0 the lookup is a `cluster.execute()`,
+  with the name bound by the server.
 - If `serviceId` is still falsy, fall back: set `serviceId = 0` and
   `serviceName = ${clusterName}_${_nullServiceName}` (i.e.
   `${clusterName}_mdc`).
@@ -459,8 +460,15 @@ names the mode and `execute()`. Always: there is no setting.
 - The connection goes back to the pool as it is: no reset, not destroyed.
   Passive health is not told.
 - `execute`, and a `query()` without values, run as before.
-- "With values" is what `_formatSQL` formats: any truthy `values`, so an
-  empty array or object counts too.
+- "With values" means at least one value would be written into the text:
+  a non-empty array, an object with an own key, a string or a number
+  (`Pool._writesValues`). `query(sql, [])` and `query(sql, {})` run as
+  before.
+- The package's own statements with values go through `execute`: the
+  service-name lookup of `ServiceNames` and, in `ClusterHashing`,
+  `SP_NodeServiceUpdate`, `SP_NodeInsert` and the `information_schema`
+  checks of `_upgradeInPlace()`. So a server with the mode does not stop
+  them. Its statements without values still go through `query()`.
 - A connection the pool has seen no header on yet, a new one or one just
   reset, counts as without the mode: the pool does not read the status
   flags of the server greeting, and mysql2 does not show the header of the

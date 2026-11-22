@@ -1147,7 +1147,8 @@ reads the server version at `connect()` is not told to passive health
 either. The check of that `connect()` follows it at once.
 
 The queries the cluster sends for itself, for cluster hashing and for the
-service names, go through `cluster.query()` and count like those of the app.
+service names, go through `cluster.query()`, or `cluster.execute()` for
+those with values, and count like those of the app.
 
 **A deadlock is a reason to run the transaction again, not to leave the
 node.** In a Galera cluster 1213 is also what a transaction gets when it

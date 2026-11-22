@@ -363,6 +363,33 @@ describe('a connection whose last header has bit 512, NO_BACKSLASH_ESCAPES', () 
         expect(node.app()).toEqual([NBE_ON, 'prepare ' + SELECT, 'execute ["x"]', CLEAN]);
     });
 
+    it.each([
+        ['an empty array', []],
+        ['an object without keys', {}]
+    ])('runs a query() whose values write nothing into the text: %s', async (_kind, values) => {
+        const node = await listen();
+        const cluster = await clusterOf(node);
+        await cluster.query(NBE_ON);
+
+        await cluster.query(CLEAN, values);
+
+        expect(node.app()).toEqual([NBE_ON, CLEAN]);
+    });
+
+    it.each([
+        ['a string', 'x'],
+        ['an object with a key', { n: 'x' }]
+    ])('refuses values given as %s', async (_kind, values) => {
+        const node = await listen();
+        const cluster = await clusterOf(node);
+        await cluster.query(NBE_ON);
+
+        const { error } = await settle(cluster.query('SELECT ? AS v, :n AS w', values));
+
+        expect(error.code).toBe('MDC_UNSAFE_SQL_MODE');
+        expect(node.app()).toEqual([NBE_ON]);
+    });
+
     it('lets values through again once a header comes without the bit', async () => {
         const node = await listen();
         const cluster = await clusterOf(node);

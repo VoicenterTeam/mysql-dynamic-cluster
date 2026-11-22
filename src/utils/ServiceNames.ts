@@ -30,9 +30,9 @@ export default class ServiceNames {
 
     private async _receiveIDbyName(serviceName: string): Promise<number> {
         try {
-            const res = await this._cluster.query(
+            const res = await this._cluster.execute(
                 `SELECT ServiceID AS Result FROM ${this._table} WHERE ServiceName LIKE ?;`,
-                // as a value: the name comes from the caller of query()
+                // bound by the server: the name comes from the caller of query()
                 [serviceName],
                 {
                     maxRetry: 1,

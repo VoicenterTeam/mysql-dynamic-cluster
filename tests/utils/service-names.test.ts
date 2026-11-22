@@ -6,22 +6,26 @@ jest.mock('../../src/utils/Logger', () => ({
 import ServiceNames from '../../src/utils/ServiceNames';
 
 describe('ServiceNames.getID', () => {
+    // the lookup goes through execute(); query() must not be asked
     const make = (rows: any[]) => {
         const query = jest.fn().mockResolvedValue(rows);
-        const names = new ServiceNames({ query } as any, { database: 'db', table: 'Service' });
-        return { names, query };
+        const execute = jest.fn().mockResolvedValue(rows);
+        const cluster = { query, execute } as any;
+        const names = new ServiceNames(cluster, { database: 'db', table: 'Service' });
+        return { names, query, execute };
     };
 
-    it('passes the service name as a value, not inside the sql', async () => {
-        const { names, query } = make([{ Result: 7 }]);
+    it('sends the service name bound by the server, through execute()', async () => {
+        const { names, query, execute } = make([{ Result: 7 }]);
         const name = "x' OR '1'='1";
 
         await expect(names.getID(name)).resolves.toBe(7);
 
-        const [sql, values, options] = query.mock.calls[0];
+        const [sql, values, options] = execute.mock.calls[0];
         expect(sql).toBe('SELECT ServiceID AS Result FROM Service WHERE ServiceName LIKE ?;');
         expect(values).toEqual([name]);
         expect(options).toEqual({ maxRetry: 1, database: 'db', redis: false });
+        expect(query).not.toHaveBeenCalled();
     });
 
     // the lookup is a LIKE: a caller may rely on % and _ in the name
@@ -29,17 +33,17 @@ describe('ServiceNames.getID', () => {
         ['%', 'billing%'],
         ['_', 'billing_v_']
     ])('passes a name with the LIKE wildcard %s through unchanged', async (_wildcard, name) => {
-        const { names, query } = make([{ Result: 7 }]);
+        const { names, execute } = make([{ Result: 7 }]);
 
         await expect(names.getID(name)).resolves.toBe(7);
 
-        expect(query.mock.calls[0][1]).toStrictEqual([name]);
+        expect(execute.mock.calls[0][1]).toStrictEqual([name]);
     });
 
     it('asks once per name', async () => {
-        const { names, query } = make([{ Result: 7 }]);
+        const { names, execute } = make([{ Result: 7 }]);
         await names.getID('a');
         await names.getID('a');
-        expect(query).toHaveBeenCalledTimes(1);
+        expect(execute).toHaveBeenCalledTimes(1);
     });
 });
