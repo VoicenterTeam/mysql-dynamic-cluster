@@ -117,6 +117,21 @@ describe('Pool.multiStatementQuery', () => {
         expect(conn.query).toHaveBeenCalledWith({ sql: 'COMMIT', timeout: 700 }, expect.any(Function));
     });
 
+    it('a timeout above the longest wait of a timer is 2147483647 ms for every command',
+        async () => {
+            const conn = makeConn({ queryErrs: { B: { code: 'ER_PARSE_ERROR' } } });
+            const pool = makePool(null, conn);
+
+            await pool.multiStatementQuery(['A'], { timeout: 2147483648, database: 'h' });
+            await pool.multiStatementQuery(['B'], { timeout: 2147483648 }).catch(() => undefined);
+
+            expect(conn.query.mock.calls.map(([options]) => [options.sql, options.timeout]))
+                .toEqual([
+                    'USE `h`', 'START TRANSACTION', 'A', 'COMMIT',
+                    'USE `d`', 'START TRANSACTION', 'B', 'ROLLBACK'
+                ].map(sql => [sql, 2147483647]));
+        });
+
     it('COMMIT times out: destroys without rollback', async () => {
         const conn = makeConn({ commitErr: { code: 'PROTOCOL_SEQUENCE_TIMEOUT' } });
         await expect(makePool(null, conn).multiStatementQuery(['A'], {})).rejects.toBeTruthy();

@@ -399,10 +399,7 @@ export class Pool {
             // An abort meanwhile is the borrow's as well
             const asked: IAbortOutcome = {};
             const { database, execute } = queryOptions;
-            // a longer wait would make the timers of mysql2 and of the bound statement fire
-            // after 1 ms, and destroy the connection
-            const timeout = queryOptions.timeout > LONGEST_TIMER
-                ? LONGEST_TIMER : queryOptions.timeout;
+            const timeout = Pool._withinTimer(queryOptions.timeout);
             const target = { database, timeout, valuesInText: valuesInText && !execute };
             this._borrow.take({ signal, target, probe }, asked).then(conn => {
                 held = conn;
@@ -483,6 +480,8 @@ export class Pool {
                 database: this._database,
                 ...queryOptions
             }
+            // for every command of the transaction, the USE and the ROLLBACK
+            queryOptions.timeout = Pool._withinTimer(queryOptions.timeout);
             // no sql: a transaction has no single operation name
             const poolMetricOption = this._metricOptions(queryOptions.database);
 
@@ -597,6 +596,17 @@ export class Pool {
         // the socket keeps the process alive while the statement runs. This timer alone does not
         timer.unref();
         return timer;
+    }
+
+    /**
+     * The timeout of a call, within the longest wait of a timer: a longer one would make the
+     * timers of mysql2 and of a bound statement fire after 1 ms, and destroy the connection.
+     * Undefined and 0, no timeout, stay as they are
+     * @param timeout the timeout option of the call
+     * @private
+     */
+    private static _withinTimer(timeout: number): number {
+        return timeout > LONGEST_TIMER ? LONGEST_TIMER : timeout;
     }
 
     /**
