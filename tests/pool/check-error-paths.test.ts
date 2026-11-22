@@ -198,13 +198,16 @@ describe('a health check that runs out of time', () => {
         return conn;
     };
 
-    it('ends by the timer of the check, which is set before the one of mysql2', async () => {
-        const conn = silentConn();
+    it('ends by the timer of the check, which is set before the one of the pool', async () => {
+        // mysql2 is handed no timeout (#120): the server never answers, and only the timer of
+        // the pool, with the same TIMEOUT, ends the query
+        const conn = makeConn();
+        conn.query.mockImplementation(() => undefined);
         const pool = handsOut(conn);
         pool.status.active = true;
         const checking = pool.status.checkStatus();
         await turns();
-        expect(conn.query.mock.calls[0][0].timeout).toBe(TIMEOUT);
+        expect(conn.query.mock.calls[0][0]).toEqual({ sql: 'SHOW GLOBAL STATUS;' });
 
         jest.advanceTimersByTime(TIMEOUT);
         await checking;

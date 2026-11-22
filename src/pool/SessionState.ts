@@ -29,8 +29,13 @@ interface ISession {
     // the database those statements were prepared in
     statementsIn?: string,
     // the replies the connection got since its last reset, see resetAfterStatements
-    sinceReset: number
+    sinceReset: number,
+    // the timer of the command of the pool that is out on the connection, see send()
+    command?: NodeJS.Timeout
 }
+
+// The callback of a command of the pool, see send()
+type Reply = (error: any, result?: any) => void;
 
 // status flags of the header of an OK reply
 const IN_TRANSACTION = 1;
@@ -43,7 +48,8 @@ const NO_BACKSLASH_ESCAPES = 512;
  * dirty. The pool sends no change of user. A query for another database sends USE first, and
  * a dirty connection is reset before anyone uses it again. The rule for dirty, the cap on
  * statements between two resets and the reset with its time limit live here and nowhere
- * else, and so does the sql_mode bit a query() with values reads, see noBackslashEscapes()
+ * else, and so do the sql_mode bit a query() with values reads, see noBackslashEscapes(), and
+ * the time limit of every other command the pool sends, see send()
  */
 export class SessionState {
     private readonly _sessions = new WeakMap<object, ISession>();
@@ -99,7 +105,8 @@ export class SessionState {
         // so a connection that only returned rows would never learn it otherwise
         const learnMode = () => {
             if (!valuesInText || session.noBackslashEscapes !== undefined) return done();
-            connection.query({ sql: 'DO 0', timeout }, (error, result) => {
+            const ask = (sent: Reply) => connection.query({ sql: 'DO 0' }, sent);
+            this.send(connection, timeout, ask, (error, result) => {
                 this.observe(connection, error, result);
                 done(error);
             });
@@ -112,7 +119,8 @@ export class SessionState {
                 SessionState._closeStatements(connection, session);
             }
             const sql = 'USE ' + mysql.escapeId(database);
-            connection.query({ sql, timeout }, (error, result) => {
+            const ask = (sent: Reply) => connection.query({ sql }, sent);
+            this.send(connection, timeout, ask, (error, result) => {
                 this.observe(connection, error, result);
                 if (error) return done(error);
                 session.database = database;
@@ -121,6 +129,52 @@ export class SessionState {
         };
         if (!session.dirty) return use();
         this._reset(connection, session, error => error ? done(error) : use());
+    }
+
+    /**
+     * Send one command of the pool on the connection within `timeout` ms: the statement of
+     * query() and execute(), the commands of multiStatementQuery(), and the USE and the DO 0
+     * of prepare(). mysql2 gets no timeout: it clears its timer when the command ends, not when
+     * the connection is destroyed, so a command still out on a dropped connection kept the
+     * process alive until that timer fired, and then called back a second time (#120). This
+     * timer is unref'd, and cleared at the reply, at a throw of mysql2 and at drop(). On expiry
+     * `reply` gets the error of `timedOut`, whose code isBroken() reads: the caller destroys the
+     * connection. A reply of mysql2 after that is not passed on
+     * @param timeout 0 or undefined: no limit
+     * @param send hands the callback to mysql2, through query() or execute()
+     * @param reply gets the reply of mysql2 or the timeout, once at most
+     * @param timedOut the error of the timeout. Left out, the one of mysql2's own timeout
+     */
+    public send(
+        connection: mysql.PoolConnection, timeout: number | undefined, send: (sent: Reply) => void,
+        reply: Reply, timedOut: () => Error = SessionState._inactivity
+    ): void {
+        const session = this._session(connection);
+        let replied = false;
+        let timer: NodeJS.Timeout | undefined;
+        const stop = () => {
+            replied = true;
+            clearTimeout(timer);
+            if (session.command === timer) session.command = undefined;
+        };
+        const answer: Reply = (error, result) => {
+            if (replied) return;
+            stop();
+            reply(error, result);
+        };
+        if (timeout) {
+            timer = setTimeout(() => answer(timedOut()), timeout);
+            // the socket keeps the process alive while the command runs. This timer alone does not
+            timer.unref();
+            session.command = timer;
+        }
+        try {
+            send(answer);
+        } catch (thrown) {
+            // nothing was sent, and no reply comes: the caller has the throw
+            stop();
+            throw thrown;
+        }
     }
 
     /**
@@ -243,7 +297,11 @@ export class SessionState {
      * @param error what a command still out on it fails with, see drop() of ServerFlags
      */
     public drop(connection: mysql.PoolConnection, error?: Error): void {
-        this._session(connection).dropped = true;
+        const session = this._session(connection);
+        session.dropped = true;
+        // The time limit of a command still out ends with the connection. First, so a throw
+        // of the destroy cannot leave the timer
+        clearTimeout(session.command);
         drop(connection, error);
     }
 
@@ -303,6 +361,20 @@ export class SessionState {
             // a reset that could not be sent fails here, so no call waits for it
             finish(thrown || new Error("Reset failed"));
         }
+    }
+
+    /**
+     * The error mysql2 gives a command that ran out of its `timeout`, field for field
+     * (lib/commands/query.js of mysql2 3): what a caller got before send() timed the commands
+     * of the pool. Not marked with ownError(), as it was not
+     * @private
+     */
+    private static _inactivity(): Error {
+        return Object.assign(new Error('Query inactivity timeout'), {
+            errorno: 'PROTOCOL_SEQUENCE_TIMEOUT',
+            code: 'PROTOCOL_SEQUENCE_TIMEOUT',
+            syscall: 'query'
+        });
     }
 
     /**

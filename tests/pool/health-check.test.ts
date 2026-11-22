@@ -10,6 +10,7 @@ import { metrics } from '@opentelemetry/api';
 import { MeterProvider, MetricReader } from '@opentelemetry/sdk-metrics';
 import { createPoolCluster } from '../../index';
 import config from '../../src/configs';
+import { Pool } from '../../src/pool/Pool';
 
 // The health check of a node that has a healthCheck block: a fixed wait between two checks,
 // down after `fall` failed checks in a row, back after `rise` passed ones. Every number here
@@ -1093,6 +1094,8 @@ describe('health check with a healthCheck block: the two legacy keys', () => {
     it('a host with the block and one without each follow their own rules', async () => {
         const a = fakeNode([PASS, PASS, 'refused'], 'node-a');
         const b = fakeNode([PASS, PASS, 'refused'], 'node-b');
+        // only the legacy check asks through the pool
+        const asked = jest.spyOn(Pool.prototype, 'query');
         await start({}, [{ host: 'node-a' }, { host: 'node-b', healthCheck: {} }]);
 
         await pass(39538);
@@ -1100,8 +1103,11 @@ describe('health check with a healthCheck block: the two legacy keys', () => {
         // node-a: 10000 * 1.3, held at 15000, then 15000 / 1.3
         expect(waits(a)).toEqual([13000, 15000, 11538]);
         expect(waits(b)).toEqual([5000, 5000, 5000, 5000, 5000, 5000, 5000]);
-        // the legacy check hands its timeout to mysql2, the check of a block does not
-        expect([a.timeouts[0], b.timeouts[0]]).toEqual([15000, undefined]);
+        // the legacy check hands its timeout to the pool, whose timer bounds the status
+        // query. The check of a block has its own timer. mysql2 gets no timeout (#120)
+        expect(asked.mock.calls[0][1].timeout).toBe(15000);
+        expect([a.timeouts[0], b.timeouts[0]]).toEqual([undefined, undefined]);
+        asked.mockRestore();
     });
 
     it('in one cluster the host without the block is back with one pass', async () => {

@@ -7,6 +7,7 @@ jest.mock('mysql2', () => ({
 import mysql from 'mysql2';
 import { createPoolCluster } from '../../index';
 import config from '../../src/configs';
+import { Pool } from '../../src/pool/Pool';
 
 // The health check as 4.6.0 runs it for an app that sets no healthCheck block. The redesign
 // of the health check (issue #76) has to leave all of it as it is. Every number here is
@@ -51,7 +52,7 @@ const makeNode = (steps: Step[]) => {
     const node = {
         // the fake time of every request for a connection: the checks and the app's own
         asked: [] as number[],
-        // the timeout mysql2 was handed with each status query
+        // the time limit of each status query: the timeout the check hands the pool, see below
         timeouts: [] as number[],
         // how the next requests end, in order. The last one stays for every request after it
         plan: steps,
@@ -68,8 +69,6 @@ const makeNode = (steps: Step[]) => {
                     // the pool sends no change of user. A failed status query is reset
                     reset: (done: Cb) => done(null),
                     query: (options: any, done: Cb) => {
-                        const isCheck = options.sql === 'SHOW GLOBAL STATUS;';
-                        if (isCheck) node.timeouts.push(options.timeout);
                         if (step === 'lost') return done(errors.lost());
                         if (step === 'held') node.answerHeld = () => done(null, PASS);
                         else if (step !== 'hang') done(null, step);
@@ -83,6 +82,14 @@ const makeNode = (steps: Step[]) => {
     return node;
 };
 type FakeNode = ReturnType<typeof makeNode>;
+
+// The pool bounds the status query with the timeout the check hands it, by a timer of its own:
+// mysql2 is handed none (#120). The node of the host keeps that timeout
+const poolQuery = Pool.prototype.query;
+Pool.prototype.query = function (this: Pool, sql: string, options: any, ...rest: any[]) {
+    if (sql === 'SHOW GLOBAL STATUS;') nodes[this.host].timeouts.push(options.timeout);
+    return poolQuery.call(this, sql, options, ...rest);
+} as typeof poolQuery;
 
 let nodes: { [host: string]: FakeNode };
 let cluster: any;
@@ -250,7 +257,7 @@ describe('legacy health check: the timeout of one check', () => {
             { ...CONSUMER, queryTimeout: 120000 }, 60000],
         ['the range of a consumer, queryTimeout 0', { ...CONSUMER, queryTimeout: 0 }, 60000]
     ])('%s', (_name, pool, timeout) => {
-        it(`hands ${timeout} to mysql2 with the status query`, async () => {
+        it(`bounds the status query with ${timeout} ms`, async () => {
             const node = fakeNode([PASS]);
             await start(pool);
             await nextCheck(node);

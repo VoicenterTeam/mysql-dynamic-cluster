@@ -58,6 +58,15 @@ const makeConn = (opts: {
     return conn;
 };
 
+// The commands mysql2 was handed, each with the time limit the timer of the pool put on it,
+// see SessionState.send(). mysql2 is handed no timeout of its own (#120)
+const limitsOf = (pool: Pool, conn: any) => {
+    const send = jest.spyOn((pool as any)._session, 'send');
+    return () => conn.query.mock.calls.map(([options]: any[], i: number) => {
+        return [options, send.mock.calls[i][1]];
+    });
+};
+
 const makePool = (getConnErr: any, conn: any): Pool => {
     const pool = new Pool({
         id: 1, host: '127.0.0.1', port: 3306, name: 'test',
@@ -110,26 +119,30 @@ describe('Pool.multiStatementQuery', () => {
         expect(conn.release).toHaveBeenCalledTimes(1);
     });
 
-    it('START TRANSACTION and COMMIT are sent with the query timeout', async () => {
+    it('START TRANSACTION and COMMIT are bounded by the query timeout', async () => {
         const conn = makeConn();
-        await makePool(null, conn).multiStatementQuery(['A'], { timeout: 700 });
-        expect(conn.query).toHaveBeenCalledWith({ sql: 'START TRANSACTION', timeout: 700 }, expect.any(Function));
-        expect(conn.query).toHaveBeenCalledWith({ sql: 'COMMIT', timeout: 700 }, expect.any(Function));
+        const pool = makePool(null, conn);
+        const limits = limitsOf(pool, conn);
+        await pool.multiStatementQuery(['A'], { timeout: 700 });
+        expect(limits()).toEqual([
+            [{ sql: 'START TRANSACTION' }, 700], [{ sql: 'A' }, 700], [{ sql: 'COMMIT' }, 700]
+        ]);
     });
 
     it('a timeout above the longest wait of a timer is 2147483647 ms for every command',
         async () => {
             const conn = makeConn({ queryErrs: { B: { code: 'ER_PARSE_ERROR' } } });
             const pool = makePool(null, conn);
+            const limits = limitsOf(pool, conn);
 
             await pool.multiStatementQuery(['A'], { timeout: 2147483648, database: 'h' });
             await pool.multiStatementQuery(['B'], { timeout: 2147483648 }).catch(() => undefined);
 
-            expect(conn.query.mock.calls.map(([options]) => [options.sql, options.timeout]))
+            expect(limits())
                 .toEqual([
                     'USE `h`', 'START TRANSACTION', 'A', 'COMMIT',
                     'USE `d`', 'START TRANSACTION', 'B', 'ROLLBACK'
-                ].map(sql => [sql, 2147483647]));
+                ].map(sql => [{ sql }, 2147483647]));
         });
 
     it('COMMIT times out: destroys without rollback', async () => {
@@ -147,17 +160,21 @@ describe('Pool.multiStatementQuery', () => {
         expect(conn.release).not.toHaveBeenCalled();
     });
 
-    it('rollback is sent with the query timeout', async () => {
+    it('rollback is bounded by the query timeout', async () => {
         const conn = makeConn({ queryErrs: { A: { code: 'ER_PARSE_ERROR' } } });
-        await expect(makePool(null, conn).multiStatementQuery(['A'], { timeout: 700 })).rejects.toBeTruthy();
-        expect(conn.query).toHaveBeenLastCalledWith({ sql: 'ROLLBACK', timeout: 700 }, expect.any(Function));
+        const pool = makePool(null, conn);
+        const limits = limitsOf(pool, conn);
+        await expect(pool.multiStatementQuery(['A'], { timeout: 700 })).rejects.toBeTruthy();
+        expect(limits().pop()).toEqual([{ sql: 'ROLLBACK' }, 700]);
     });
 
     it('another database: USE with the timeout, then the transaction, no change of user',
         async () => {
             const conn = makeConn();
-            await makePool(null, conn).multiStatementQuery(['A'], { database: 'h', timeout: 700 });
-            expect(conn.query.mock.calls[0][0]).toEqual({ sql: 'USE `h`', timeout: 700 });
+            const pool = makePool(null, conn);
+            const limits = limitsOf(pool, conn);
+            await pool.multiStatementQuery(['A'], { database: 'h', timeout: 700 });
+            expect(limits()[0]).toEqual([{ sql: 'USE `h`' }, 700]);
             expect(conn.log).toEqual(['USE `h`', 'begin', 'A', 'commit']);
             expect(conn.changeUser).not.toHaveBeenCalled();
             expect(conn.release).toHaveBeenCalledTimes(1);

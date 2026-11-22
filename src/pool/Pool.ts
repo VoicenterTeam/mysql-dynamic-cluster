@@ -336,19 +336,16 @@ export class Pool {
             const queryTimer = new QueryTimer();
             queryTimer.start();
 
-            // mysql2 can call back twice (timeout, then a late server error), settle only once
+            // An abort or packets out of order settle the call before mysql2 calls back, if it
+            // ever does. Settle only once
             let settled = false;
             // the connection of the call, from its arrival until the call settled
             let held: mysql.PoolConnection | undefined;
-            // the time limit of a bound statement, prepare included, see the send step
-            let boundTimer: NodeJS.Timeout | undefined;
             // the listener of the signal while the statement runs
             let stopAbort: (() => void) | undefined;
-            // every way the call settles comes here, so the timer goes with the listener
-            const stopListening = () => {
-                clearTimeout(boundTimer);
-                stopAbort?.();
-            };
+            // every way the call settles comes here. The timer of the statement goes with its
+            // reply, or with the connection, see SessionState.send()
+            const stopListening = () => stopAbort?.();
             const fail = (error: any, conn?: mysql.PoolConnection) => {
                 if (settled) return;
                 settled = true;
@@ -446,14 +443,15 @@ export class Pool {
                     resolve(result);
                 };
                 try {
-                    // the only step a bound statement does differently
+                    // the only step a bound statement does differently. The timer of the pool
+                    // covers its prepare too
                     if (bound) {
                         this._session.executed(conn, sql);
-                        // mysql2 times the execute, not the prepare before it
-                        if (timeout) boundTimer = this._boundTimeout(timeout, conn, fail);
-                        conn.execute({ sql, values, timeout }, onReply);
+                        const ask = (sent: any) => conn.execute({ sql, values }, sent);
+                        this._session.send(conn, timeout, ask, onReply, Pool._boundTimedOut);
                     } else {
-                        conn.query({ sql, timeout }, onReply);
+                        const ask = (sent: any) => conn.query({ sql }, sent);
+                        this._session.send(conn, timeout, ask, onReply);
                     }
                 } catch (thrown) {
                     // mysql2 refused the call before it wrote anything, such as values
@@ -488,6 +486,11 @@ export class Pool {
             const queryTimer = new QueryTimer();
             queryTimer.start();
             const results: T[] = [];
+            // every command of the transaction within the timeout, see SessionState.send()
+            const send = (conn: PoolConnection, sql: string, reply: (...r: any[]) => void) => {
+                const ask = (sent: any) => conn.query({ sql }, sent);
+                this._session.send(conn, queryOptions.timeout, ask, reply);
+            };
 
             let settled = false;
             const fail = (error: any, conn?: mysql.PoolConnection, rollback: boolean = false) => {
@@ -503,8 +506,7 @@ export class Pool {
                 }
                 // a broken connection can't roll back; destroying it makes the server discard the transaction
                 if (rollback && !isBroken(error)) {
-                    const rollbackQuery = { sql: 'ROLLBACK', timeout: queryOptions.timeout };
-                    conn.query(rollbackQuery, (errorR, resultR) => {
+                    send(conn, 'ROLLBACK', (errorR, resultR) => {
                         if (errorR) {
                             Logger.error("Rollback failed in pool by host " + this.host + ": " + errorR.message);
                             // the connection may have been lost under the rollback
@@ -532,8 +534,7 @@ export class Pool {
                 const runQuery = (index: number) => {
                     if (index >= sqls.length) {
                         Logger.debug("Commit transaction in pool by host " + this.host);
-                        const commit = { sql: 'COMMIT', timeout: queryOptions.timeout };
-                        conn.query(commit, (errorC, resultC) => {
+                        send(conn, 'COMMIT', (errorC, resultC) => {
                             if (errorC) return fail(errorC, conn, true);
                             if (settled) return;
                             settled = true;
@@ -548,7 +549,7 @@ export class Pool {
                         return;
                     }
 
-                    conn.query({ sql: sqls[index], timeout: queryOptions.timeout }, (errorQ, result: T) => {
+                    send(conn, sqls[index], (errorQ, result: T) => {
                         if (errorQ) return fail(errorQ, conn, true);
                         // every header here says a transaction is open: the database rule only
                         this._session.observeDatabase(conn, result);
@@ -558,7 +559,7 @@ export class Pool {
                 }
 
                 Logger.debug("Start transaction in pool by host " + this.host);
-                conn.query({ sql: 'START TRANSACTION', timeout: queryOptions.timeout }, errorT => {
+                send(conn, 'START TRANSACTION', errorT => {
                     if (errorT) return fail(errorT, conn);
                     runQuery(0);
                 })
@@ -581,26 +582,18 @@ export class Pool {
     }
 
     /**
-     * The time limit of a bound statement from the moment it is sent: mysql2 arms its own
-     * timeout only when the execute starts, after the prepare. On expiry the call fails with
-     * the code mysql2 gives a timeout, so the connection counts as broken and is destroyed, as
-     * for a reset that runs out of time. The call clears it when it settles
+     * The error of a bound statement that ran out of its timeout, see SessionState.send(): the
+     * package's own, as when only the pool timed the prepare. The code is the one mysql2 gives
+     * a timeout, so the connection counts as broken and is destroyed
      * @private
      */
-    private _boundTimeout(
-        timeout: number, conn: mysql.PoolConnection, fail: (error: any, conn: any) => void
-    ): NodeJS.Timeout {
-        const timer = setTimeout(() => {
-            fail(PoolStatus.ownError(timeoutError("Query inactivity timeout")), conn);
-        }, timeout);
-        // the socket keeps the process alive while the statement runs. This timer alone does not
-        timer.unref();
-        return timer;
+    private static _boundTimedOut(): Error {
+        return PoolStatus.ownError(timeoutError("Query inactivity timeout"));
     }
 
     /**
      * The timeout of a call, within the longest wait of a timer: a longer one would make the
-     * timers of mysql2 and of a bound statement fire after 1 ms, and destroy the connection.
+     * timer of a command fire after 1 ms, and destroy the connection.
      * Undefined and 0, no timeout, stay as they are
      * @param timeout the timeout option of the call
      * @private

@@ -3,6 +3,7 @@ import { AddressInfo } from 'net';
 import { createPoolCluster } from '../../index';
 import { parseSettings } from '../../src/configs/schema';
 import { Pool } from '../../src/pool/Pool';
+import { SessionState } from '../../src/pool/SessionState';
 import { Settings } from '../../src/utils/Settings';
 
 // The session of a pooled connection, with the cluster of createPoolCluster and the real mysql2
@@ -614,5 +615,120 @@ describe('the resetTimeout setting', () => {
     it.each([0, -1])('refuses %d: a reset always has a time limit', (value) => {
         expect(() => parseSettings({ defaultPoolSettings: { resetTimeout: value } })).toThrow();
         expect(() => parseSettings({ hosts: [{ host: 'a', resetTimeout: value }] })).toThrow();
+    });
+});
+
+// The timer of a command of the pool (#120): mysql2 gets no timeout, whose timer it clears
+// only when the command ends. The timer of the pool goes at the reply, on expiry, at a throw
+// of mysql2 and at drop() of the connection
+describe('send(): the time limit of a command', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    const LIMIT = 1000;
+    const state = () => new SessionState('test', 'd', RESET, 100, 1000);
+    // a connection whose command gets no reply until the test hands one to answer()
+    const silent = () => {
+        let pending: (error: any, result?: any) => void = () => undefined;
+        const connection: any = {
+            query: jest.fn((_options: object, done: any) => { pending = done; }),
+            destroy: jest.fn(), stream: { destroy: jest.fn() }
+        };
+        const ask = (sent: any) => connection.query({ sql: 'SELECT 1' }, sent);
+        return { connection, ask, answer: (error: any, result?: any) => pending(error, result) };
+    };
+
+    it('hands mysql2 no timeout, and clears its timer at the reply', () => {
+        const { connection, ask, answer } = silent();
+        const reply = jest.fn();
+
+        state().send(connection, LIMIT, ask, reply);
+        expect(connection.query.mock.calls[0][0]).toEqual({ sql: 'SELECT 1' });
+        expect(jest.getTimerCount()).toBe(1);
+        answer(null, 'rows');
+        jest.advanceTimersByTime(LIMIT);
+
+        expect(jest.getTimerCount()).toBe(0);
+        expect(reply.mock.calls).toEqual([[null, 'rows']]);
+    });
+
+    it('on expiry: the error of mysql2 once, and no reply of mysql2 after it', () => {
+        const { connection, ask, answer } = silent();
+        const reply = jest.fn();
+
+        state().send(connection, LIMIT, ask, reply);
+        jest.advanceTimersByTime(LIMIT - 1);
+        expect(reply).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(1);
+        answer(null, 'late');
+
+        expect(reply).toHaveBeenCalledTimes(1);
+        const [error] = reply.mock.calls[0];
+        expect([error.message, error.code, error.errorno, error.syscall]).toEqual([
+            'Query inactivity timeout', 'PROTOCOL_SEQUENCE_TIMEOUT',
+            'PROTOCOL_SEQUENCE_TIMEOUT', 'query'
+        ]);
+    });
+
+    it('on expiry with timedOut: the error it makes', () => {
+        const { connection, ask } = silent();
+        const reply = jest.fn();
+        const own = new Error('own');
+
+        state().send(connection, LIMIT, ask, reply, () => own);
+        jest.advanceTimersByTime(LIMIT);
+
+        expect(reply.mock.calls).toEqual([[own, undefined]]);
+    });
+
+    it('drop() of the connection clears the timer', () => {
+        const { connection, ask } = silent();
+        const reply = jest.fn();
+        const session = state();
+
+        session.send(connection, LIMIT, ask, reply);
+        session.drop(connection);
+        jest.advanceTimersByTime(LIMIT);
+
+        expect(jest.getTimerCount()).toBe(0);
+        expect(connection.destroy).toHaveBeenCalledTimes(1);
+        expect(reply).not.toHaveBeenCalled();
+    });
+
+    it('a throw of mysql2 at the send: thrown on, and the timer cleared', () => {
+        const { connection } = silent();
+        const reply = jest.fn();
+        const thrown = new Error('refused');
+
+        expect(() => state().send(connection, LIMIT, () => { throw thrown; }, reply))
+            .toThrow(thrown);
+        jest.advanceTimersByTime(LIMIT);
+
+        expect(jest.getTimerCount()).toBe(0);
+        expect(reply).not.toHaveBeenCalled();
+    });
+
+    it.each([0, undefined])('timeout %s: no timer', (timeout) => {
+        const { connection, ask } = silent();
+
+        state().send(connection, timeout, ask, jest.fn());
+
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('the timer keeps no process alive', () => {
+        jest.useRealTimers();
+        const { connection, ask } = silent();
+        const session = state();
+        // Node 17.3 and later. An unref'd timer is not listed
+        const timers = () => (process as unknown as { getActiveResourcesInfo: () => string[] })
+            .getActiveResourcesInfo().filter(name => name === 'Timeout').length;
+        const before = timers();
+
+        session.send(connection, LIMIT, ask, jest.fn());
+        const during = timers();
+        session.drop(connection);
+
+        expect(during).toBe(before);
     });
 });

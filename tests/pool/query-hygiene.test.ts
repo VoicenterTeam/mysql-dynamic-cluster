@@ -35,6 +35,15 @@ const makeConn = (opts: { useErr?: any, queryErr?: any, rows?: any } = {}) => ({
     removeListener: jest.fn()
 });
 
+// The commands mysql2 was handed, each with the time limit the timer of the pool put on it,
+// see SessionState.send(). mysql2 is handed no timeout of its own (#120)
+const limitsOf = (pool: Pool, conn: any) => {
+    const send = jest.spyOn((pool as any)._session, 'send');
+    return () => conn.query.mock.calls.map(([options]: any[], i: number) => {
+        return [options, send.mock.calls[i][1]];
+    });
+};
+
 const makePool = (getConnErr: any, conn: any): Pool => {
     const pool = new Pool({
         id: 1, host: '127.0.0.1', port: 3306, name: 'test',
@@ -113,22 +122,24 @@ describe('Pool.query connection hygiene', () => {
 
     it('another database: USE with the timeout of the query, then the statement', async () => {
         const conn = makeConn({ rows: [{ a: 1 }] });
-        await makePool(null, conn).query('SELECT 1', { database: 'other', timeout: 0 });
-        // mysql2 keeps the time limit of the USE, 0 is none: the pool adds no timer
-        expect(conn.query.mock.calls.map(([options]) => options)).toEqual([
-            { sql: 'USE `other`', timeout: 0 }, { sql: 'SELECT 1', timeout: 0 }
-        ]);
+        const pool = makePool(null, conn);
+        const limits = limitsOf(pool, conn);
+        await pool.query('SELECT 1', { database: 'other', timeout: 0 });
+        // the timer of the pool bounds the USE as the statement. 0 is none: no timer
+        expect(limits()).toEqual([[{ sql: 'USE `other`' }, 0], [{ sql: 'SELECT 1' }, 0]]);
         expect(conn.changeUser).not.toHaveBeenCalled();
     });
 
     it('a timeout above the longest wait of a timer is 2147483647 ms, for the USE and the ' +
         'statement', async () => {
         const conn = makeConn({ rows: [] });
+        const pool = makePool(null, conn);
+        const limits = limitsOf(pool, conn);
 
-        await makePool(null, conn).query('SELECT 1', { timeout: 2147483648, database: 'h' });
+        await pool.query('SELECT 1', { timeout: 2147483648, database: 'h' });
 
-        expect(conn.query.mock.calls.map(([options]) => [options.sql, options.timeout]))
-            .toEqual([['USE `h`', 2147483647], ['SELECT 1', 2147483647]]);
+        expect(limits())
+            .toEqual([[{ sql: 'USE `h`' }, 2147483647], [{ sql: 'SELECT 1' }, 2147483647]]);
     });
 
     it('a database option left undefined is the one of the pool: no USE', async () => {
