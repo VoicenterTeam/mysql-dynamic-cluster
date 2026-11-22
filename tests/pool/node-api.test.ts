@@ -40,9 +40,15 @@ const makePool = (): any => {
     return new Pool({ id: 1, ...host }, 'test');
 };
 
+// Every pool connected() made. connect() starts the interval of the idle reaper, which keeps
+// the process alive until disconnect(), so each one is disconnected after its test (#100)
+const connectedPools: any[] = [];
+afterEach(() => connectedPools.splice(0).forEach(pool => pool.disconnect()));
+
 // the pool with its mysql2 pool created, and that mysql2 pool
 const connected = async (): Promise<{ pool: any, mysqlPool: any }> => {
     const pool = makePool();
+    connectedPools.push(pool);
     // the status check of connect() asks through this
     const query = pool.query;
     pool.query = jest.fn().mockResolvedValue([]);
