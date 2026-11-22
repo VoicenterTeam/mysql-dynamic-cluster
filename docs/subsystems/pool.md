@@ -512,7 +512,11 @@ Borrow.ts, `{ signal?, target?, probe? }`, internal and in no public type;
    [ServerFlags.ts](../../src/pool/ServerFlags.ts), with its socket), tells
    passive health once with `status.probeFailed()`, and the loop takes the
    next connection of the node: at most `connectionLimit + 1` tries, and a
-   new connection ends it at the latest. An abort during the probe drops
+   new connection ends it at the latest. Once `status.isValid` is false,
+   health gave the node up (such as the check passive health started for
+   an earlier failed probe), the next failed probe ends the loop at once
+   and rejects with its error, `sent: false`, so the cluster tries the next
+   node instead of probing every idle connection here. An abort during the probe drops
    the connection, tells nothing, and rejects with the reason. The health
    check of a node without a `healthCheck` block passes `probe: false`
    through `IPoolCall` of `Pool.query()`.

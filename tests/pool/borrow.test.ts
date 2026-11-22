@@ -88,7 +88,9 @@ interface IServer {
     // answer every reset with the wrong sequence number from now on
     resetOutOfOrder: () => void,
     // close every new connection before its login from now on
-    hangUpOnLogin: () => void
+    hangUpOnLogin: () => void,
+    // answer no status query of a health check from now on
+    ignoreChecks: () => void
 }
 const listen = async (connections = 1): Promise<IServer> => {
     const server: any = (mysql as any).createServer();
@@ -99,7 +101,7 @@ const listen = async (connections = 1): Promise<IServer> => {
     const held: any[] = [];
     const modes = {
         holding: false, hangUp: false, outOfOrder: false, hangUpOnLogin: false,
-        resetOutOfOrder: false
+        resetOutOfOrder: false, ignoreChecks: false
     };
     let statements = 0;
     const ok = (connection: any, serverStatus = AUTOCOMMIT) => {
@@ -161,6 +163,7 @@ const listen = async (connections = 1): Promise<IServer> => {
             if (modes.outOfOrder) return answerOutOfOrder();
             if (sql === BEGIN) return ok(connection, IN_TRANSACTION | AUTOCOMMIT);
             if (sql !== 'SHOW GLOBAL STATUS;') return ok(connection);
+            if (modes.ignoreChecks) return;
             connection.sequenceId = 1;
             const rows = status(connections);
             connection.writeTextResult(rows, [column('Variable_name'), column('Value')]);
@@ -182,7 +185,8 @@ const listen = async (connections = 1): Promise<IServer> => {
         hangUpOnPing: () => { modes.hangUp = true; },
         outOfOrder: () => { modes.outOfOrder = true; },
         resetOutOfOrder: () => { modes.resetOutOfOrder = true; },
-        hangUpOnLogin: () => { modes.hangUpOnLogin = true; }
+        hangUpOnLogin: () => { modes.hangUpOnLogin = true; },
+        ignoreChecks: () => { modes.ignoreChecks = true; }
     };
 };
 
@@ -382,6 +386,61 @@ describe('a failed probe', () => {
         expect([server.logins() - logins, heard.mock.calls.length, stats(cluster)])
             .toEqual([0, 0, { used: 0, idle: 0, pending: 0 }]);
     });
+});
+
+describe('a node health gives up while the borrow probes it', () => {
+    // Two nodes, node 1 asked first, each with up to 3 connections. Node 1 holds 3 idle ones,
+    // idle past probeIdle, then answers no ping and no check: it is cut off
+    const cutOff = async (healthCheck: object) => {
+        const servers = [await listen(1), await listen(5)];
+        const settings = { ...QUIET, healthCheck, connectionLimit: 3 };
+        const cluster = await connectCluster(servers, settings);
+        const asks = [0, 1, 2].map(() => ask(cluster));
+        expect(await Promise.all(asks)).toEqual(['answered', 'answered', 'answered']);
+        await until(() => stats(cluster).idle === 3, 'three idle connections',
+            () => stats(cluster));
+        await pause(PROBE_IDLE + 100);
+        const [from, logins] = [servers.map(s => s.order().length), servers[0].logins()];
+        servers[0].holdPings();
+        servers[0].ignoreChecks();
+        return { cluster, servers, from, logins };
+    };
+
+    it('given up during the first probe: one probeTimeout, not three, then the next node',
+        async () => {
+            // a check every 200 ms, and one failed check takes the node down
+            const { cluster, servers, from, logins } =
+                await cutOff({ interval: 200, timeout: 100, fall: 1 });
+
+            const started = Date.now();
+            const answer = await cluster.query(APP_SQL, undefined, { timeout: 0 });
+            const took = Date.now() - started;
+
+            expect(answer).toBeTruthy();
+            expect(since(servers[0], from[0])).toEqual(['ping']);
+            expect(since(servers[1], from[1])).toEqual([APP_SQL]);
+            expect(servers[0].logins()).toBe(logins);
+            expect([took >= PROBE_TIMEOUT - 10, took < PROBE_TIMEOUT + 400]).toEqual([true, true]);
+        });
+
+    it('by passive health: the probe after the check that the lost connection started',
+        async () => {
+            // no check of the timer: only the one passive health starts, which gets no answer
+            const { cluster, servers, from, logins } =
+                await cutOff({ interval: LONG, timeout: 300 });
+
+            const started = Date.now();
+            const answer = await cluster.query(APP_SQL, undefined, { timeout: 0 });
+            const took = Date.now() - started;
+
+            expect(answer).toBeTruthy();
+            expect(cluster.nodes()[0].isValid).toBe(false);
+            expect(since(servers[0], from[0])).toEqual(['ping', 'ping']);
+            expect(since(servers[1], from[1])).toEqual([APP_SQL]);
+            expect(servers[0].logins()).toBe(logins);
+            expect([took >= 2 * PROBE_TIMEOUT - 10, took < 2 * PROBE_TIMEOUT + 400])
+                .toEqual([true, true]);
+        });
 });
 
 describe('the probe and the ping of the reaper', () => {

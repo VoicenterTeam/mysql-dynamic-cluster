@@ -45,7 +45,8 @@ export interface ITakeOptions {
  * - a connection idle longer than probeIdle answers a ping first, within probeTimeout, and
  *   so does one the reaper's ping is still out on. One that fails is destroyed, passive
  *   health hears of it, and the next connection of the node is taken: at most
- *   connectionLimit + 1 tries, and a new connection needs no ping
+ *   connectionLimit + 1 tries, and a new connection needs no ping. Once health gave the
+ *   node up, the next failed probe ends the call instead
  * - for a statement, a reset when the connection is dirty, USE when it is on another
  *   database, and DO 0 for values in the text when the sql_mode is unknown, see SessionState
  * - a signal ends any of these steps
@@ -100,7 +101,10 @@ export class Borrow {
                 try {
                     await this._probe(connection, drawn, signal, outcome);
                 } catch (error) {
-                    if (outcome.aborted || tries >= most) throw error;
+                    // Health gave the node up, as passive health does after a lost connection
+                    // once its check failed: the next node is tried, not every connection here
+                    const givenUp = !this._pool.status.isValid;
+                    if (outcome.aborted || givenUp || tries >= most) throw error;
                     continue;
                 }
             }

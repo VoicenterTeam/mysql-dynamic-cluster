@@ -285,6 +285,22 @@ The pool also writes `sent` on the error when the error can take it, but
 the loop reads the outcome: a frozen error, or one the app handed
 `failWaiting()` that many queries share, is decided the same way.
 
+**What a cut-off node costs a query.** The probes of one node run one
+after another, and the `timeout` of the query does not cover the borrow:
+it bounds the `USE`, the `DO 0` and the statement (the reset has
+`resetTimeout`), not the probes or the login of a new connection. A
+node whose idle connections all go unanswered costs one `probeTimeout`
+per idle connection, then
+mysql2's `connectTimeout` for the login of a new one, before `sent: false`
+lets the next node try: about `connectionLimit × probeTimeout` plus one
+`connectTimeout`, 20 s with a limit of 10 and the defaults. The borrow
+stops sooner once health has given the node up: each failed probe tells
+passive health of a lost connection, which starts a check at once, and
+the first probe that fails after that check took the node down ends the
+borrow with `sent: false`. That check has its own `timeout`, 5 s by
+default, so with the defaults the next node gets the query after 6 to
+7 s. Only the `signal` option bounds the whole call.
+
 | The node failed with | Next node |
 | --- | --- |
 | errno 1045, 1698, 1044, 3118, 3955 or 1130, a refused login | no, although `sent` is `false` |
