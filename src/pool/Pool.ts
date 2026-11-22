@@ -92,7 +92,8 @@ export class Pool {
         this._flags = settings.flags;
 
         this.connectionLimit = settings.connectionLimit;
-        this._maxPreparedStatements = settings.maxPreparedStatements;
+        // a Pool built without the settings schema still keeps its statements
+        this._maxPreparedStatements = settings.maxPreparedStatements ?? 100;
         this._session = new SessionState(
             this.name, this._database, settings.resetTimeout, this._maxPreparedStatements
         );

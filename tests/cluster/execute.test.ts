@@ -357,20 +357,40 @@ describe('execute()', () => {
             ]);
         });
 
-    it('prepares again after a USE of the app, which the header says changed the session',
+    it('keeps what it prepared when the USE goes back to the database it was prepared in',
         async () => {
             const node = await listen();
             const cluster = await clusterOf(node);
 
             await cluster.execute(SELECT, ['x']);
+            // the header says the session changed: the next statement sends USE first
             await cluster.query('USE other');
             await cluster.execute(SELECT, ['y']);
 
             expect(node.app()).toEqual([
-                'prepare ' + SELECT, 'execute ["x"]', 'USE other',
-                ...closes(1), 'USE `d`', 'prepare ' + SELECT, 'execute ["y"]'
+                'prepare ' + SELECT, 'execute ["x"]', 'USE other', 'USE `d`', 'execute ["y"]'
             ]);
         });
+
+    it('closes what it prepared before it lends the connection to the app', async () => {
+        const node = await listen();
+        const cluster = await clusterOf(node);
+        await cluster.execute(SELECT, ['x']);
+        await cluster.query('USE other');
+
+        const { connection } = await cluster.getConnection();
+        try {
+            // on database other now: the statement the pool prepared in d must not run
+            await connection.promise().execute(SELECT, ['y']);
+        } finally {
+            connection.release();
+        }
+
+        expect(node.app()).toEqual([
+            'prepare ' + SELECT, 'execute ["x"]', 'USE other',
+            ...closes(1), 'prepare ' + SELECT, 'execute ["y"]'
+        ]);
+    });
 
     it('keeps at most maxPreparedStatements statements on a connection', async () => {
         const node = await listen();

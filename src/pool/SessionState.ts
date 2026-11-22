@@ -23,7 +23,9 @@ interface ISession {
     // The texts execute() sent on the connection since its last reset or USE, the one used
     // last at the end. mysql2 keeps a prepared statement per text, whatever the database,
     // and the server runs it in the database it was prepared in
-    statements?: Set<string>
+    statements?: Set<string>,
+    // the database those statements were prepared in
+    statementsIn?: string
 }
 
 // status flags of the header of an OK reply
@@ -59,9 +61,13 @@ export class SessionState {
 
     /**
      * The app takes the connection. The pool sees neither the USE nor the transaction it may
-     * send, so the next statement of the pool on it gets a reset and a USE first
+     * send, so the next statement of the pool on it gets a reset and a USE first. The
+     * statements execute() prepared are closed first: an execute() of the app with the same
+     * text would run in the database they were prepared in
      */
-    public lend(connection: object): void {
+    public lend(connection: mysql.PoolConnection): void {
+        const session = this._sessions.get(connection);
+        if (session) SessionState._closeStatements(connection, session);
         this._sessions.set(connection, { database: undefined, dirty: true });
     }
 
@@ -83,9 +89,11 @@ export class SessionState {
         database = database || this._database;
         const use = () => {
             if (session.database === database) return done();
-            // a statement prepared on the database the connection leaves must not run on the next
-            session.statements?.forEach(text => SessionState._unprepare(connection, text));
-            session.statements?.clear();
+            // A statement prepared in another database must not run in this one. Back in the
+            // one they were prepared in, such as after a header with 0x4000, they stay
+            if (session.statementsIn !== database) {
+                SessionState._closeStatements(connection, session);
+            }
             const sql = 'USE ' + mysql.escapeId(database);
             connection.query({ sql, timeout }, (error, result) => {
                 this.observe(connection, error, result);
@@ -106,6 +114,8 @@ export class SessionState {
     public executed(connection: mysql.PoolConnection, sql: string): void {
         const session = this._session(connection);
         const texts = session.statements ??= new Set<string>();
+        // prepare() just made it the database of the session
+        session.statementsIn = session.database;
         // to the end: the order is the one of the last use, as in the cache of mysql2
         texts.delete(sql);
         texts.add(sql);
@@ -248,6 +258,15 @@ export class SessionState {
             // a reset that could not be sent fails here, so no call waits for it
             finish(thrown || new Error("Reset failed"));
         }
+    }
+
+    /**
+     * Close every statement execute() prepared on the connection, and forget the texts
+     * @private
+     */
+    private static _closeStatements(connection: mysql.PoolConnection, session: ISession): void {
+        session.statements?.forEach(text => SessionState._unprepare(connection, text));
+        session.statements?.clear();
     }
 
     /**
