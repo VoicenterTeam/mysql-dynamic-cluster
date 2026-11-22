@@ -43,6 +43,9 @@ interface IPoolSettings {
     port?: number,
     connectionLimit?: number,
     queryTimeout?: number,
+    // Time in ms a reset of a dirty connection may take. One that fails or takes longer ends
+    // with the connection destroyed. 1 or more
+    resetTimeout?: number,
     validators?: IValidatorParams[],
     loadFactors?: ILoadFactorParams[],
     // Time in ms. A half left out comes from the defaults
@@ -76,6 +79,7 @@ export interface IUserPoolSettings extends IPoolSettings {
 export interface IDefaultPoolSettings extends IPoolSettings {
     port: number,
     queryTimeout: number,
+    resetTimeout: number,
     connectionLimit: number,
     validators: IValidatorParams[],
     loadFactors: ILoadFactorParams[],

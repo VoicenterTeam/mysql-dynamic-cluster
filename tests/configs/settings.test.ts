@@ -25,7 +25,10 @@ const defaultsOf322 = {
             { key: 'wsrep_local_recv_queue_avg', multiplier: 10 }
         ],
         timerCheckRange: { start: 5000, end: 15000 },
-        timerCheckMultiplier: 1.3, queryTimeout: 120000, slowQueryTime: 1, redisFactor: 1
+        timerCheckMultiplier: 1.3, queryTimeout: 120000, slowQueryTime: 1, redisFactor: 1,
+        // not in 3.2.2: added in 5.0.0, which resets a dirty connection instead of changing
+        // the user before every query
+        resetTimeout: 1000
     },
     serviceMetrics: { database: 'swagger_realtime', table: 'Service' },
     clusterHashing: { nextCheckTime: 5000, dbName: 'mysql_dynamic_cluster' },

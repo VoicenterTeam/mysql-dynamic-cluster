@@ -8,6 +8,10 @@ import { createPoolCluster } from '../../index';
 // Each fake node counts the logins and the statements of the app that reached it
 const COM_CHANGE_USER = 0x11;
 const LONG = 600000;
+// the status flags of an OK header of a server: autocommit on, no transaction
+const AUTOCOMMIT = 2;
+// a database other than the one of the pools: a query on it sends USE first
+const OTHER = 'other';
 
 // loopback only: a hang here is a bug, not a slow network
 jest.setTimeout(20000);
@@ -50,13 +54,13 @@ const DEADLOCK: Reply = {
 const NOT_READY: Reply = {
     errno: 1047, sqlState: '08S01', message: 'WSREP has not yet prepared node for application use'
 };
-const NO_DATABASE: Reply = { errno: 1049, sqlState: '42000', message: "Unknown database 'd'" };
+const NO_DATABASE: Reply = { errno: 1049, sqlState: '42000', message: "Unknown database 'other'" };
 const DENIED: Reply = {
     errno: 1045, sqlState: '28000', message: "Access denied for user 'u'@'127.0.0.1'"
 };
 
 // What a node does with the call of the app, from the moment a test says so. Until then it
-// takes every login, every change of user and every statement
+// takes every login, every USE and every statement
 type Mode =
     | 'answers'
     // answers the statement with this error
@@ -67,10 +71,10 @@ type Mode =
     | 'hangs up'
     // answers every new login with error 1045, as a server does for a wrong password
     | 'refuses the login'
-    // never answers the change of user the pool sends before the statement
-    | 'ignores the change of user'
-    // answers the change of user the pool sends before the statement with this error
-    | { failsChangeOfUser: Reply };
+    // never answers the USE the pool sends before a statement on another database
+    | 'ignores USE'
+    // answers that USE with this error
+    | { failsUse: Reply };
 
 interface INode {
     port: number,
@@ -123,15 +127,11 @@ const listen = async (connections: number): Promise<INode> => {
                 done(null, { message: DENIED.message, code: DENIED.errno });
             }
         });
+        // the check connection changes the user before its status query. The pool does not
         connection.on('packet', (_packet: object, known: boolean, code: number) => {
             if (known || code !== COM_CHANGE_USER) return;
-            if (mode === 'ignores the change of user') return;
             connection.sequenceId = 1;
-            const current = mode;
-            if (typeof current === 'object' && 'failsChangeOfUser' in current) {
-                return writeError(current.failsChangeOfUser);
-            }
-            connection.writeOk();
+            connection.writeOk({ serverStatus: AUTOCOMMIT });
         });
         connection.on('query', (sql: string) => {
             connection.sequenceId = 1;
@@ -139,7 +139,14 @@ const listen = async (connections: number): Promise<INode> => {
                 const columns = [column('Variable_name'), column('Value')];
                 return connection.writeTextResult(status(connections), columns);
             }
-            if (sql !== APP_SQL) return connection.writeOk();
+            if (sql.startsWith('USE ')) {
+                const current = mode;
+                if (current === 'ignores USE') return;
+                if (typeof current === 'object' && 'failsUse' in current) {
+                    return writeError(current.failsUse);
+                }
+            }
+            if (sql !== APP_SQL) return connection.writeOk({ serverStatus: AUTOCOMMIT });
             seen.statements++;
             const current = mode;
             if (current === 'stays silent') return;
@@ -147,7 +154,7 @@ const listen = async (connections: number): Promise<INode> => {
             if (typeof current === 'object' && 'replies' in current) {
                 return writeError(current.replies);
             }
-            connection.writeOk({ affectedRows: 1 });
+            connection.writeOk({ affectedRows: 1, serverStatus: AUTOCOMMIT });
         });
         connection.on('quit', () => connection.close());
     });
@@ -260,22 +267,22 @@ describe('the statement never went to node 1: node 2 is tried', () => {
         expect([nodeId, first.code, first.sent]).toEqual([1, 'ECONNREFUSED', false]);
     });
 
-    it('node 1 failed the change of database', async () => {
+    it('node 1 failed the USE of another database', async () => {
         const { cluster, n1, n2 } = await twoNodes();
-        n1.become({ failsChangeOfUser: NO_DATABASE });
+        n1.become({ failsUse: NO_DATABASE });
 
-        const { result, error } = await call(cluster);
+        const { result, error } = await call(cluster, { database: OTHER });
 
         expect(error).toBeUndefined();
         expect(statements(n1, n2)).toEqual([0, 1]);
         expect(result.affectedRows).toBe(1);
     });
 
-    it('the change of database on node 1 timed out', async () => {
+    it('the USE of another database on node 1 timed out', async () => {
         const { cluster, n1, n2 } = await twoNodes();
-        n1.become('ignores the change of user');
+        n1.become('ignores USE');
 
-        const { result, error } = await call(cluster, { timeout: 300 });
+        const { result, error } = await call(cluster, { timeout: 300, database: OTHER });
 
         expect(error).toBeUndefined();
         expect(statements(n1, n2)).toEqual([0, 1]);

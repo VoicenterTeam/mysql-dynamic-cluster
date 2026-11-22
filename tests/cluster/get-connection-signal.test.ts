@@ -26,7 +26,8 @@ const node = (id: number, loadScore: number, isValid = true): any => {
         asked: [],
         getConnection: jest.fn((signal?: any, outcome?: any) => new Promise((resolve, reject) => {
             pool.asked.push({ signal, outcome, resolve, reject });
-        }))
+        })),
+        lend: jest.fn()
     };
     return pool;
 };

@@ -22,9 +22,13 @@ import Redis from '../../src/Redis/Redis';
 
 type Cb = (err: any, res?: any) => void;
 
-const makeConn = (opts: { changeUserErr?: any, queryErr?: any, rows?: any } = {}) => ({
-    changeUser: jest.fn((_o: any, cb: Cb) => cb(opts.changeUserErr ?? null)),
-    query: jest.fn((_o: any, cb: Cb) => cb(opts.queryErr ?? null, opts.rows)),
+// useErr answers the USE of a query on another database, queryErr the statement
+const makeConn = (opts: { useErr?: any, queryErr?: any, rows?: any } = {}) => ({
+    changeUser: jest.fn(),
+    query: jest.fn((o: any, cb: Cb) => o.sql.startsWith('USE ')
+        ? cb(opts.useErr ?? null)
+        : cb(opts.queryErr ?? null, opts.rows)),
+    reset: jest.fn((cb: Cb) => cb(null)),
     release: jest.fn(),
     destroy: jest.fn()
 });
@@ -33,7 +37,7 @@ const makePool = (getConnErr: any, conn: any): Pool => {
     const pool = new Pool({
         id: 1, host: '127.0.0.1', port: 3306, name: 'test',
         user: 'u', password: 'p', database: 'd',
-        queryTimeout: 1000, slowQueryTime: 1, redisFactor: 1, redisExpire: 1,
+        queryTimeout: 1000, resetTimeout: 1000, slowQueryTime: 1, redisFactor: 1, redisExpire: 1,
         connectionLimit: 10, minConnections: 0, idleTimeout: 30000, idleCheckInterval: 10000,
         validators: [], loadFactors: [], timerCheckRange: { start: 1000, end: 10000 }, timerCheckMultiplier: 2
     } as any, 'cluster');
@@ -66,23 +70,30 @@ describe('Pool.availableConnectionCount', () => {
 describe('Pool.query connection hygiene', () => {
     beforeEach(() => jest.clearAllMocks());
 
-    it('success: resolves rows and releases once', async () => {
-        const conn = makeConn({ rows: [{ a: 1 }] });
-        await expect(makePool(null, conn).query('SELECT 1')).resolves.toEqual([{ a: 1 }]);
-        expect(conn.release).toHaveBeenCalledTimes(1);
-        expect(conn.destroy).not.toHaveBeenCalled();
-    });
+    it('success: resolves rows and releases once, with no change of user and no reset',
+        async () => {
+            const conn = makeConn({ rows: [{ a: 1 }] });
+            await expect(makePool(null, conn).query('SELECT 1')).resolves.toEqual([{ a: 1 }]);
+            expect(conn.query.mock.calls.map(([options]) => options.sql)).toEqual(['SELECT 1']);
+            expect(conn.release).toHaveBeenCalledTimes(1);
+            expect([conn.changeUser, conn.reset, conn.destroy].map(f => f.mock.calls.length))
+                .toEqual([0, 0, 0]);
+        });
 
-    it('SQL error: rejects, releases once, no slow-query warning, no redis write', async () => {
-        const conn = makeConn({ queryErr: { code: 'ER_PARSE_ERROR' } });
-        // the statement went to the server
-        await expect(makePool(null, conn).query('SELEC 1', { redis: true }))
-            .rejects.toEqual({ code: 'ER_PARSE_ERROR', sent: true });
-        expect(conn.release).toHaveBeenCalledTimes(1);
-        expect(conn.destroy).not.toHaveBeenCalled();
-        expect(Logger.warn).not.toHaveBeenCalled();
-        expect(Redis.set).not.toHaveBeenCalled();
-    });
+    it('SQL error: rejects, resets and releases once, no slow-query warning, no redis write',
+        async () => {
+            const conn = makeConn({ queryErr: { code: 'ER_PARSE_ERROR' } });
+            // the statement went to the server
+            await expect(makePool(null, conn).query('SELEC 1', { redis: true }))
+                .rejects.toEqual({ code: 'ER_PARSE_ERROR', sent: true });
+            expect(conn.reset).toHaveBeenCalledTimes(1);
+            expect(conn.release).toHaveBeenCalledTimes(1);
+            expect(conn.reset.mock.invocationCallOrder[0])
+                .toBeLessThan(conn.release.mock.invocationCallOrder[0]);
+            expect(conn.destroy).not.toHaveBeenCalled();
+            expect(Logger.warn).not.toHaveBeenCalled();
+            expect(Redis.set).not.toHaveBeenCalled();
+        });
 
     it('fatal error: rejects and destroys the connection', async () => {
         const conn = makeConn({ queryErr: { code: 'ECONNRESET', fatal: true } });
@@ -98,40 +109,39 @@ describe('Pool.query connection hygiene', () => {
         expect(conn.release).not.toHaveBeenCalled();
     });
 
-    it('changeUser fails: rejects, never queries, destroys once', async () => {
-        // mysql2 marks every changeUser error fatal
-        const conn = makeConn({ changeUserErr: { code: 'ER_BAD_DB_ERROR', fatal: true } });
-        await expect(makePool(null, conn).query('SELECT 1')).rejects.toBeTruthy();
-        expect(conn.query).not.toHaveBeenCalled();
-        expect(conn.destroy).toHaveBeenCalledTimes(1);
-        expect(conn.release).not.toHaveBeenCalled();
-    });
-
-    it('changeUser never answers: rejects after the query timeout, destroys, ignores a late answer', async () => {
-        jest.useFakeTimers();
-        try {
-            let late: Cb;
-            const conn = makeConn();
-            conn.changeUser.mockImplementation((_o: any, cb: Cb) => { late = cb; });
-            const p = makePool(null, conn).query('SELECT 1', { timeout: 500 });
-            const rejected = expect(p).rejects.toMatchObject({ code: 'PROTOCOL_SEQUENCE_TIMEOUT' });
-            // the change of database starts once the promise of getConnection() resolved
-            await jest.advanceTimersByTimeAsync(500);
-            await rejected;
-            late(null);
-            expect(conn.query).not.toHaveBeenCalled();
-            expect(conn.destroy).toHaveBeenCalledTimes(1);
-            expect(conn.release).not.toHaveBeenCalled();
-        } finally {
-            jest.useRealTimers();
-        }
-    });
-
-    it('timeout 0 means no timeout: a slow changeUser still succeeds', async () => {
+    it('another database: USE with the timeout of the query, then the statement', async () => {
         const conn = makeConn({ rows: [{ a: 1 }] });
-        conn.changeUser.mockImplementation((_o: any, cb: Cb) => { setTimeout(() => cb(null), 5); });
-        await expect(makePool(null, conn).query('SELECT 1', { timeout: 0 })).resolves.toEqual([{ a: 1 }]);
+        await makePool(null, conn).query('SELECT 1', { database: 'other', timeout: 0 });
+        // mysql2 keeps the time limit of the USE, 0 is none: the pool adds no timer
+        expect(conn.query.mock.calls.map(([options]) => options)).toEqual([
+            { sql: 'USE `other`', timeout: 0 }, { sql: 'SELECT 1', timeout: 0 }
+        ]);
+        expect(conn.changeUser).not.toHaveBeenCalled();
+    });
+
+    it('a database option left undefined is the one of the pool: no USE', async () => {
+        const conn = makeConn({ rows: [{ a: 1 }] });
+        await makePool(null, conn).query('SELECT 1', { database: undefined });
+        expect(conn.query.mock.calls.map(([options]) => options.sql)).toEqual(['SELECT 1']);
+    });
+
+    it('USE fails: rejects with sent false, never sends the statement, resets', async () => {
+        const conn = makeConn({ useErr: { code: 'ER_BAD_DB_ERROR', errno: 1049 } });
+        await expect(makePool(null, conn).query('SELECT 1', { database: 'nope' }))
+            .rejects.toEqual({ code: 'ER_BAD_DB_ERROR', errno: 1049, sent: false });
+        expect(conn.query).toHaveBeenCalledTimes(1);
+        expect(conn.reset).toHaveBeenCalledTimes(1);
+        expect(conn.release).toHaveBeenCalledTimes(1);
         expect(conn.destroy).not.toHaveBeenCalled();
+    });
+
+    it('USE times out: rejects with sent false, never sends the statement, destroys', async () => {
+        const conn = makeConn({ useErr: { code: 'PROTOCOL_SEQUENCE_TIMEOUT' } });
+        await expect(makePool(null, conn).query('SELECT 1', { database: 'other' }))
+            .rejects.toMatchObject({ code: 'PROTOCOL_SEQUENCE_TIMEOUT', sent: false });
+        expect(conn.query).toHaveBeenCalledTimes(1);
+        expect(conn.destroy).toHaveBeenCalledTimes(1);
+        expect([conn.reset, conn.release].map(f => f.mock.calls.length)).toEqual([0, 0]);
     });
 
     it('error callback fired twice: settles and hands back only once', async () => {

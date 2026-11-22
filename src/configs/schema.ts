@@ -78,6 +78,9 @@ const poolFields = {
     healthCheck,
     // time in ms
     queryTimeout: z.number(),
+    // time in ms a reset of a dirty connection may take before the connection is destroyed.
+    // A reset always has a limit: the server may never answer it
+    resetTimeout: limitMs,
     // time in seconds
     slowQueryTime: z.number(),
     redisFactor: z.number(),
@@ -112,6 +115,7 @@ const defaultPoolSettings = z.strictObject({
     // no default: left out, every host without one of its own keeps the legacy check
     healthCheck: poolFields.healthCheck.optional(),
     queryTimeout: poolFields.queryTimeout.default(2 * 60 * 1000),
+    resetTimeout: poolFields.resetTimeout.default(1000),
     slowQueryTime: poolFields.slowQueryTime.default(1),
     redisFactor: poolFields.redisFactor.default(1),
     // no default: left out, the pool picks them from its server (src/pool/ServerFlags.ts)

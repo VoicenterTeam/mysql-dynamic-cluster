@@ -20,6 +20,7 @@ const node = (id: number, loadScore: number, isValid = true): any => ({
     id, name: 'node' + id, host: 'host' + id, port: 3300 + id, connectionLimit: 10 + id,
     status: { isValid, loadScore },
     getConnection: jest.fn().mockResolvedValue({ threadId: id }),
+    lend: jest.fn(),
     failWaiting: jest.fn().mockReturnValue(0),
     stats: jest.fn().mockReturnValue({ used: 0, idle: 0, pending: 0 }),
     query: jest.fn().mockRejectedValue(new Error('down'))
@@ -48,6 +49,8 @@ describe('GaleraCluster.getConnection', () => {
 
         expect(result).toEqual({ connection: { threadId: 2 }, nodeId: 2 });
         expect(acquires(pools)).toBe(1);
+        // the pool resets the connection before its own next query on it
+        expect(pools[1].lend).toHaveBeenCalledWith(result.connection);
     });
 
     it('skips a node that is not valid, whatever its load score', async () => {
@@ -109,6 +112,7 @@ describe('GaleraCluster.getConnection', () => {
             code: 'ECONNREFUSED', errno: -111, fatal: true, nodeId: 2
         });
         expect(failure.message).toBe('connect ECONNREFUSED');
+        expect(pools[1].lend).not.toHaveBeenCalled();
     });
 
     // such an error cannot take the nodeId. The caller still gets it, not a TypeError about that

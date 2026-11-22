@@ -6,7 +6,7 @@ import { createPoolCluster } from '../../index';
 // The cluster of createPoolCluster and the real mysql2 against mysql2's own server class on the
 // loopback interface. It shows that the lists of mysql2 the node API reads are the ones a real
 // pool keeps, which the mocked tests cannot
-const COM_CHANGE_USER = 0x11;
+const COM_RESET_CONNECTION = 0x1f;
 
 // loopback only: a hang here is a bug, not a slow network
 jest.setTimeout(20000);
@@ -57,11 +57,12 @@ const listen = (): Promise<{ port: number, logins: () => number }> => {
             capabilityFlags: 0x00ffffff,
             authCallback: (_params: object, done: (err: null) => void) => done(null)
         });
-        // the pool changes the database of a connection before a query of its own
+        // The pool sends no change of user. It resets a connection whose query failed, and one
+        // the app had, before it uses it again
         connection.on('packet', (_packet: object, known: boolean, code: number) => {
-            if (!known && code === COM_CHANGE_USER) {
+            if (!known && code === COM_RESET_CONNECTION) {
                 connection.sequenceId = 1;
-                connection.writeOk();
+                connection.writeOk({ serverStatus: 2 });
             }
         });
         connection.on('query', () => {

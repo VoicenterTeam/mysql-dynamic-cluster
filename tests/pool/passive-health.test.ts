@@ -1,7 +1,11 @@
-// a mysql2 that opens nothing. Every pool it creates asks the fake node of its host
+// a mysql2 that opens nothing. Every pool it creates asks the fake node of its host. The USE
+// of a query on another database escapes the name as mysql2 does
 jest.mock('mysql2', () => ({
     __esModule: true,
-    default: { createPool: jest.fn(), createConnection: jest.fn() }
+    default: {
+        createPool: jest.fn(), createConnection: jest.fn(),
+        escapeId: jest.requireActual('mysql2').escapeId
+    }
 }));
 
 import { EventEmitter } from 'events';
@@ -26,12 +30,13 @@ import { createPoolCluster } from '../../index';
 type Cb = (err: any, res?: any) => void;
 type Rows = { Variable_name: string, Value: string }[];
 // An error at one place of a request. 'open' fails the request for a connection itself,
-// 'changeUser' the change of user on the connection it got, 'query' the first query on it,
-// and any other text the query with that sql. `then` is one more failure of that request
+// 'changeUser' the change of user on the check connection it got, 'query' the first query
+// on it that is no USE, and any other text the query with that sql, such as the USE of a
+// query on another database. `then` is one more failure of that request
 type Failure = { at: string, error: () => any, then?: Failure };
 // How one request for a connection ends. Rows answer every query on the connection. 'hang'
-// hands out a connection that never answers, 'stuck' one whose change of user never
-// answers, and 'held' one whose first query answers when the test says so, through
+// hands out a connection that never answers, 'stuck' one whose reset never answers,
+// and 'held' one whose first query answers when the test says so, through
 // node.held. 'opening' keeps the request until the test answers it, through node.opening,
 // and 'waits' leaves it in the queue of mysql2, as a pool at its limit does
 type Step = Rows | 'hang' | 'stuck' | 'held' | 'opening' | 'waits' | Failure | Stale;
@@ -167,16 +172,16 @@ const makeNode = (steps: Step[]) => {
                 if (failureAt('open')) return cb(failureAt('open').error());
                 let first = true;
                 cb(null, {
-                    // mysql2 marks every error of a change of user as fatal, whatever it is
-                    changeUser: (_options: any, done: Cb) => {
-                        const failure = failureAt('changeUser');
-                        if (failure) return done(Object.assign(failure.error(), { fatal: true }));
+                    // the pool sends no change of user. A reset comes only for a dirty one
+                    reset: (done: Cb) => {
                         if (step !== 'stuck') done(null);
                     },
                     query: (options: any, done: Cb) => {
                         node.sqls.push(options.sql);
-                        const failure = failureAt(options.sql) || (first && failureAt('query'));
-                        first = false;
+                        const statement = !options.sql.startsWith('USE ');
+                        const failure = failureAt(options.sql) ||
+                            (first && statement && failureAt('query'));
+                        if (statement) first = false;
                         if (failure) return done(failure.error());
                         if (step === 'held') return node.held.push(done);
                         if (step !== 'hang') done(null, isFailure(step) ? [] : step);
@@ -303,7 +308,16 @@ const app = {
     multiStatementQuery: () => cluster.pools[0].multiStatementQuery(SQLS, {}),
     getConnection: () => cluster.getConnection()
 };
-type Call = keyof typeof app;
+// the first two on another database than the one of the pool: they send USE first
+const OTHER = 'other';
+const USE = 'USE `' + OTHER + '`';
+const elsewhere = {
+    queryElsewhere: () => cluster.query('SELECT 1', undefined, { database: OTHER }),
+    multiStatementQueryElsewhere: () =>
+        cluster.pools[0].multiStatementQuery(SQLS, { database: OTHER })
+};
+const calls = { ...app, ...elsewhere };
+type Call = keyof typeof calls;
 const CALLS = Object.keys(app) as Call[];
 // straight to the pool of the node, as the cluster does for a node it picked
 const direct = (index: number = 0) => cluster.pools[index].query('SELECT 1');
@@ -321,7 +335,7 @@ const hit = async (
     const node = fakeNode([PASS, step, ...after]);
     await start({ healthCheck: block });
     await pass(1000);
-    const error = await failed(app[call]());
+    const error = await failed(calls[call]());
     return { node, error };
 };
 
@@ -361,10 +375,9 @@ afterEach(async () => {
 // where a query or a transaction of the app can get an error on the connection it was handed
 const deadlocked = (then: Failure) => failure(SQLS[0], deadlock, then);
 const places = (error: () => any): [string, Call, Step][] => [
-    ['at the change of user of a query', 'query', failure('changeUser', error)],
+    ['at the USE of a query', 'queryElsewhere', failure(USE, error)],
     ['under a query', 'query', failure('query', error)],
-    ['at the change of user of a transaction', 'multiStatementQuery',
-        failure('changeUser', error)],
+    ['at the USE of a transaction', 'multiStatementQueryElsewhere', failure(USE, error)],
     ['at the start of a transaction', 'multiStatementQuery',
         failure('START TRANSACTION', error)],
     ['under a statement of a transaction', 'multiStatementQuery', failure(SQLS[0], error)],
@@ -1261,7 +1274,8 @@ describe('passive health: what never counts', () => {
     const fatal = (message: string, code?: string) => () => {
         return Object.assign(new Error(message), code ? { code, fatal: true } : { fatal: true });
     };
-    // Each as mysql2 3.24.6 hands it out. An error packet at a change of user is fatal there
+    // Each as mysql2 3.24.6 hands it out. The pool sends no change of user, where an error
+    // packet is fatal, so none of those reaches a query of the app
     const NEVER: [string, Step][] = [
         ['a deadlock or a certification failure, errno 1213', failure('query', deadlock)],
         ['a lock wait timeout, errno 1205',
@@ -1276,16 +1290,10 @@ describe('passive health: what never counts', () => {
         ['a node that is not ready, errno 1047',
             failure('query', packet(1047, 'ER_UNKNOWN_COM_ERROR', '08S01'))],
         ['a login refused on a new connection, errno 1045', failure('open', denied)],
-        ['a login refused on an open connection, errno 1045 and fatal',
-            failure('changeUser', denied)],
         ['too many connections at the login, errno 1040',
             failure('open', packet(1040, 'ER_CON_COUNT_ERROR', '08004'))],
-        ['too many connections at a change of user, errno 1040 and fatal',
-            failure('changeUser', packet(1040, 'ER_CON_COUNT_ERROR', '08004'))],
         ['an account at its limit of connections, errno 1226, at the login',
             failure('open', limit)],
-        ['an account at its limit, errno 1226, at a change of user and fatal',
-            failure('changeUser', limit)],
         ['an account at its limit of queries, errno 1226, as the answer to a query',
             failure('query', limit)],
         ['the query timeout of mysql2, PROTOCOL_SEQUENCE_TIMEOUT', failure('query',
@@ -1348,10 +1356,18 @@ describe('passive health: what never counts', () => {
         expect([valid(), askedAt(node)]).toEqual([true, [0, 1000, 5000]]);
     });
 
-    it('the timeout of the package for a change of user that hangs', async () => {
+    it('the time limit of the package for a reset that hangs', async () => {
         const node = fakeNode([PASS, 'stuck', REFUSED]);
-        await start({ queryTimeout: 2000, healthCheck: {} });
+        await start({ resetTimeout: 2000, healthCheck: {} });
         await pass(1000);
+        // the pool takes the connection for one the app had, so it resets it first
+        const pool = cluster.pools[0];
+        const take = pool.getConnection.bind(pool);
+        jest.spyOn(pool, 'getConnection').mockImplementation(async (...args: any[]) => {
+            const connection = await take(...args);
+            pool.lend(connection);
+            return connection;
+        });
         const call = failed(direct());
         await pass(2000);
 

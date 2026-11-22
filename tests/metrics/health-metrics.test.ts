@@ -14,7 +14,7 @@ jest.mock('mysql2', () => ({
         createPool: jest.fn(() => ({
             on: jest.fn(), end: jest.fn(),
             getConnection: jest.fn((cb: any) => cb(null, {
-                changeUser: (_o: any, done: any) => done(null),
+                reset: (done: any) => done(null),
                 query: (_o: any, done: any) => done(null, [
                     { Variable_name: 'wsrep_ready', Value: 'ON' },
                     { Variable_name: 'Connections', Value: '7' }
@@ -189,16 +189,17 @@ const status = (ready: string, connections: number) => [
 // from now on the status query of the pool is answered with these rows
 const answers = (pool: any, rows: object[]) => {
     pool._pool.getConnection.mockImplementation((cb: Cb) => cb(null, {
-        changeUser: (_o: any, done: Cb) => done(null),
+        reset: (done: Cb) => done(null),
         query: (_o: any, done: Cb) => done(null, rows),
         release: jest.fn(), destroy: jest.fn()
     }));
 };
 
-// from now on the status query of the pool fails with this error
+// from now on the status query of the pool fails with this error. The connection is reset
+// before it goes back to the pool
 const fails = (pool: any, error: any) => {
     pool._pool.getConnection.mockImplementation((cb: Cb) => cb(null, {
-        changeUser: (_o: any, done: Cb) => done(null),
+        reset: (done: Cb) => done(null),
         query: (_o: any, done: Cb) => done(error),
         release: jest.fn(), destroy: jest.fn()
     }));

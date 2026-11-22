@@ -16,7 +16,7 @@ jest.mock('mysql2', () => ({
         createPool: jest.fn(() => ({
             on: jest.fn(), end: jest.fn(),
             getConnection: jest.fn((cb: any) => cb(null, {
-                changeUser: (_o: any, done: any) => done(null),
+                reset: (done: any) => done(null),
                 query: (_o: any, done: any) => done(null, []),
                 release: jest.fn(), destroy: jest.fn()
             })),

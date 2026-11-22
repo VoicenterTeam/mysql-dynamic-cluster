@@ -164,11 +164,8 @@ const makeNode = (steps: Step[]) => {
                 const answer = isServerError(step) ? step : undefined;
                 if (answer?.at === 'login') return cb(answer.error());
                 cb(null, {
-                    // mysql2 marks every error of a change of user as fatal, whatever it is
-                    changeUser: (_options: any, done: Cb) => {
-                        if (answer?.at !== 'changeUser') return done(null);
-                        done(Object.assign(answer.error(), { fatal: true }));
-                    },
+                    // the pool sends no change of user. A failed status query is reset
+                    reset: (done: Cb) => done(null),
                     query: (options: any, done: Cb) => {
                         node.timeouts.push(options.timeout);
                         if (answer) return done(answer.error());
@@ -649,17 +646,6 @@ describe('health check with a healthCheck block: a login or account refusal', ()
         expect(await upAfterEach(block, letters)).toBe(wanted);
     });
 
-    it('a node without the block needs two of them, also on an open connection', async () => {
-        const refusal = serverError('changeUser', denied);
-        const node = fakeNode([PASS, refusal, refusal, 'hang']);
-        await start({});
-        await nextCheck(node);
-        const afterOne = valid();
-        await nextCheck(node);
-
-        expect([afterOne, valid()]).toEqual([true, false]);
-    });
-
     it('in one cluster only the host with the block goes down with one', async () => {
         const hosts = [{ host: 'node-a' }, { host: 'node-b', healthCheck: { fall: 3 } }];
         const a = fakeNode([PASS, 'denied', 'denied', 'hang'], 'node-a');
@@ -686,16 +672,6 @@ describe('health check with a healthCheck block: a login or account refusal', ()
         expect(waits(b)).toEqual([5000, 60000]);
     });
 
-    it('a node without the block waits as before after one on an open connection', async () => {
-        const refusal = serverError('changeUser', denied);
-        const node = fakeNode([PASS, PASS, refusal, refusal, PASS]);
-        await start(CONSUMER);
-
-        await pass(150000);
-
-        // the legacy values of a consumer: 15000 after a pass, 60000 after a failure
-        expect(waits(node)).toEqual([15000, 15000, 60000, 60000]);
-    });
 });
 
 describe('health check with a healthCheck block: the slow pace after a refusal', () => {

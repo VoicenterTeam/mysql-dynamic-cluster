@@ -99,7 +99,7 @@ const listen = async (): Promise<IServer> => {
                 done(null);
             }
         });
-        // the pool changes the user of a connection before a query of its own
+        // the check connection changes the user before its status query. The pool does not
         connection.on('packet', (_packet: object, known: boolean, code: number) => {
             if (known || code !== COM_CHANGE_USER) return;
             seen.order.push('user');
@@ -450,8 +450,9 @@ describe('the app draws a connection whose ping is out', () => {
 
             // nothing of the app reached the server before the ping was answered
             expect([waiting, await asked]).toEqual([[[], drawn], 'answered']);
+            // the query alone: the pool sends no change of user ahead of it
             expect([server.order().slice(sent), server.logins() - logins, proxy.resets()])
-                .toEqual([['user', 'query'], 0, 0]);
+                .toEqual([['query'], 0, 0]);
         });
 });
 

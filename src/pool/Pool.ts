@@ -18,6 +18,7 @@ import { IRedisData } from "../types/RedisInterfaces";
 import { IdleConnectionReaper, IIdlePing } from './IdleConnectionReaper';
 import { CheckConnection } from './CheckConnection';
 import { drop, flagsForServer, IServerGreeting, IServerProbe, probeServer } from './ServerFlags';
+import { SessionState } from './SessionState';
 
 // AKA galera node
 export class Pool {
@@ -54,6 +55,8 @@ export class Pool {
     private readonly _checksApart: boolean;
     // that connection, from connect() to disconnect()
     private _check?: CheckConnection;
+    // the database and the dirty mark of each connection of the pool
+    private readonly _session: SessionState;
 
     /**
      * Connections that can still be handed out: limit minus connections in use.
@@ -87,6 +90,7 @@ export class Pool {
         this._flags = settings.flags;
 
         this.connectionLimit = settings.connectionLimit;
+        this._session = new SessionState(this.name, this._database, settings.resetTimeout);
 
         this._reaper = new IdleConnectionReaper(
             settings.minConnections,
@@ -311,7 +315,7 @@ export class Pool {
                 // check of a node with a healthCheck block is not here: it asks on its own
                 // connection. That of a node without one is, and passive health skips it
                 if (!told) this._status.realFailure(error, !conn);
-                Pool._handBack(conn, error);
+                this._handBack(conn, error);
                 Pool._writeSent(error, outcome.sent);
                 reject(error);
             }
@@ -327,8 +331,8 @@ export class Pool {
                 reject(reason);
             }
             // The signal of the app calls this inside its abort(). Nothing may be thrown there.
-            // The change of database or the statement may still run on the connection, so it
-            // is destroyed, never handed back: the pool opens a new one in its place
+            // The reset, the USE or the statement may still run on the connection, so it is
+            // destroyed, never handed back: the pool opens a new one in its place
             const onAbort = () => {
                 if (settled) return;
                 // before the connection is destroyed, so no callback destroy() runs can win
@@ -354,20 +358,21 @@ export class Pool {
                 if (signal?.aborted) return onAbort();
                 signal?.addEventListener('abort', onAbort);
 
-                // change database
-                Logger.debug("Changing database to " + queryOptions.database);
-                Pool._changeUser(conn, queryOptions.database, queryOptions.timeout, (error) => {
+                // a reset when the connection is dirty, a USE when it is on another database
+                const { database, timeout } = queryOptions;
+                this._session.prepare(conn, database, timeout, (error) => {
                     if (error) return fail(error, conn);
 
                     Logger.debug(`Query in pool by host ${this.host}`);
                     // from here on the statement can run on the server, whatever comes back
                     outcome.sent = true;
-                    conn.query({ sql, timeout: queryOptions.timeout }, (error, result: T) => {
+                    conn.query({ sql, timeout }, (error, result: T) => {
+                        this._session.observe(conn, error, result);
                         if (error) return fail(error, conn);
                         if (settled) return;
                         settled = true;
                         stopListening();
-                        conn.release();
+                        this._session.release(conn);
 
                         queryTimer.end();
                         Metrics.recordOperation(queryTimer.get(), poolMetricOption);
@@ -436,7 +441,7 @@ export class Pool {
                     });
                     return;
                 }
-                Pool._handBack(conn, error);
+                this._handBack(conn, error);
                 reject(error);
             }
 
@@ -469,9 +474,11 @@ export class Pool {
                     });
                 }
 
-                // change database
-                Logger.debug("Changing database to " + queryOptions.database);
-                Pool._changeUser(conn, queryOptions.database, queryOptions.timeout, (error) => {
+                // A reset when the connection is dirty, a USE when it is on another database.
+                // That is all it takes from the session state: the transaction ends with its
+                // own COMMIT or ROLLBACK, so the connection goes back with no reset
+                const { database, timeout } = queryOptions;
+                this._session.prepare(conn, database, timeout, (error) => {
                     if (error) return fail(error, conn);
 
                     Logger.debug("Start transaction in pool by host " + this.host);
@@ -499,35 +506,6 @@ export class Pool {
     }
 
     /**
-     * Change connection database with a timeout. mysql2 ignores the timeout option of changeUser,
-     * and a query's own timeout only starts after changeUser finished
-     * @param conn connection
-     * @param database database to change to
-     * @param timeout time in ms before failing with PROTOCOL_SEQUENCE_TIMEOUT
-     * @param callback called once, with an error on failure or timeout
-     * @private
-     */
-    private static _changeUser(conn: mysql.PoolConnection, database: string, timeout: number, callback: (error?: any) => void) {
-        // mysql2: timeout 0 means no timeout
-        if (!timeout) return conn.changeUser({ database }, callback);
-
-        let done = false;
-        const timer = setTimeout(() => {
-            done = true;
-            // the code is the one mysql2 has for a timeout, but this timer is the package's own
-            const error = PoolStatus.ownError(new Error("Change database timeout"));
-            callback(Object.assign(error, { code: 'PROTOCOL_SEQUENCE_TIMEOUT' }));
-        }, timeout);
-
-        conn.changeUser({ database }, (error) => {
-            clearTimeout(timer);
-            if (done) return;
-            done = true;
-            callback(error);
-        });
-    }
-
-    /**
      * Write on the error of a failed query() whether its statement was sent. A frozen error,
      * or one that is no object, goes to the caller without it: the outcome says it too
      * @param error what the query is rejected with
@@ -552,17 +530,24 @@ export class Pool {
     }
 
     /**
-     * Hand connection back to the pool, or destroy it if it's broken so it's never reused
+     * Hand connection back to the pool, or destroy it if it's broken so it's never reused.
+     * A dirty one is reset first, see SessionState
      * @param conn connection to hand back
      * @param error error from mysql
      * @private
      */
-    private static _handBack(conn: mysql.PoolConnection, error?: any) {
-        if (Pool._isBroken(error)) {
-            conn?.destroy();
-        } else {
-            conn?.release();
-        }
+    private _handBack(conn: mysql.PoolConnection, error?: any) {
+        if (conn) this._session.release(conn, Pool._isBroken(error));
+    }
+
+    /**
+     * The app takes this connection through getConnection() of the cluster. The pool sees
+     * neither the database nor the transaction the app leaves on it, so a query of the pool
+     * that gets it later resets it and sends USE first
+     * @param connection the connection getConnection() resolved with
+     */
+    public lend(connection: PoolConnection): void {
+        this._session.lend(connection);
     }
 
     /**
@@ -757,9 +742,9 @@ export class Pool {
     /**
      * One query of a health check on the check connection of this node, which is opened
      * when none is held. Never through the pool, so it waits for no connection of the app
-     * and is no query of the app to passive health. It sends a change of user first, as
-     * query() does, and has no timeout: the check has its own timer and calls
-     * `asked.drop` when it gives up.
+     * and is no query of the app to passive health. It sends a change of user to the database
+     * of the node first, which query() does not, and has no timeout: the check has its own
+     * timer and calls `asked.drop` when it gives up.
      * The attempt is one record of the operation metric, as a check through query() is.
      * Rejects with the error of mysql2, or with POOL_NOT_CONNECTED outside connect() and
      * disconnect()

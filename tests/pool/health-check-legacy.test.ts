@@ -65,7 +65,8 @@ const makeNode = (steps: Step[]) => {
                 const step = node.plan.length > 1 ? node.plan.shift() : node.plan[0];
                 if (step === 'refused' || step === 'denied') return cb(errors[step]());
                 cb(null, {
-                    changeUser: (_options: any, done: Cb) => done(null),
+                    // the pool sends no change of user. A failed status query is reset
+                    reset: (done: Cb) => done(null),
                     query: (options: any, done: Cb) => {
                         const isCheck = options.sql === 'SHOW GLOBAL STATUS;';
                         if (isCheck) node.timeouts.push(options.timeout);

@@ -8,7 +8,7 @@ import {
 } from '../types/PoolInterfaces'
 import Logger from "../utils/Logger";
 
-import { format as MySQLFormat, escape as MySQLEscape } from 'mysql2';
+import { format as MySQLFormat, escape as MySQLEscape, PoolConnection } from 'mysql2';
 import { Pool } from "../pool/Pool";
 import { ClusterHashing } from "./ClusterHashing";
 import { mayTryNextNode } from "./QueryRetry";
@@ -631,7 +631,8 @@ export class GaleraCluster {
      * Take a connection of one node: the valid node with the lowest load score that is not
      * excluded. One node and one request to its pool, with no retry. The caller owns the
      * connection: the cluster sets no timeout on it, does not change its database, does not
-     * reset it and records no metric for it. See docs/node-api.md
+     * reset it and records no metric for it. A query of the cluster that gets it after its
+     * release() resets it and sends USE first. See docs/node-api.md
      * @param options exclude: ids of the nodes to leave out. signal: ends the wait for the
      * connection when it aborts, the call then rejects with the reason of the signal as it is
      */
@@ -654,13 +655,16 @@ export class GaleraCluster {
 
         // the pool sets `aborted` on it when the abort ended the call, not an error of the node
         const outcome: AbortOutcome = {};
+        let connection: PoolConnection;
         try {
-            return { connection: await pool.getConnection(signal, outcome), nodeId: pool.id };
+            connection = await pool.getConnection(signal, outcome);
         } catch (error) {
             // the reason of the signal belongs to the app. It goes back as it is
             if (outcome.aborted) throw error;
             throw GaleraCluster._fromNode(error, pool.id);
         }
+        pool.lend(connection);
+        return { connection, nodeId: pool.id };
     }
 
     /**

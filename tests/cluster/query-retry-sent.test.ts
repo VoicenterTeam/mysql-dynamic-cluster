@@ -24,11 +24,16 @@ import Logger from '../../src/utils/Logger';
 // once, is still decided by what the pool knew
 type Cb = (...args: any[]) => void;
 
-const conn = (statement: (cb: Cb) => void, changeUser = (cb: Cb) => cb(null)) => ({
-    changeUser: jest.fn((_options: object, cb: Cb) => changeUser(cb)),
-    query: jest.fn((_options: object, cb: Cb) => statement(cb)),
+// `use` answers the USE of a query on another database, `reset` a reset
+const conn = (
+    statement: (cb: Cb) => void, use = (cb: Cb) => cb(null), reset = (cb: Cb) => cb(null)
+) => ({
+    query: jest.fn((options: { sql: string }, cb: Cb) =>
+        options.sql.startsWith('USE ') ? use(cb) : statement(cb)),
+    reset: jest.fn(reset),
     release: jest.fn(),
-    destroy: jest.fn()
+    destroy: jest.fn(),
+    stream: { destroy: jest.fn() }
 });
 
 // A real Pool whose mysql2 pool answers getConnection() as `connection` says. The pool with
@@ -37,7 +42,7 @@ const makePool = (id: number, connection?: (cb: Cb) => void): Pool => {
     const pool = new Pool({
         id, host: '10.0.0.' + id, port: 3306, name: 'node' + id,
         user: 'u', password: 'p', database: 'd',
-        queryTimeout: 1000, slowQueryTime: 1000, redisFactor: 1, redisExpire: 1,
+        queryTimeout: 1000, resetTimeout: 20, slowQueryTime: 1000, redisFactor: 1, redisExpire: 1,
         connectionLimit: 10, minConnections: 0, idleTimeout: 30000, idleCheckInterval: 10000,
         validators: [], loadFactors: [], timerCheckRange: { start: 1000, end: 10000 },
         timerCheckMultiplier: 2
@@ -74,20 +79,36 @@ describe('Pool.query() says whether the statement was sent', () => {
         ['the pool is not connected', undefined, false],
         ['getConnection() failed', (cb: Cb) => cb(failure()), false],
         ['no connection came', (cb: Cb) => cb(null, null), false],
-        ['the change of database failed',
-            handsOut(conn(cb => cb(null, ROWS), cb => cb(failure()))), false],
-        ['the change of database timed out',
-            handsOut(conn(cb => cb(null, ROWS), () => undefined)), false],
+        ['the USE failed', handsOut(conn(cb => cb(null, ROWS), cb => cb(failure()))), false],
+        ['the USE timed out', handsOut(conn(
+            cb => cb(null, ROWS), cb => cb({ code: 'PROTOCOL_SEQUENCE_TIMEOUT' })
+        )), false],
         ['the statement failed', handsOut(conn(cb => cb(failure()))), true],
         ['the statement timed out',
             handsOut(conn(cb => cb({ code: 'PROTOCOL_SEQUENCE_TIMEOUT' }))), true]
     ])('%s: sent is %p', async (_name, connection, sent) => {
         const outcome: any = {};
         const { error } = await settle(
-            makePool(1, connection).query('UPDATE t', { timeout: 20 }, outcome)
+            makePool(1, connection).query('UPDATE t', { timeout: 20, database: 'x' }, outcome)
         );
 
         expect([outcome.sent, error.sent]).toEqual([sent, sent]);
+    });
+
+    // the app had the connection, so it is reset before the statement
+    it.each([
+        ['failed', (cb: Cb) => cb(failure())],
+        ['ran out of resetTimeout', () => undefined]
+    ])('the reset of a connection the app had %s: sent is false', async (_name, reset) => {
+        const connection = conn(cb => cb(null, ROWS), undefined, reset);
+        const pool = makePool(1, handsOut(connection));
+        pool.lend(connection as any);
+        const outcome: any = {};
+        const { error } = await settle(pool.query('UPDATE t', {}, outcome));
+
+        expect([outcome.sent, error.sent]).toEqual([false, false]);
+        expect(connection.query).not.toHaveBeenCalled();
+        expect(connection.destroy).toHaveBeenCalled();
     });
 
     it('a statement that passed: sent is true in the outcome', async () => {

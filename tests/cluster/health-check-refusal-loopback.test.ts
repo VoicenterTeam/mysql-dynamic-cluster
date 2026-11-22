@@ -334,7 +334,12 @@ describe('next to it', () => {
         const server = await listen('accepts');
         const cluster = makeCluster(server.port, { timerCheckRange: { start: LONG, end: LONG } });
         await connectOf(cluster);
-        server.become('refuses the change of user');
+        // Its check asks through the pool, which sends no change of user: a refusal comes
+        // only at a login. The open connection goes, so each check logs in again
+        server.become('refuses the login');
+        server.hangUp();
+        const idle = () => cluster.getPoolStats()[0].idle;
+        await until(() => idle() === 0, 'the pool to drop its connection', idle);
 
         await check(cluster);
         const afterOne = node(cluster);
@@ -342,7 +347,7 @@ describe('next to it', () => {
 
         expect(afterOne).toStrictEqual({ isValid: true, checkError: DENIED });
         expect(node(cluster)).toStrictEqual({ isValid: false, checkError: DENIED });
-        expect(handedOut()).toEqual([[1045, true], [1045, true]]);
+        expect(handedOut()).toEqual([[1045, undefined], [1045, undefined]]);
         expect(timerWaits()).toEqual([LONG, LONG, LONG]);
     });
 });

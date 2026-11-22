@@ -7,7 +7,7 @@ import { createPoolCluster } from '../../index';
 // The cluster of createPoolCluster and the real mysql2 against mysql2's own server class on the
 // loopback interface. It shows what checkError holds for the errors mysql2 really makes: a
 // refused login, a closed port, a server that hangs up, and the timeouts
-const COM_CHANGE_USER = 0x11;
+const COM_RESET_CONNECTION = 0x1f;
 const DENIED = { code: 'ER_ACCESS_DENIED_ERROR', errno: 1045, sqlState: '28000' };
 const NOT_VALID = 'pool in host 127.0.0.1 is not valid';
 
@@ -92,11 +92,12 @@ const listen = async (mode: Mode): Promise<IServer> => {
                 done(null, { message: "Access denied for user 'u'@'127.0.0.1'", code: 1045 });
             }
         });
-        // the pool changes the database of a connection before a query of its own
+        // The pool sends no change of user. It resets a connection whose query failed, and one
+        // the app had, before it uses it again
         connection.on('packet', (_packet: object, known: boolean, code: number) => {
-            if (!known && code === COM_CHANGE_USER) {
+            if (!known && code === COM_RESET_CONNECTION) {
                 connection.sequenceId = 1;
-                connection.writeOk();
+                connection.writeOk({ serverStatus: 2 });
             }
         });
         connection.on('query', () => {

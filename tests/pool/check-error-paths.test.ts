@@ -47,11 +47,11 @@ const makePool = (): any => {
     return new Pool({ id: 1, ...host }, 'test');
 };
 
-// mysql2 calls back later, never inside getConnection, changeUser or query
+// mysql2 calls back later, never inside getConnection, reset or query
 const later = (call: () => void) => { Promise.resolve().then(call); };
-const makeConn = (opts: { changeUserErr?: any, queryErr?: any, hangs?: 'changeUser' } = {}) => ({
-    changeUser: jest.fn((_o: any, cb: Cb) => {
-        if (opts.hangs !== 'changeUser') later(() => cb(opts.changeUserErr ?? null));
+const makeConn = (opts: { queryErr?: any, hangs?: 'reset' } = {}) => ({
+    reset: jest.fn((cb: Cb) => {
+        if (opts.hangs !== 'reset') later(() => cb(null));
     }),
     query: jest.fn((_o: any, cb: Cb) => later(() => cb(opts.queryErr ?? null, []))),
     release: jest.fn(),
@@ -112,18 +112,22 @@ describe('checkError after a failure the package makes itself', () => {
         expect(failed[0].message).toContain("Can't find connection");
     });
 
-    it('is empty for the timer of the package around the change of database', async () => {
+    it('is empty for the time limit of the package around a reset', async () => {
         jest.useFakeTimers();
-        const conn = makeConn({ hangs: 'changeUser' });
+        const conn = makeConn({ hangs: 'reset' });
         const pool = handsOut(conn);
+        // the app had the connection, so the query resets it first
+        pool.lend(conn);
         const query = pool.query('SELECT 1').catch((e: any) => e);
         await turns();
-        jest.advanceTimersByTime(TIMEOUT);
+        // resetTimeout of the defaults
+        jest.advanceTimersByTime(1000);
         const timeout = await query;
         jest.useRealTimers();
         // the query of a caller still fails with the code, and the connection is destroyed
         expect(timeout.code).toBe('PROTOCOL_SEQUENCE_TIMEOUT');
         expect(conn.destroy).toHaveBeenCalledTimes(1);
+        expect(conn.query).not.toHaveBeenCalled();
 
         pool.query = jest.fn().mockRejectedValue(timeout);
         expect(await check(pool)).toStrictEqual({});
@@ -167,10 +171,6 @@ describe('checkError after a failure mysql2, the socket or the server made', () 
             new Error('Connection lost: The server closed the connection.'),
             { fatal: true, code: 'PROTOCOL_CONNECTION_LOST' }
         )), { code: 'PROTOCOL_CONNECTION_LOST' }],
-        ['a refused change of database', () => handsOut(makeConn({ changeUserErr: Object.assign(
-            new Error("Unknown database 'd'"),
-            { code: 'ER_BAD_DB_ERROR', errno: 1049, sqlState: '42000', fatal: true }
-        ) })), { code: 'ER_BAD_DB_ERROR', errno: 1049, sqlState: '42000' }],
         ['a refused status query', () => handsOut(makeConn({ queryErr: Object.assign(
             new Error('Access denied; you need the PROCESS privilege'),
             { code: 'ER_SPECIFIC_ACCESS_DENIED_ERROR', errno: 1227, sqlState: '42000' }

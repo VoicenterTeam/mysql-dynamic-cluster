@@ -62,8 +62,9 @@ const collect = async (): Promise<ICollected> => {
 const counts = (collected: ICollected, name: string): number[] =>
     collected[name] ? collected[name].points.map(point => point.value.count) : [];
 
+// the pool resets a connection after a query that failed, before it goes back
 const makeConn = (opts: { queryErr?: any, rows?: any } = {}) => ({
-    changeUser: jest.fn((_o: any, cb: Cb) => cb(null)),
+    reset: jest.fn((cb: Cb) => cb(null)),
     query: jest.fn((_o: any, cb: Cb) => cb(opts.queryErr ?? null, opts.rows)),
     release: jest.fn(),
     destroy: jest.fn()
@@ -73,7 +74,8 @@ const makePool = (conn: any, id: number = 1): Pool => {
     const pool = new Pool({
         id, host: `10.0.0.${id}`, port: 3307, name: `node${id}`,
         user: 'u', password: 'p', database: 'd',
-        queryTimeout: 1000, slowQueryTime: 1000, redisFactor: 1, redisExpire: 1,
+        queryTimeout: 1000, resetTimeout: 1000, slowQueryTime: 1000, redisFactor: 1,
+        redisExpire: 1,
         connectionLimit: 10, minConnections: 0, idleTimeout: 30000, idleCheckInterval: 10000,
         validators: [], loadFactors: [], timerCheckRange: { start: 1000, end: 10000 }, timerCheckMultiplier: 2
     } as any, 'c1');

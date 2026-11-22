@@ -16,12 +16,24 @@ import { Pool } from '../../src/pool/Pool';
 type Cb = (err: any, res?: any) => void;
 
 // queries answer asynchronously so a commit issued before they finish is caught
-const makeConn = (opts: { changeUserErr?: any, beginErr?: any, queryErrs?: Record<string, any>, commitErr?: any, rollbackErr?: any } = {}) => {
+// useErr answers the USE of a transaction on another database
+const makeConn = (opts: {
+    useErr?: any, beginErr?: any, queryErrs?: Record<string, any>, commitErr?: any,
+    rollbackErr?: any
+} = {}) => {
     const log: string[] = [];
     const conn = {
         log,
-        changeUser: jest.fn((_o: any, cb: Cb) => setImmediate(() => cb(opts.changeUserErr ?? null))),
+        changeUser: jest.fn(),
+        reset: jest.fn((cb: Cb) => setImmediate(() => {
+            log.push('reset');
+            cb(null);
+        })),
         query: jest.fn((o: any, cb: Cb) => setImmediate(() => {
+            if (o.sql.startsWith('USE ')) {
+                log.push(o.sql);
+                return cb(opts.useErr ?? null);
+            }
             if (o.sql === 'ROLLBACK') {
                 log.push('rollback');
                 return cb(opts.rollbackErr ?? null);
@@ -48,7 +60,7 @@ const makePool = (getConnErr: any, conn: any): Pool => {
     const pool = new Pool({
         id: 1, host: '127.0.0.1', port: 3306, name: 'test',
         user: 'u', password: 'p', database: 'd',
-        queryTimeout: 1000, slowQueryTime: 1, redisFactor: 1, redisExpire: 1,
+        queryTimeout: 1000, resetTimeout: 1000, slowQueryTime: 1, redisFactor: 1, redisExpire: 1,
         connectionLimit: 10, minConnections: 0, idleTimeout: 30000, idleCheckInterval: 10000,
         validators: [], loadFactors: [], timerCheckRange: { start: 1000, end: 10000 }, timerCheckMultiplier: 2
     } as any, 'cluster');
@@ -121,28 +133,34 @@ describe('Pool.multiStatementQuery', () => {
         expect(conn.query).toHaveBeenLastCalledWith({ sql: 'ROLLBACK', timeout: 700 }, expect.any(Function));
     });
 
-    it('changeUser fails: no transaction, destroys once', async () => {
-        const conn = makeConn({ changeUserErr: { code: 'ER_BAD_DB_ERROR', fatal: true } });
-        await expect(makePool(null, conn).multiStatementQuery(['A'], {})).rejects.toBeTruthy();
-        expect(conn.log).not.toContain('begin');
-        expect(conn.query).not.toHaveBeenCalled();
-        expect(conn.destroy).toHaveBeenCalledTimes(1);
-        expect(conn.release).not.toHaveBeenCalled();
+    it('another database: USE with the timeout, then the transaction, no change of user',
+        async () => {
+            const conn = makeConn();
+            await makePool(null, conn).multiStatementQuery(['A'], { database: 'h', timeout: 700 });
+            expect(conn.query.mock.calls[0][0]).toEqual({ sql: 'USE `h`', timeout: 700 });
+            expect(conn.log).toEqual(['USE `h`', 'begin', 'A', 'commit']);
+            expect(conn.changeUser).not.toHaveBeenCalled();
+            expect(conn.release).toHaveBeenCalledTimes(1);
+        });
+
+    it('USE fails: no transaction, resets and releases once', async () => {
+        const conn = makeConn({ useErr: { code: 'ER_BAD_DB_ERROR', errno: 1049 } });
+        await expect(makePool(null, conn).multiStatementQuery(['A'], { database: 'nope' }))
+            .rejects.toMatchObject({ errno: 1049 });
+        // the release waits for the answer of the reset
+        await new Promise(setImmediate);
+        expect(conn.log).toEqual(['USE `nope`', 'reset']);
+        expect(conn.release).toHaveBeenCalledTimes(1);
+        expect(conn.destroy).not.toHaveBeenCalled();
     });
 
-    it('changeUser never answers: rejects after the timeout and destroys', async () => {
-        jest.useFakeTimers();
-        try {
-            const conn = makeConn();
-            conn.changeUser.mockImplementation(() => undefined);
-            const p = makePool(null, conn).multiStatementQuery(['A'], { timeout: 500 });
-            jest.advanceTimersByTime(500);
-            await expect(p).rejects.toMatchObject({ code: 'PROTOCOL_SEQUENCE_TIMEOUT' });
-            expect(conn.log).not.toContain('begin');
-            expect(conn.destroy).toHaveBeenCalledTimes(1);
-        } finally {
-            jest.useRealTimers();
-        }
+    it('USE times out: no transaction, destroys', async () => {
+        const conn = makeConn({ useErr: { code: 'PROTOCOL_SEQUENCE_TIMEOUT' } });
+        await expect(makePool(null, conn).multiStatementQuery(['A'], { database: 'h' }))
+            .rejects.toMatchObject({ code: 'PROTOCOL_SEQUENCE_TIMEOUT' });
+        expect(conn.log).toEqual(['USE `h`']);
+        expect(conn.destroy).toHaveBeenCalledTimes(1);
+        expect(conn.release).not.toHaveBeenCalled();
     });
 
     it('START TRANSACTION fails: no statements, hands back once', async () => {

@@ -9,11 +9,16 @@ import Logger from '../../src/utils/Logger';
 
 // The signal query option of cluster.query(), against the real mysql2 and mysql2's own server
 // class on the loopback interface. An abort ends the call with the reason of the signal as it
-// is, at any of three moments: while the request waits for a connection, during the change of
-// database and during the statement. A connection the call holds then is destroyed, never
-// released. No other node gets the statement, and no listener stays on the signal
+// is, at any of three moments: while the request waits for a connection, during the USE of
+// another database and during the statement. A connection the call holds then is destroyed,
+// never released. No other node gets the statement, and no listener stays on the signal
 const COM_CHANGE_USER = 0x11;
+const COM_RESET_CONNECTION = 0x1f;
 const LONG = 600000;
+// the status flags of an OK header of a server: autocommit on, no transaction
+const AUTOCOMMIT = 2;
+// a database other than the one of the pools: a query on it sends USE first
+const OTHER = 'other';
 
 // loopback only: a hang here is a bug, not a slow network
 jest.setTimeout(20000);
@@ -50,20 +55,20 @@ const APP_SQL = 'UPDATE t SET a = 1';
 const DEADLOCK = { errno: 1213, message: 'Deadlock found when trying to get lock' };
 
 // What a node does with the call of the app, from the moment a test says so. Until then it
-// takes every login, every change of user and every statement
+// takes every login, every USE and every statement
 type Mode =
     | 'answers'
     // answers the statement with a deadlock
     | 'deadlocks'
     // takes the statement and never answers it
     | 'stays silent'
-    // never answers the change of user the pool sends before the statement
-    | 'ignores the change of user'
+    // never answers the USE the pool sends before a statement on another database
+    | 'ignores USE'
     // keeps each new login waiting until the test calls letIn()
     | 'holds the login';
 
 // what a node saw, counted. `closed` counts the sockets of the app that closed
-type Seen = 'logins' | 'changesOfUser' | 'statements' | 'closed';
+type Seen = 'logins' | 'uses' | 'resets' | 'statements' | 'closed';
 
 interface INode {
     port: number,
@@ -80,7 +85,9 @@ interface INode {
 const listen = async (connections: number): Promise<INode> => {
     const server: any = (mysql as any).createServer();
     const open: any[] = [];
-    const counts: Record<Seen, number> = { logins: 0, changesOfUser: 0, statements: 0, closed: 0 };
+    const counts: Record<Seen, number> = {
+        logins: 0, uses: 0, resets: 0, statements: 0, closed: 0
+    };
     const waiters: { what: Seen, after: number, resolve: () => void }[] = [];
     const count = (what: Seen) => {
         counts[what]++;
@@ -117,12 +124,13 @@ const listen = async (connections: number): Promise<INode> => {
                 held.push(() => done(null));
             }
         });
+        // The check connection changes the user before its status query. The pool does not:
+        // it resets a connection the app had before it uses it again
         connection.on('packet', (_packet: object, known: boolean, code: number) => {
-            if (known || code !== COM_CHANGE_USER) return;
-            count('changesOfUser');
-            if (mode === 'ignores the change of user') return;
+            if (known || (code !== COM_CHANGE_USER && code !== COM_RESET_CONNECTION)) return;
+            if (code === COM_RESET_CONNECTION) count('resets');
             connection.sequenceId = 1;
-            connection.writeOk();
+            connection.writeOk({ serverStatus: AUTOCOMMIT });
         });
         connection.on('query', (sql: string) => {
             connection.sequenceId = 1;
@@ -130,13 +138,17 @@ const listen = async (connections: number): Promise<INode> => {
                 const columns = [column('Variable_name'), column('Value')];
                 return connection.writeTextResult(status(connections), columns);
             }
-            if (sql !== APP_SQL) return connection.writeOk();
+            if (sql.startsWith('USE ')) {
+                count('uses');
+                if (mode === 'ignores USE') return;
+            }
+            if (sql !== APP_SQL) return connection.writeOk({ serverStatus: AUTOCOMMIT });
             count('statements');
             if (mode === 'stays silent') return;
             if (mode === 'deadlocks') {
                 return connection.writeError({ message: DEADLOCK.message, code: DEADLOCK.errno });
             }
-            connection.writeOk({ affectedRows: 1 });
+            connection.writeOk({ affectedRows: 1, serverStatus: AUTOCOMMIT });
         });
         connection.on('quit', () => connection.close());
     });
@@ -276,11 +288,12 @@ describe('an abort while the request waits for a connection', () => {
         taken.connection.release();
         expect(stats(cluster, 1)).toMatchObject({ used: 0, idle: 1, pending: 0 });
         expect(seen('statements', n1, n2)).toEqual([0, 0]);
-        // and the next call runs on it, with no new login
+        // and the next call runs on it, with no new login. The app had it, so it is reset first
         const logins = seen('logins', n1, n2);
         expect((await call(cluster)).result.affectedRows).toBe(1);
         expect(seen('logins', n1, n2)).toEqual(logins);
         expect(seen('statements', n1, n2)).toEqual([1, 0]);
+        expect(seen('resets', n1, n2)).toEqual([1, 0]);
     });
 
     it('while its connection logs in: the connection goes to the pool when it arrives',
@@ -321,16 +334,16 @@ const expectDropped = async (cluster: any, n1: INode, n2: INode, closed: Promise
     expect(n2.seen('statements')).toBe(0);
 };
 
-describe('an abort during the change of database', () => {
+describe('an abort during the USE of another database', () => {
     it('rejects with the reason as it is and destroys the connection', async () => {
         const { cluster, n1, n2 } = await twoNodes();
-        n1.become('ignores the change of user');
+        n1.become('ignores USE');
         const controller = new AbortController();
         const reason = reasonOf();
-        const changed = n1.next('changesOfUser');
+        const used = n1.next('uses');
         const second = jest.spyOn(cluster.pools[1], 'query');
-        const pending = call(cluster, { signal: controller.signal });
-        await changed;
+        const pending = call(cluster, { signal: controller.signal, database: OTHER });
+        await used;
         const n2logins = n2.seen('logins');
         const closed = n1.next('closed');
 
@@ -350,12 +363,12 @@ describe('an abort during the change of database', () => {
 });
 
 describe('an abort right after the connection arrived', () => {
-    it('before the change of database: the connection is destroyed, nothing is sent',
+    it('before the USE of another database: the connection is destroyed, nothing is sent',
         async () => {
             const { cluster, n1, n2 } = await twoNodes();
             // a first call leaves an idle connection, which mysql2 hands out on a tick
             await call(cluster);
-            const changes = n1.seen('changesOfUser');
+            const uses = n1.seen('uses');
             const controller = new AbortController();
             const reason = reasonOf();
             // mysql2 emits acquire and then queues the tick that hands the connection out.
@@ -367,9 +380,10 @@ describe('an abort right after the connection arrived', () => {
             });
             const closed = n1.next('closed');
 
-            expect((await call(cluster, { signal: controller.signal })).error).toBe(reason);
+            const options = { signal: controller.signal, database: OTHER };
+            expect((await call(cluster, options)).error).toBe(reason);
 
-            expect(n1.seen('changesOfUser')).toBe(changes);
+            expect(n1.seen('uses')).toBe(uses);
             expect(seen('statements', n1, n2)).toEqual([1, 0]);
             expect(listeners(controller.signal)).toBe(0);
             await closed;

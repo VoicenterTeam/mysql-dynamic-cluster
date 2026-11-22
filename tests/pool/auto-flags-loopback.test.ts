@@ -22,7 +22,6 @@ import { Settings } from '../../src/utils/Settings';
 // The real Pool and the real mysql2 against mysql2's own server class on the loopback interface.
 // It shows which capability every login of a pool announces, which the mocked tests cannot
 const CLIENT_QUERY_ATTRIBUTES = 1 << 27;
-const COM_CHANGE_USER = 0x11;
 
 // loopback only: a hang here is a bug, not a slow network
 jest.setTimeout(20000);
@@ -75,13 +74,6 @@ const listen = (serverVersion: string): Promise<{ port: number, announced: boole
             authCallback: (_params: object, done: (err: null) => void) => {
                 announced.push((connection.clientHelloReply.clientFlags & CLIENT_QUERY_ATTRIBUTES) !== 0);
                 done(null);
-            }
-        });
-        // the pool changes the database of a connection before a query
-        connection.on('packet', (_packet: object, known: boolean, code: number) => {
-            if (!known && code === COM_CHANGE_USER) {
-                connection.sequenceId = 1;
-                connection.writeOk();
             }
         });
         connection.on('query', () => {

@@ -17,6 +17,7 @@ import { Timer } from '../../src/utils/Timer';
 // after the one of connect() is a check passive health started. Passive health acts inside
 // the callback that fails the call, so a test reads the node as soon as its call rejected
 const COM_CHANGE_USER = 0x11;
+const COM_RESET_CONNECTION = 0x1f;
 const LONG = 600000;
 const APP_SQL = 'SELECT 1';
 
@@ -57,8 +58,6 @@ type Mode =
     | 'hangs up'
     // answers with error 1213, as a node does for a deadlock or a certification failure
     | 'deadlocks'
-    // answers the change of user ahead of the query with error 1045
-    | 'refuses the change of user'
     // answers every new login with error 1045
     | 'refuses the login'
     // takes what it is sent and answers nothing, to the app and to a check alike
@@ -113,12 +112,13 @@ const listen = async (mode: Mode): Promise<IServer> => {
                 done(null, mode === 'refuses the login' ? refuse : undefined);
             }
         });
-        // the pool changes the user of a connection before a query of its own
+        // The check connection changes the user before its status query. The pool does not:
+        // it resets a connection after a query that failed
         connection.on('packet', (_packet: object, known: boolean, code: number) => {
-            if (known || code !== COM_CHANGE_USER || mode === 'says nothing') return;
+            if (known || mode === 'says nothing') return;
+            if (code !== COM_CHANGE_USER && code !== COM_RESET_CONNECTION) return;
             connection.sequenceId = 1;
-            if (mode === 'refuses the change of user') return connection.writeError(refuse);
-            connection.writeOk();
+            connection.writeOk({ serverStatus: 2 });
         });
         connection.on('query', (sql: string) => {
             if (mode === 'says nothing') return;
@@ -395,8 +395,6 @@ describe('a healthCheck node whose server answers a query of the app with an err
     // what mysql2 hands out for each: the code, the errno of the server and fatal
     it.each<[string, Mode, boolean, any[]]>([
         ['a deadlock, errno 1213', 'deadlocks', false, ['ER_LOCK_DEADLOCK', 1213, undefined]],
-        ['a login refused on an open connection, fatal for mysql2',
-            'refuses the change of user', false, ['ER_ACCESS_DENIED_ERROR', 1045, true]],
         ['a login refused on a new connection',
             'refuses the login', true, ['ER_ACCESS_DENIED_ERROR', 1045, undefined]]
     ])('%s changes nothing', async (_name, mode, fresh, wanted) => {
@@ -535,22 +533,27 @@ describe('two healthy nodes whose idle pooled connections the path forgot', () =
             expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
         });
 
+    // The pool sends the statement first on a forgotten connection, so the statement may have
+    // run: the next node is not tried. Until 5.0.0 a change of user went first, met the reset
+    // with the statement not sent, and the next node got the query. The probe of an idle
+    // connection on borrow (#93) finds such a connection before the statement again
     it('through cluster.query: no node goes down, and one query at most is lost per ' +
         'forgotten connection', async () => {
         const { cluster, downs } = await stale();
+        const second = jest.spyOn(cluster.pools[1], 'query');
         const ask = () => cluster.query(APP_SQL, undefined, { timeout: 0 })
             .then(() => 'passed', () => 'rejected');
 
-        // each of the three meets a forgotten connection, at one node or at both
+        // each of the three meets a forgotten connection of node 1, which is tried first
         const first = await Promise.all([ask(), ask(), ask()]);
         const later: string[] = [];
         for (let i = 0; i < 40; i++) later.push(await ask());
         await settled(cluster, 0);
-        await settled(cluster, 1);
 
-        // twelve were forgotten, six in each pool, and the first three queries met three
+        // six were forgotten in its pool, and the first three queries met three
         const lost = (asked: string[]) => asked.filter(how => how === 'rejected').length;
-        expect([lost(first), lost(later) <= 9]).toEqual([3, true]);
+        expect([lost(first), lost(later) <= 3]).toEqual([3, true]);
+        expect(second).not.toHaveBeenCalled();
         expect(later.slice(-20)).toEqual(Array(20).fill('passed'));
         expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
     });
