@@ -498,10 +498,14 @@ Borrow.ts, `{ signal?, target?, probe? }`, internal and in no public type;
    passive health once with `status.probeFailed()`, and the loop takes the
    next connection of the node: at most `connectionLimit + 1` tries, and a
    new connection ends it at the latest. Once `status.isValid` is false,
-   health gave the node up (such as the check passive health started for
-   an earlier failed probe), the next failed probe ends the loop at once
+   health gave the node up, the next failed probe ends the loop at once
    and rejects with its error, `sent: false`, so the cluster tries the next
-   node instead of probing every idle connection here. An abort during the probe drops
+   node instead of probing every idle connection here. Within the loop
+   that comes from passive health, which only a node with a `healthCheck`
+   block has: the check it starts for the first failed probe decides, and
+   with the block's default check `timeout` of 5 s that is after about 6
+   to 7 probes. `_heard()` returns at once on a node of the legacy check,
+   so there only the check of the timer can end the loop early. An abort during the probe drops
    the connection, tells nothing, and rejects with the reason. The health
    check of a node without a `healthCheck` block passes `probe: false`
    through `IPoolCall` of `Pool.query()`.

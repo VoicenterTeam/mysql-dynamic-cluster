@@ -294,12 +294,16 @@ per idle connection, then
 mysql2's `connectTimeout` for the login of a new one, before `sent: false`
 lets the next node try: about `connectionLimit × probeTimeout` plus one
 `connectTimeout`, 20 s with a limit of 10 and the defaults. The borrow
-stops sooner once health has given the node up: each failed probe tells
-passive health of a lost connection, which starts a check at once, and
-the first probe that fails after that check took the node down ends the
-borrow with `sent: false`. That check has its own `timeout`, 5 s by
-default, so with the defaults the next node gets the query after 6 to
-7 s. Only the `signal` option bounds the whole call.
+stops sooner once health has given the node up, and only passive health
+does that within the borrow, so it needs a `healthCheck` block. On such a
+node each failed probe tells passive health of a lost connection, which
+starts a check at once, and the first probe that fails after that check
+took the node down ends the borrow with `sent: false`. With the block's
+default check `timeout` of 5 s that is after about 6 to 7 probes. A node
+on the legacy check, the default without a block, has no passive
+health: only the check of its timer can take it down, so a query there
+pays about the whole worst case. Only the `signal` option bounds the
+whole call.
 
 | The node failed with | Next node |
 | --- | --- |

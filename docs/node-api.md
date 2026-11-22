@@ -326,9 +326,12 @@ So the call can take up to `probeTimeout` longer per connection that does not an
 worst case is a path that drops the packets of every idle connection without a reset: each
 one costs `probeTimeout`, so about `connectionLimit × probeTimeout` (10 s with a limit of
 10 and the defaults) pass before the call gets to a new connection, which then has
-mysql2's `connectTimeout` for its login. It ends sooner once health has given the node up:
-a failed probe tells passive health of a lost connection, which starts a check, and the
-first probe that fails after that check took the node down rejects the call with its error.
+mysql2's `connectTimeout` for its login. On a node with a `healthCheck` block it ends
+sooner: a failed probe tells passive health of a lost connection, which starts a check, and
+the first probe that fails after that check took the node down rejects the call with its
+error. With the block's default check `timeout` of 5 s that is after about 6 to 7 probes. A
+node on the legacy check, the default without a block, has no passive health and keeps
+about the whole worst case.
 A connection used within `probeIdle` gets no ping of its own.
 
 #### The reset at release()
