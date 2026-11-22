@@ -168,7 +168,9 @@ can be broken down by pool, service and error type. See
 The `Promise` callback chain is, in order:
 
 1. `_borrow.take({ signal, target, probe }, asked)`, `target` being
-   `{ database, timeout }` — takes a connection ready for the statement,
+   `{ database, timeout, valuesInText }` (`valuesInText` only without
+   `execute`, and `timeout` clamped to 2147483647 ms, the longest wait of a
+   timer) — takes a connection ready for the statement,
    see [Borrow](#borrow-taking-and-giving-back-a-connection): the queue of
    mysql2 and an abort while the request waits, the probe of a connection
    that was idle longer than `probeIdle`, or one the reaper's ping is
