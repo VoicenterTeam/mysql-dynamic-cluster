@@ -287,11 +287,13 @@ describe('an abort while the request waits for a connection', () => {
         expect(second).not.toHaveBeenCalled();
         expect(stats(cluster, 1).pending).toBe(0);
         expect(listeners(controller.signal)).toBe(0);
-        // the connection given back goes to the pool, not to the call that gave up
+        // the connection given back goes to the pool, not to the call that gave up. The app
+        // had it, so its release() resets it first
         taken.connection.release();
+        await turns(() => stats(cluster, 1).idle === 1);
         expect(stats(cluster, 1)).toMatchObject({ used: 0, idle: 1, pending: 0 });
         expect(seen('statements', n1, n2)).toEqual([0, 0]);
-        // and the next call runs on it, with no new login. The app had it, so it is reset first
+        // and the next call runs on it, with no new login and no second reset
         const logins = seen('logins', n1, n2);
         expect((await call(cluster)).result.affectedRows).toBe(1);
         expect(seen('logins', n1, n2)).toEqual(logins);

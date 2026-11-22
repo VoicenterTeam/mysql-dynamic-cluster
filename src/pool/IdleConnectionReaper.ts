@@ -8,6 +8,25 @@ export interface IIdlePing {
     removed: (error: any) => void
 }
 
+// What the reaper knew of a connection when the pool drew it, see drawn()
+export interface IDrawn {
+    // when the connection was last seen alive: its release into the pool, or the last ping of
+    // the reaper it answered since. Unknown for a connection that was never idle in the pool
+    aliveAt?: number,
+    // the ping of the reaper that was still out on it: calls back once with its answer
+    ping?: (answered: (error?: any) => void) => void
+}
+
+// A ping of the reaper that is out on a connection
+interface IPingOut {
+    // ends the ping while the connection is idle, see _pingIdle()
+    timer: ReturnType<typeof setTimeout>,
+    // the pool drew the connection and waits for the answer, see drawn()
+    waiting?: (error?: any) => void,
+    // the answer came: with the error of the ping, or with nothing
+    answer?: { error?: any }
+}
+
 // A ping is never paced below this, whatever idleCheckInterval is
 const PING_PACE_MIN = 100;
 // The longest wait a timer of Node takes. A longer one, as one below 1 ms, runs after 1 ms
@@ -23,8 +42,12 @@ export class IdleConnectionReaper {
     // the timer of the ping, apart from that of the age rule: see _pingPace()
     private _pingTimer: ReturnType<typeof setInterval> | null = null;
     private _idleConnections: Map<any, number> = new Map();
-    // the pings that are out: the idle connection, and the timer that ends its ping
-    private _pings: Map<any, ReturnType<typeof setTimeout>> = new Map();
+    // the pings that are out on idle connections
+    private _pings: Map<any, IPingOut> = new Map();
+    // when each connection last answered a ping
+    private _answered = new WeakMap<object, number>();
+    // what onAcquire() knew of each connection the pool drew, until drawn() takes it
+    private _drawn = new WeakMap<object, IDrawn>();
 
     /**
      * @param ping when given, every idle connection the age rule keeps gets a ping at each
@@ -79,7 +102,7 @@ export class IdleConnectionReaper {
         // behind the ping, and would wait there for an answer that may never come
         const out = [...this._pings];
         this._pings.clear();
-        for (const [connection, timer] of out) {
+        for (const [connection, { timer }] of out) {
             clearTimeout(timer);
             try {
                 drop(connection);
@@ -94,13 +117,40 @@ export class IdleConnectionReaper {
     }
 
     onAcquire(connection: any): void {
+        const releasedAt = this._idleConnections.get(connection);
         this._idleConnections.delete(connection);
-        // The app has the connection now, and a ping that is out on it is the app's to
-        // wait for: mysql2 sends what the app asks after the ping, and fails it with the
-        // error of the ping when the connection is lost. The reaper closes no connection
-        // the app holds
-        clearTimeout(this._pings.get(connection));
+        // The pool has the connection now, and a ping that is out on it is the pool's to
+        // wait for, see drawn(). mysql2 sends what comes next after the ping, and fails it
+        // with the error of the ping when the connection is lost. The reaper closes no
+        // connection the pool lent
+        const out = this._pings.get(connection);
+        if (out) clearTimeout(out.timer);
         this._pings.delete(connection);
+        const answeredAt = this._answered.get(connection);
+        const aliveAt = releasedAt === undefined ? undefined
+            : Math.max(releasedAt, answeredAt ?? releasedAt);
+        this._drawn.set(connection, {
+            aliveAt,
+            ping: out && (answered => IdleConnectionReaper._wait(out, answered))
+        });
+    }
+
+    /**
+     * What the reaper knew of a connection when the pool drew it from its idle ones: since
+     * when it is known to be alive, and the ping that was still out on it. Undefined for a
+     * connection mysql2 handed on without drawing it, as it does from one caller to the next
+     * that waits. Each draw is told once: a second call returns undefined
+     */
+    drawn(connection: object): IDrawn | undefined {
+        const drawn = this._drawn.get(connection);
+        this._drawn.delete(connection);
+        return drawn;
+    }
+
+    // call back with the answer of a ping, at once when it came already
+    private static _wait(out: IPingOut, answered: (error?: any) => void): void {
+        if (out.answer) return answered(out.answer.error);
+        out.waiting = answered;
     }
 
     private _tick(): void {
@@ -141,9 +191,9 @@ export class IdleConnectionReaper {
             if (this._pings.has(connection)) continue;
 
             const ended = (error?: any) => {
-                // the app drew the connection, or stop() ran: this ping decides nothing
-                if (this._pings.get(connection) !== timer) return;
-                clearTimeout(timer);
+                // the pool drew the connection, or stop() ran: this ping decides nothing
+                if (this._pings.get(connection) !== out) return;
+                clearTimeout(out.timer);
                 this._pings.delete(connection);
                 if (!error) return;
                 this._idleConnections.delete(connection);
@@ -155,14 +205,23 @@ export class IdleConnectionReaper {
                 ping.removed(error);
             };
             // the code is the one mysql2 has for a timeout, but this timer is the package's own
-            const timer = setTimeout(() => ended(Object.assign(
-                new Error("Ping timeout"), { code: 'PROTOCOL_SEQUENCE_TIMEOUT' }
-            )), ping.timeout);
-            this._pings.set(connection, timer);
+            const out: IPingOut = {
+                timer: setTimeout(() => ended(Object.assign(
+                    new Error("Ping timeout"), { code: 'PROTOCOL_SEQUENCE_TIMEOUT' }
+                )), ping.timeout)
+            };
+            // the answer of mysql2: seen alive, and told to the pool when it drew the connection
+            const answered = (error?: any) => {
+                if (!error) this._answered.set(connection, Date.now());
+                out.answer = { error };
+                out.waiting?.(error);
+                ended(error);
+            };
+            this._pings.set(connection, out);
             try {
-                connection.ping(ended);
+                connection.ping((error: any) => answered(error ?? undefined));
             } catch (thrown) {
-                ended(thrown);
+                answered(thrown);
             }
         }
     }

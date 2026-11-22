@@ -186,7 +186,8 @@ const makeNode = (steps: Step[]) => {
                         if (step === 'held') return node.held.push(done);
                         if (step !== 'hang') done(null, isFailure(step) ? [] : step);
                     },
-                    release: jest.fn(), destroy: jest.fn()
+                    release: jest.fn(), destroy: jest.fn(),
+                    on: jest.fn(), removeListener: jest.fn()
                 });
             }
         }
@@ -1360,13 +1361,13 @@ describe('passive health: what never counts', () => {
         const node = fakeNode([PASS, 'stuck', REFUSED]);
         await start({ resetTimeout: 2000, healthCheck: {} });
         await pass(1000);
-        // the pool takes the connection for one the app had, so it resets it first
+        // the connection the call draws comes back as one the app had, so the call resets it
+        // first: the reset of the draw, which the release of a lent connection makes rare
         const pool = cluster.pools[0];
-        const take = pool.getConnection.bind(pool);
-        jest.spyOn(pool, 'getConnection').mockImplementation(async (...args: any[]) => {
-            const connection = await take(...args);
-            pool.lend(connection);
-            return connection;
+        const handOut = node.mysqlPool.getConnection;
+        node.mysqlPool.getConnection = (cb: Cb) => handOut((error: any, connection: any) => {
+            if (connection) pool.lend(connection);
+            cb(error, connection);
         });
         const call = failed(direct());
         await pass(2000);
@@ -1999,6 +2000,8 @@ describe('passive health: disconnect() and a new connect()', () => {
         const node = fakeNode([PASS, 'held', REFUSED]);
         await start({ healthCheck: {} });
         const call = failed(direct());
+        // the statement is out by then
+        await pass(0);
         await cluster.disconnect();
         node.held[0](reset());
         await call;

@@ -14,11 +14,15 @@ import Metrics from '../../src/metrics/Metrics';
 // flags are set, so connect() logs in once. They are the flags the package picks for the
 // version this server announces, so the connections are those of the default settings
 const COM_CHANGE_USER = 0x11;
+const COM_RESET_CONNECTION = 0x1f;
 const LONG = 600000;
 const APP_SQL = 'SELECT 1';
 // the idle timeout of the path in the rows that have one, and the pause of the app there
 const PATH_IDLE = 1500;
 const PAUSE = 3000;
+// the default probeIdle: a pooled connection idle longer than this answers a ping before a
+// statement goes to it
+const PROBE_IDLE = 1000;
 
 // loopback only: a hang here is a bug, not a slow network
 jest.setTimeout(20000);
@@ -54,7 +58,7 @@ interface IServer {
     logins: () => number,
     // the pings that arrived, each by the number of its connection, in the order of the logins
     pings: () => number[],
-    // what arrived on the connections, in order: 'ping', 'user' or 'query'
+    // what arrived on the connections, in order: 'ping', 'user', 'reset' or 'query'
     order: () => string[],
     // how many connections are open at the server right now
     open: () => number,
@@ -99,10 +103,11 @@ const listen = async (): Promise<IServer> => {
                 done(null);
             }
         });
-        // the check connection changes the user before its status query. The pool does not
+        // The check connection changes the user before its status query. The pool does not:
+        // it resets a connection the app had when the app releases it
         connection.on('packet', (_packet: object, known: boolean, code: number) => {
-            if (known || code !== COM_CHANGE_USER) return;
-            seen.order.push('user');
+            if (known || (code !== COM_CHANGE_USER && code !== COM_RESET_CONNECTION)) return;
+            seen.order.push(code === COM_CHANGE_USER ? 'user' : 'reset');
             ok(connection);
         });
         connection.on('ping', () => {
@@ -467,16 +472,20 @@ describe('a node without a healthCheck block behind the same path', () => {
         expect([server.pings(), pooled(cluster)]).toEqual([[], ONE_IDLE]);
     });
 
-    it('keeps a connection the path forgot, and the query that draws it is rejected',
-        async () => {
-            const { cluster, proxy, removals } = await behind(LEGACY);
+    // No ping of the reaper finds it. The probe of the query that draws it does, once the
+    // connection was idle longer than probeIdle (#93): the query is answered on a new one
+    it('keeps a connection the path forgot, and the query that draws it after probeIdle is ' +
+        'answered on a new one', async () => {
+        const { cluster, server, proxy, removals } = await behind(LEGACY);
+        const logins = server.logins();
 
-            proxy.forget('resets');
-            await moreTicks(5);
-            const kept = pooled(cluster);
+        proxy.forget('resets');
+        await pause(PROBE_IDLE + 100);
+        const kept = pooled(cluster);
 
-            expect([kept, await ask(cluster), removals()]).toEqual([ONE_IDLE, 'ECONNRESET', []]);
-        });
+        expect([kept, await ask(cluster), removals()]).toEqual([ONE_IDLE, 'answered', []]);
+        expect([proxy.resets(), server.logins() - logins]).toEqual([1, 1]);
+    });
 });
 
 describe('one cluster with the block on one host only', () => {

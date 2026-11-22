@@ -18,7 +18,8 @@ jest.mock('mysql2', () => ({
             getConnection: jest.fn((cb: any) => cb(null, {
                 reset: (done: any) => done(null),
                 query: (_o: any, done: any) => done(null, []),
-                release: jest.fn(), destroy: jest.fn()
+                release: jest.fn(), destroy: jest.fn(),
+                on: jest.fn(), removeListener: jest.fn()
             })),
             _allConnections: [], _freeConnections: [], _connectionQueue: []
         })),

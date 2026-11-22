@@ -367,7 +367,10 @@ export class PoolStatus {
     private _askNode(asked: { drop?: () => void }): Promise<GlobalStatusResult[]> {
         if (this._healthCheck) return this._askOnCheckConnection(asked);
         const options = { redis: false, timeout: this._checkTimeout };
-        return this._pool.query(`SHOW GLOBAL STATUS;`, options) as Promise<GlobalStatusResult[]>;
+        // never probed: the check draws a connection of the app as it is, as in 4.6.0
+        const sql = `SHOW GLOBAL STATUS;`;
+        return this._pool.query(sql, options, {}, undefined, false, false) as
+            Promise<GlobalStatusResult[]>;
     }
 
     /**
@@ -580,12 +583,30 @@ export class PoolStatus {
      * @param opening true when the error came instead of a connection
      */
     public realFailure(error: unknown, opening: boolean): void {
+        const failure = PoolStatus._connectionFailure(error, opening);
+        if (failure) this._heard(failure.kind, failure.code);
+    }
+
+    /**
+     * Passive health hears of a pooled connection that failed its probe before the pool lent
+     * it: a lost connection, whatever the probe failed with. A ping that got no answer in
+     * time, a socket that was gone, packets out of order. The rules of realFailure() apply.
+     * An abort during a probe is not told here
+     * @param error what the probe failed with
+     */
+    public probeFailed(error: unknown): void {
+        this._heard('lost', PoolStatus._reduce(error).code);
+    }
+
+    /**
+     * What passive health does with a failure it knows, see realFailure()
+     * @param kind what the app ran into
+     * @param code the code it was told by, for the log
+     * @private
+     */
+    private _heard(kind: 'connect' | 'unreachable' | 'timeout' | 'lost', code?: string): void {
         const block = this._healthCheck;
         if (!block || !block.passive || !this.active || !this._isValid) return;
-        const failure = PoolStatus._connectionFailure(error, opening);
-        if (!failure) return;
-
-        const { kind, code } = failure;
         this._passiveCode = code;
         if (kind === 'connect') {
             // the passes before this do not count toward `rise`

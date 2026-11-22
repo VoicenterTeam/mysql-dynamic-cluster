@@ -49,6 +49,14 @@ interface IPoolSettings {
     // Statements execute() prepares that mysql2 keeps per connection; the one used longest ago
     // is closed past it. 1 or more
     maxPreparedStatements?: number,
+    // Time in ms a connection may be idle before it answers a ping on its way out of the pool.
+    // 0 or more
+    probeIdle?: number,
+    // Time in ms that ping may take. One that fails or takes longer ends with the connection
+    // destroyed, and the next one is taken. 1 or more
+    probeTimeout?: number,
+    // Statements after which a connection is reset when it goes back to the pool. 1 or more
+    resetAfterStatements?: number,
     validators?: IValidatorParams[],
     loadFactors?: ILoadFactorParams[],
     // Time in ms. A half left out comes from the defaults
@@ -84,6 +92,9 @@ export interface IDefaultPoolSettings extends IPoolSettings {
     queryTimeout: number,
     resetTimeout: number,
     maxPreparedStatements: number,
+    probeIdle: number,
+    probeTimeout: number,
+    resetAfterStatements: number,
     connectionLimit: number,
     validators: IValidatorParams[],
     loadFactors: ILoadFactorParams[],

@@ -55,7 +55,9 @@ const makeConn = (opts: { queryErr?: any, hangs?: 'reset' } = {}) => ({
     }),
     query: jest.fn((_o: any, cb: Cb) => later(() => cb(opts.queryErr ?? null, []))),
     release: jest.fn(),
-    destroy: jest.fn()
+    destroy: jest.fn(),
+    on: jest.fn(),
+    removeListener: jest.fn()
 });
 // a pool whose mysql2 pool exists and hands out what the test says
 const poolWith = (getConnection: (cb: Cb) => void): any => {

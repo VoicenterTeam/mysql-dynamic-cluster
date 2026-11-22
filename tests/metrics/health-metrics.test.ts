@@ -19,7 +19,8 @@ jest.mock('mysql2', () => ({
                     { Variable_name: 'wsrep_ready', Value: 'ON' },
                     { Variable_name: 'Connections', Value: '7' }
                 ]),
-                release: jest.fn(), destroy: jest.fn()
+                release: jest.fn(), destroy: jest.fn(),
+                on: jest.fn(), removeListener: jest.fn()
             })),
             _allConnections: [], _freeConnections: [], _connectionQueue: []
         })),
@@ -191,7 +192,8 @@ const answers = (pool: any, rows: object[]) => {
     pool._pool.getConnection.mockImplementation((cb: Cb) => cb(null, {
         reset: (done: Cb) => done(null),
         query: (_o: any, done: Cb) => done(null, rows),
-        release: jest.fn(), destroy: jest.fn()
+        release: jest.fn(), destroy: jest.fn(),
+        on: jest.fn(), removeListener: jest.fn()
     }));
 };
 
@@ -201,7 +203,8 @@ const fails = (pool: any, error: any) => {
     pool._pool.getConnection.mockImplementation((cb: Cb) => cb(null, {
         reset: (done: Cb) => done(null),
         query: (_o: any, done: Cb) => done(error),
-        release: jest.fn(), destroy: jest.fn()
+        release: jest.fn(), destroy: jest.fn(),
+        on: jest.fn(), removeListener: jest.fn()
     }));
 };
 

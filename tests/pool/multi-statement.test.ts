@@ -51,7 +51,9 @@ const makeConn = (opts: {
             cb(err ?? null, err ? undefined : { sql: o.sql });
         })),
         release: jest.fn(),
-        destroy: jest.fn()
+        destroy: jest.fn(),
+        on: jest.fn(),
+        removeListener: jest.fn()
     };
     return conn;
 };

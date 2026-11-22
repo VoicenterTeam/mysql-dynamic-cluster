@@ -30,7 +30,10 @@ const defaultsOf322 = {
         // the user before every query
         resetTimeout: 1000,
         // not in 3.2.2: added in 5.0.0 with execute()
-        maxPreparedStatements: 100
+        maxPreparedStatements: 100,
+        // not in 3.2.2: added in 5.0.0, which probes an idle connection before it lends it
+        // and resets a connection after this many statements
+        probeIdle: 1000, probeTimeout: 1000, resetAfterStatements: 1000
     },
     serviceMetrics: { database: 'swagger_realtime', table: 'Service' },
     clusterHashing: { nextCheckTime: 5000, dbName: 'mysql_dynamic_cluster' },

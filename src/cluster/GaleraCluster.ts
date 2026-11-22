@@ -649,10 +649,10 @@ export class GaleraCluster {
 
     /**
      * Take a connection of one node: the valid node with the lowest load score that is not
-     * excluded. One node and one request to its pool, with no retry. The caller owns the
-     * connection: the cluster sets no timeout on it, does not change its database, does not
-     * reset it and records no metric for it. A query of the cluster that gets it after its
-     * release() resets it and sends USE first. See docs/node-api.md
+     * excluded. One node and one request to its pool, with no retry. The pool probes it when
+     * it was idle, and its release() resets it before it goes back. The cluster sets no
+     * timeout on it, does not change its database and records no metric for it. A query of
+     * the cluster that gets it later sends USE first. See docs/node-api.md
      * @param options exclude: ids of the nodes to leave out. signal: ends the wait for the
      * connection when it aborts, the call then rejects with the reason of the signal as it is
      */

@@ -174,7 +174,8 @@ const makeNode = (steps: Step[]) => {
                         if (step === 'held') return node.held.push(done);
                         if (step !== 'hang') done(null, step);
                     },
-                    release: jest.fn(), destroy: jest.fn()
+                    release: jest.fn(), destroy: jest.fn(),
+                    on: jest.fn(), removeListener: jest.fn()
                 });
             }
         }

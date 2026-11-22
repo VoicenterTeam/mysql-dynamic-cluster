@@ -20,6 +20,9 @@ const COM_CHANGE_USER = 0x11;
 const COM_RESET_CONNECTION = 0x1f;
 const LONG = 600000;
 const APP_SQL = 'SELECT 1';
+// the default probeIdle: a pooled connection idle longer than this answers a ping before a
+// statement goes to it
+const PROBE_IDLE = 1000;
 
 // loopback only: a hang here is a bug, not a slow network
 jest.setTimeout(20000);
@@ -533,28 +536,30 @@ describe('two healthy nodes whose idle pooled connections the path forgot', () =
             expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
         });
 
-    // The pool sends the statement first on a forgotten connection, so the statement may have
-    // run: the next node is not tried. Until 5.0.0 a change of user went first, met the reset
-    // with the statement not sent, and the next node got the query. The probe of an idle
-    // connection on borrow (#93) finds such a connection before the statement again
-    it('through cluster.query: no node goes down, and one query at most is lost per ' +
-        'forgotten connection', async () => {
-        const { cluster, downs } = await stale();
+    // A connection idle longer than probeIdle answers a ping before the statement goes to it
+    // (#93). The ping meets the reset of the path, so no statement does: the pool takes the
+    // next connection of the node, and the query is answered there. Up to 4.x the change of
+    // user before every statement met it, with the statement not sent, and the next node got
+    // the query. Within probeIdle a statement still meets a forgotten connection, see above
+    it('through cluster.query after a pause longer than probeIdle: every query is answered ' +
+        'on its node, and no node goes down', async () => {
+        const { cluster, proxies, downs } = await stale();
         const second = jest.spyOn(cluster.pools[1], 'query');
         const ask = () => cluster.query(APP_SQL, undefined, { timeout: 0 })
             .then(() => 'passed', () => 'rejected');
+        await new Promise(resolve => setTimeout(resolve, PROBE_IDLE + 100));
 
-        // each of the three meets a forgotten connection of node 1, which is tried first
+        // each of the three meets forgotten connections of node 1, which is tried first
         const first = await Promise.all([ask(), ask(), ask()]);
         const later: string[] = [];
         for (let i = 0; i < 40; i++) later.push(await ask());
         await settled(cluster, 0);
 
-        // six were forgotten in its pool, and the first three queries met three
-        const lost = (asked: string[]) => asked.filter(how => how === 'rejected').length;
-        expect([lost(first), lost(later) <= 3]).toEqual([3, true]);
+        expect([...first, ...later]).toEqual(Array(43).fill('passed'));
         expect(second).not.toHaveBeenCalled();
-        expect(later.slice(-20)).toEqual(Array(20).fill('passed'));
+        // the six of the pool met a probe each, and the check connection the check that
+        // passive health started
+        expect(proxies.map(proxy => proxy.resets())).toEqual([7, 0]);
         expect([isUp(cluster), downs()]).toEqual([[true, true], []]);
     });
 

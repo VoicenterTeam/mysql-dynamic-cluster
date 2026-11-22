@@ -17,8 +17,9 @@ import Redis from "../Redis/Redis";
 import { IRedisData } from "../types/RedisInterfaces";
 import { IdleConnectionReaper, IIdlePing } from './IdleConnectionReaper';
 import { CheckConnection } from './CheckConnection';
-import { drop, flagsForServer, IServerGreeting, IServerProbe, probeServer } from './ServerFlags';
+import { flagsForServer, IServerGreeting, IServerProbe, probeServer } from './ServerFlags';
 import { SessionState } from './SessionState';
+import { abortReason, Borrow, isBroken, whenAborted } from './Borrow';
 
 // AKA galera node
 export class Pool {
@@ -59,6 +60,8 @@ export class Pool {
     private _check?: CheckConnection;
     // the database and the dirty mark of each connection of the pool
     private readonly _session: SessionState;
+    // where every connection of the pool is taken and given back
+    private readonly _borrow: Borrow;
 
     /**
      * Connections that can still be handed out: limit minus connections in use.
@@ -92,10 +95,12 @@ export class Pool {
         this._flags = settings.flags;
 
         this.connectionLimit = settings.connectionLimit;
-        // a Pool built without the settings schema still keeps its statements
+        // a Pool built without the settings schema still keeps its statements, probes its
+        // idle connections and resets a connection after many statements
         this._maxPreparedStatements = settings.maxPreparedStatements ?? 100;
         this._session = new SessionState(
-            this.name, this._database, settings.resetTimeout, this._maxPreparedStatements
+            this.name, this._database, settings.resetTimeout, this._maxPreparedStatements,
+            settings.resetAfterStatements ?? 1000
         );
 
         this._reaper = new IdleConnectionReaper(
@@ -106,6 +111,14 @@ export class Pool {
 
         this._checksApart = !!settings.healthCheck;
         this._status = new PoolStatus(this, settings, false);
+        this._borrow = new Borrow({
+            id: this.id,
+            name: this.name,
+            connectionLimit: this.connectionLimit,
+            status: this._status,
+            mysqlPool: () => this._pool,
+            notConnected: () => this._notConnected()
+        }, this._session, this._reaper, settings.probeIdle ?? 1000, settings.probeTimeout ?? 1000);
 
         Logger.info("configuration pool finished in host: " + this.host);
     }
@@ -281,10 +294,12 @@ export class Pool {
      * @param values the values the server binds, with the option `execute`. Not read without it
      * @param valuesInText the cluster wrote values into sql. The pool refuses to send such a
      * statement on a connection with NO_BACKSLASH_ESCAPES: MDC_UNSAFE_SQL_MODE, `sent: false`
+     * @param probe false for the health check of a node without a block only: it draws the
+     * connection with no probe, see Borrow
      */
     public async query<T extends QueryResult>(
         sql: string, queryOptions?: IQueryOptions, outcome: IQueryOutcome = {},
-        values?: QueryValues, valuesInText = false
+        values?: QueryValues, valuesInText = false, probe = true
     ): Promise<T | T[]> {
         return new Promise(async (resolve, reject) => {
             outcome.sent = false;
@@ -315,23 +330,24 @@ export class Pool {
             let held: mysql.PoolConnection | undefined;
             // the time limit of a bound statement, prepare included, see the send step
             let boundTimer: NodeJS.Timeout | undefined;
+            // the listener of the signal while the statement runs
+            let stopAbort: (() => void) | undefined;
             // every way the call settles comes here, so the timer goes with the listener
             const stopListening = () => {
                 clearTimeout(boundTimer);
-                signal?.removeEventListener('abort', onAbort);
+                stopAbort?.();
             };
-            // told: getConnection() told passive health of what it had to tell
-            const fail = (error: any, conn?: mysql.PoolConnection, told = false) => {
+            const fail = (error: any, conn?: mysql.PoolConnection) => {
                 if (settled) return;
                 settled = true;
                 stopListening();
                 queryTimer.end();
                 Metrics.recordOperation(queryTimer.get(), { ...poolMetricOption, error });
                 // Before the caller hears of it, so every call after this one sees the node
-                // as it is now. Without a connection the error came instead of one. The
-                // check of a node with a healthCheck block is not here: it asks on its own
-                // connection. That of a node without one is, and passive health skips it
-                if (!told) this._status.realFailure(error, !conn);
+                // as it is now. An error that came without a connection was told by the
+                // borrow. The check of a node with a healthCheck block is not here: it asks on
+                // its own connection. That of a node without one is, and passive health skips it
+                if (conn) this._status.realFailure(error, false);
                 this._handBack(conn, error);
                 Pool._writeSent(error, outcome.sent);
                 reject(error);
@@ -357,82 +373,81 @@ export class Pool {
                 outcome.aborted = true;
                 stopListening();
                 try {
-                    drop(held);
+                    this._borrow.drop(held);
                 } catch (thrown) {
                     Logger.warn("Pool " + this.name + ": could not destroy the connection of " +
                         "an aborted query", { nodeId: this.id, pool: this.name,
                         error: thrown?.message || thrown });
                 }
-                abort(Pool.abortReason(signal));
+                abort(abortReason(signal));
             };
 
-            // the queue and an abort while the request waits in it are getConnection()'s
+            // The borrow takes the connection, probes it after idle, resets it when dirty and
+            // sends USE for another database. An abort meanwhile is the borrow's as well
             const asked: IAbortOutcome = {};
-            this.getConnection(signal, asked).then(conn => {
-                if (!conn) return fail(new Error("Can't find connection. Maybe it was unexpectedly closed."));
+            const { database, timeout } = queryOptions;
+            this._borrow.take(signal, asked, { database, timeout }, probe).then(conn => {
                 held = conn;
-                // the signal aborted after getConnection() took its listener off
+                // the signal aborted after the borrow took its listener off
                 if (signal?.aborted) return onAbort();
-                signal?.addEventListener('abort', onAbort);
+                stopAbort = whenAborted(signal, onAbort);
+                // packets out of order: the borrow has dropped the connection by now
+                this._borrow.watch(conn, error => fail(error, conn));
+                const bound = queryOptions.execute;
+                // values in the text, where the server reads a backslash as a character
+                if (!bound && valuesInText && this._session.noBackslashEscapes(conn)) {
+                    return fail(Pool._unsafeSqlMode(), conn);
+                }
 
-                // a reset when the connection is dirty, a USE when it is on another database
-                const { database, timeout } = queryOptions;
-                this._session.prepare(conn, database, timeout, (error) => {
+                Logger.debug(`Query in pool by host ${this.host}`);
+                // from here on the statement can run on the server, whatever comes back
+                outcome.sent = true;
+                const onReply = (error: mysql.QueryError | null, result: T) => {
+                    this._session.observe(conn, error, result);
                     if (error) return fail(error, conn);
-                    const bound = queryOptions.execute;
-                    // values in the text, where the server reads a backslash as a character
-                    if (!bound && valuesInText && this._session.noBackslashEscapes(conn)) {
-                        return fail(Pool._unsafeSqlMode(), conn);
+                    if (settled) return;
+                    settled = true;
+                    stopListening();
+                    this._borrow.giveBack(conn);
+
+                    queryTimer.end();
+                    Metrics.recordOperation(queryTimer.get(), poolMetricOption);
+                    if (queryTimer.get() >= this._slowQueryTime) {
+                        Logger.warn(`Query in pool named ${this.name} takes ` +
+                            `${queryTimer.get()} sec`);
                     }
 
-                    Logger.debug(`Query in pool by host ${this.host}`);
-                    // from here on the statement can run on the server, whatever comes back
-                    outcome.sent = true;
-                    const onReply = (error: mysql.QueryError | null, result: T) => {
-                        this._session.observe(conn, error, result);
-                        if (error) return fail(error, conn);
-                        if (settled) return;
-                        settled = true;
-                        stopListening();
-                        this._session.release(conn);
-
-                        queryTimer.end();
-                        Metrics.recordOperation(queryTimer.get(), poolMetricOption);
-                        if (queryTimer.get() >= this._slowQueryTime) {
-                            Logger.warn(`Query in pool named ${this.name} takes ${queryTimer.get()} sec`);
+                    if (queryOptions.redis) {
+                        const redisExpired = new Date().getTime() +
+                            queryTimer.get() * 1000 * queryOptions.redisFactor;
+                        const redisData: IRedisData = {
+                            data: result,
+                            expired: redisExpired
                         }
-
-                        if (queryOptions.redis) {
-                            const redisExpired = new Date().getTime() + queryTimer.get() * 1000 * queryOptions.redisFactor;
-                            const redisData: IRedisData = {
-                                data: result,
-                                expired: redisExpired
-                            }
-                            Redis.set(sql, JSON.stringify(redisData), queryOptions.redisExpire);
-                        }
-
-                        resolve(result);
-                    };
-                    try {
-                        // the only step a bound statement does differently
-                        if (bound) {
-                            this._session.executed(conn, sql);
-                            // mysql2 times the execute, not the prepare before it
-                            if (timeout) boundTimer = this._boundTimeout(timeout, conn, fail);
-                            conn.execute({ sql, values, timeout }, onReply);
-                        } else {
-                            conn.query({ sql, timeout }, onReply);
-                        }
-                    } catch (thrown) {
-                        // mysql2 refused the call before it wrote anything, such as values
-                        // with undefined in them
-                        outcome.sent = false;
-                        fail(thrown, conn);
+                        Redis.set(sql, JSON.stringify(redisData), queryOptions.redisExpire);
                     }
-                })
+
+                    resolve(result);
+                };
+                try {
+                    // the only step a bound statement does differently
+                    if (bound) {
+                        this._session.executed(conn, sql);
+                        // mysql2 times the execute, not the prepare before it
+                        if (timeout) boundTimer = this._boundTimeout(timeout, conn, fail);
+                        conn.execute({ sql, values, timeout }, onReply);
+                    } else {
+                        conn.query({ sql, timeout }, onReply);
+                    }
+                } catch (thrown) {
+                    // mysql2 refused the call before it wrote anything, such as values
+                    // with undefined in them
+                    outcome.sent = false;
+                    fail(thrown, conn);
+                }
             }, error => {
                 if (asked.aborted) return abort(error);
-                fail(error, undefined, true);
+                fail(error);
             })
         })
     }
@@ -463,20 +478,20 @@ export class Pool {
                 queryTimer.end();
                 Metrics.recordOperation(queryTimer.get(), { ...poolMetricOption, error });
                 // passive health, as in query()
-                this._status.realFailure(error, !conn);
+                if (conn) this._status.realFailure(error, false);
                 // a broken connection can't roll back; destroying it makes the server discard the transaction
-                if (rollback && !Pool._isBroken(error)) {
+                if (rollback && !isBroken(error)) {
                     const rollback = { sql: 'ROLLBACK', timeout: queryOptions.timeout };
                     conn.query(rollback, (errorR, resultR) => {
                         if (errorR) {
                             Logger.error("Rollback failed in pool by host " + this.host + ": " + errorR.message);
                             // the connection may have been lost under the rollback
                             this._status.realFailure(errorR, false);
-                            this._session.release(conn, true);
+                            this._borrow.giveBack(conn, true);
                         } else {
                             // clean, unless the transaction turned autocommit off
                             this._session.observe(conn, undefined, resultR);
-                            this._session.release(conn);
+                            this._borrow.giveBack(conn);
                         }
                         reject(error);
                     });
@@ -486,11 +501,11 @@ export class Pool {
                 reject(error);
             }
 
-            if (!this._pool) return fail(this._notConnected());
-            this._pool.getConnection((err, conn) => {
-                if (err) return fail(err);
-                if (!conn) return fail(new Error("Can't find connection. Maybe it was unexpectedly closed."));
-
+            // A reset when the connection is dirty, a USE when it is on another database.
+            // The transaction ends with its own COMMIT or ROLLBACK, so a clean reply of it
+            // sends the connection back with no reset
+            const { database, timeout } = queryOptions;
+            this._borrow.take(undefined, {}, { database, timeout }).then(conn => {
                 // queries run one after another; commit only after the last one succeeded
                 const runQuery = (index: number) => {
                     if (index >= sqls.length) {
@@ -505,7 +520,7 @@ export class Pool {
                             Metrics.recordOperation(queryTimer.get(), poolMetricOption);
                             // clean, unless the transaction turned autocommit off
                             this._session.observe(conn, undefined, resultC);
-                            this._session.release(conn);
+                            this._borrow.giveBack(conn);
                             resolve(results);
                         });
                         return;
@@ -520,20 +535,12 @@ export class Pool {
                     });
                 }
 
-                // A reset when the connection is dirty, a USE when it is on another database.
-                // The transaction ends with its own COMMIT or ROLLBACK, so a clean reply of it
-                // sends the connection back with no reset
-                const { database, timeout } = queryOptions;
-                this._session.prepare(conn, database, timeout, (error) => {
-                    if (error) return fail(error, conn);
-
-                    Logger.debug("Start transaction in pool by host " + this.host);
-                    conn.query({ sql: 'START TRANSACTION', timeout: queryOptions.timeout }, errorT => {
-                        if (errorT) return fail(errorT, conn);
-                        runQuery(0);
-                    })
+                Logger.debug("Start transaction in pool by host " + this.host);
+                conn.query({ sql: 'START TRANSACTION', timeout: queryOptions.timeout }, errorT => {
+                    if (errorT) return fail(errorT, conn);
+                    runQuery(0);
                 })
-            })
+            }, error => fail(error))
         })
     }
 
@@ -599,161 +606,50 @@ export class Pool {
     }
 
     /**
-     * Dead socket, or one still running a timed-out statement
-     * @param error error from mysql
-     * @private
-     */
-    private static _isBroken(error: any): boolean {
-        return error?.fatal || error?.code === 'PROTOCOL_SEQUENCE_TIMEOUT';
-    }
-
-    /**
      * Hand connection back to the pool, or destroy it if it's broken so it's never reused.
-     * A dirty one is reset first, see SessionState
+     * A dirty one is reset first, see Borrow
      * @param conn connection to hand back
      * @param error error from mysql
      * @private
      */
     private _handBack(conn: mysql.PoolConnection, error?: any) {
-        if (conn) this._session.release(conn, Pool._isBroken(error));
+        if (conn) this._borrow.giveBack(conn, isBroken(error));
     }
 
     /**
      * The app takes this connection through getConnection() of the cluster. The pool sees
-     * neither the database nor the transaction the app leaves on it, so a query of the pool
-     * that gets it later resets it and sends USE first
+     * neither the database nor the transaction the app leaves on it, so the release() of the
+     * app resets it before it goes back, and a query of the pool that gets it sends USE first.
+     * A second release() does nothing, see Borrow.lend()
      * @param connection the connection getConnection() resolved with
      */
     public lend(connection: PoolConnection): void {
-        this._session.lend(connection);
+        this._borrow.lend(connection);
     }
 
     /**
-     * Take one connection out of the pool and hand it to the caller as it is: no database
-     * change, no timeout, no metric. One request to mysql2, which waits when the pool is at
-     * its limit. Rejects with the error object of mysql2.
+     * Take one connection out of the pool for the caller: probed on the way out when it was
+     * idle longer than probeIdle, with no database change, no timeout and no metric. One
+     * request to mysql2, which waits when the pool is at its limit. Rejects with the error
+     * object of mysql2, or with the error of the last probe when no connection passed.
      * With a signal the wait ends when the signal aborts: the call rejects with the reason of
      * the signal, its request leaves the queue of mysql2, and a connection that still arrives
-     * for it is released. No listener stays on the signal once the call settled
+     * for it is released. No listener stays on the signal once the call settled. See Borrow
      * @param signal ends the wait when it aborts
      * @param outcome filled with `aborted: true` when the call was rejected by the abort
      */
     public getConnection(
         signal?: AbortSignal, outcome: IAbortOutcome = {}
     ): Promise<PoolConnection> {
-        return new Promise((resolve, reject) => {
-            if (signal?.aborted) {
-                outcome.aborted = true;
-                return reject(Pool.abortReason(signal));
-            }
-            if (!this._pool) return reject(this._notConnected());
-            // the pool this request goes to. A later connect() puts another one in its place
-            const mysqlPool = this._pool;
-
-            // whichever comes first settles the call: the answer of mysql2, or the abort
-            let answered = false;
-            let aborted = false;
-            const stopListening = () => signal?.removeEventListener('abort', onAbort);
-            const callback = (error: Error, connection: PoolConnection) => {
-                // Passive health hears of a connection that could not be opened, also when
-                // the caller is gone by now. The abort itself is never told to it
-                if (error) this._status.realFailure(error, true);
-                // the caller is gone: a connection that still arrives goes back to the pool,
-                // and the error of a login that failed is dropped
-                if (aborted) return this._releaseLate(connection);
-                answered = true;
-                stopListening();
-                return error ? reject(error) : resolve(connection);
-            };
-            // The signal of the app calls this inside its abort(). Nothing may be thrown there
-            const onAbort = () => {
-                if (answered) return;
-                aborted = true;
-                outcome.aborted = true;
-                try {
-                    stopListening();
-                    this._leaveQueue(mysqlPool, callback);
-                } catch (thrown) {
-                    Logger.warn("Pool " + this.name + ": could not take an aborted request out " +
-                        "of the queue, its connection is released when it arrives",
-                        { nodeId: this.id, pool: this.name, error: thrown?.message || thrown });
-                }
-                reject(Pool.abortReason(signal));
-            };
-
-            // before the request: mysql2 can answer at once, and the answer takes it off again
-            signal?.addEventListener('abort', onAbort);
-            try {
-                mysqlPool.getConnection(callback);
-            } catch (thrown) {
-                // a listener of an event of mysql2 threw. The call fails, as it did before
-                answered = true;
-                stopListening();
-                reject(thrown);
-            }
-        });
+        return this._borrow.take(signal, outcome);
     }
 
     /**
-     * What a call is rejected with when its signal aborted: the reason of the signal as it is.
-     * A signal without one, as on a Node that has no signal.reason yet, gives an Error
-     * named AbortError
+     * What a call is rejected with when its signal aborted, see abortReason() of Borrow
      * @param signal the signal that aborted
      */
     public static abortReason(signal: AbortSignal): unknown {
-        if (signal.reason !== undefined) return signal.reason;
-        // the name, the code and the message of the AbortError of Node itself
-        return Object.assign(new Error("The operation was aborted"), {
-            name: 'AbortError', code: 'ABORT_ERR'
-        });
-    }
-
-    /**
-     * Release a connection that arrived for a request its signal already ended. This runs in
-     * a callback of mysql2, where a throw would be an uncaught exception, and release() runs
-     * the release listeners of the app. mysql2 puts the connection back into the pool before
-     * it calls them, so the connection is in the pool also when one of them threw
-     * @param connection the connection that arrived, or nothing when its login failed
-     * @private
-     */
-    private _releaseLate(connection?: PoolConnection): void {
-        try {
-            connection?.release();
-        } catch (thrown) {
-            Logger.warn("Pool " + this.name + ": the release of a connection that arrived " +
-                "for an aborted request threw",
-                { nodeId: this.id, pool: this.name, error: thrown?.message || thrown });
-        }
-    }
-
-    // the mysql2 pools whose queue could not be searched, each reported once
-    private readonly _unsearchable = new WeakSet<object>();
-
-    /**
-     * Take the callback of one waiting request out of the queue of mysql2. The requests around
-     * it keep their place. It does nothing when the callback is not there: the connection of
-     * the request still logs in, or mysql2 queued a wrapper of the callback, as it does while
-     * its pool is traced. A queue that is not the one mysql2 3 keeps is left alone too, and
-     * that is logged once for the mysql2 pool: no aborted request can leave such a queue
-     * @param mysqlPool the mysql2 pool the request was sent to
-     * @param callback the callback handed to mysql2
-     * @private
-     */
-    private _leaveQueue(mysqlPool: mysql.Pool, callback: unknown): void {
-        const queue = (mysqlPool as any)._connectionQueue;
-        if (typeof queue?.get !== 'function' || typeof queue.removeOne !== 'function') {
-            if (this._unsearchable.has(mysqlPool)) return;
-            this._unsearchable.add(mysqlPool);
-            Logger.warn("Pool " + this.name + ": the queue of this mysql2 cannot be searched. " +
-                "An aborted request stays in it and its connection is released on its turn",
-                { nodeId: this.id, pool: this.name });
-            return;
-        }
-        for (let index = 0; index < queue.length; index++) {
-            if (queue.get(index) !== callback) continue;
-            queue.removeOne(index);
-            return;
-        }
+        return abortReason(signal);
     }
 
     /**

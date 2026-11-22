@@ -25,7 +25,9 @@ interface ISession {
     // and the server runs it in the database it was prepared in
     statements?: Set<string>,
     // the database those statements were prepared in
-    statementsIn?: string
+    statementsIn?: string,
+    // the replies the connection got since its last reset, see resetAfterStatements
+    sinceReset: number
 }
 
 // status flags of the header of an OK reply
@@ -39,9 +41,9 @@ const NOT_READY = 1047;
 /**
  * The session of the connections of one pool: which database each is on, and whether it is
  * dirty. The pool sends no change of user. A query for another database sends USE first, and
- * a dirty connection is reset before anyone uses it again. The rule for dirty and the reset
- * with its time limit live here and nowhere else, and so does the sql_mode bit a query() with
- * values reads, see noBackslashEscapes()
+ * a dirty connection is reset before anyone uses it again. The rule for dirty, the cap on
+ * statements between two resets and the reset with its time limit live here and nowhere
+ * else, and so does the sql_mode bit a query() with values reads, see noBackslashEscapes()
  */
 export class SessionState {
     private readonly _sessions = new WeakMap<object, ISession>();
@@ -51,12 +53,15 @@ export class SessionState {
      * @param database the database mysql2 logs every connection of the pool in with
      * @param resetTimeout time in ms a reset may take before the connection is destroyed
      * @param maxStatements the maxPreparedStatements of the pool: how many texts are kept
+     * @param _resetAfterStatements the replies after which a connection counts as dirty, so
+     * its release resets it: prepared statements a procedure left on it cannot pile up
      */
     constructor(
         private readonly _poolName: string,
         private readonly _database: string,
         private readonly _resetTimeout: number,
-        private readonly _maxStatements: number
+        private readonly _maxStatements: number,
+        private readonly _resetAfterStatements: number
     ) {}
 
     /**
@@ -68,7 +73,7 @@ export class SessionState {
     public lend(connection: mysql.PoolConnection): void {
         const session = this._sessions.get(connection);
         if (session) SessionState._closeStatements(connection, session);
-        this._sessions.set(connection, { database: undefined, dirty: true });
+        this._sessions.set(connection, { database: undefined, dirty: true, sinceReset: 0 });
     }
 
     /**
@@ -155,17 +160,20 @@ export class SessionState {
      * The rule for the database alone: a header that says the session state changed makes
      * the database of the connection unknown, so the next statement sends USE first. Inside a
      * transaction of multiStatementQuery() only this rule applies, since every header there
-     * says a transaction is open
+     * says a transaction is open. Every reply counts toward resetAfterStatements: the reply
+     * that reaches it makes the connection dirty
      * @param result the reply of mysql2
      */
     public observeDatabase(connection: object, result?: unknown): void {
+        const session = this._session(connection);
+        if (++session.sinceReset >= this._resetAfterStatements) session.dirty = true;
         // A statement of the app can change the database itself: a USE it sends through
         // query(), or one in a multi-statement. The header tells only through session
         // tracking, which mysql2 asks for and MySQL 8 has on by default. Without it such a
         // USE goes unseen
         const flags = SessionState._flags(result);
         if (!flags.some(status => (status & SESSION_STATE_CHANGED) !== 0)) return;
-        this._session(connection).database = undefined;
+        session.database = undefined;
     }
 
     /**
@@ -181,26 +189,38 @@ export class SessionState {
     /**
      * Give a connection back to the pool. A clean one goes back at once. A dirty one is reset
      * first and goes back clean, and one whose reset fails or runs out of time is destroyed.
-     * One the node answered 1047 on is destroyed with no reset. A connection a failed reset
-     * destroyed already is left alone
+     * One the node answered 1047 on is destroyed with no reset. A connection that was dropped
+     * already is left alone
      * @param broken the socket is dead or still runs a statement: destroyed, never reset
+     * @param putBack puts the connection into the pool of mysql2, see Borrow
      */
-    public release(connection: mysql.PoolConnection, broken = false): void {
+    public release(
+        connection: mysql.PoolConnection, broken = false, putBack = () => connection.release()
+    ): void {
         const session = this._sessions.get(connection);
         if (session?.dropped) return;
         if (broken) return connection.destroy();
         if (session?.notReady) {
             // the reset would get no answer and hold the slot for resetTimeout, see _reset()
-            session.dropped = true;
-            return drop(connection);
+            return this.drop(connection);
         }
-        if (!session?.dirty) return connection.release();
+        if (!session?.dirty) return putBack();
         this._reset(connection, session, error => {
-            if (!error) return connection.release();
+            if (!error) return putBack();
             const pool = this._poolName;
             Logger.warn("Pool " + pool + ": the reset of a connection before its release " +
                 "failed, the connection was closed", { pool, code: error?.code });
         });
+    }
+
+    /**
+     * Destroy a connection with its socket. Nothing is done with it any more: a release of it
+     * after this does nothing
+     * @param error what a command still out on it fails with, see drop() of ServerFlags
+     */
+    public drop(connection: mysql.PoolConnection, error?: Error): void {
+        this._session(connection).dropped = true;
+        drop(connection, error);
     }
 
     /**
@@ -211,7 +231,7 @@ export class SessionState {
     private _session(connection: object): ISession {
         let session = this._sessions.get(connection);
         if (!session) {
-            session = { database: this._database, dirty: false };
+            session = { database: this._database, dirty: false, sinceReset: 0 };
             this._sessions.set(connection, session);
         }
         return session;
@@ -239,6 +259,7 @@ export class SessionState {
                 drop(connection);
             } else {
                 session.dirty = false;
+                session.sinceReset = 0;
                 session.noBackslashEscapes = false;
                 // mysql2 forgot its statements when the reset was answered, the server too
                 session.statements?.clear();

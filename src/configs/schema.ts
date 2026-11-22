@@ -84,6 +84,12 @@ const poolFields = {
     // statements execute() prepares that mysql2 keeps per connection. The server counts every
     // one of every client against max_prepared_stmt_count
     maxPreparedStatements: z.number().int().min(1),
+    // time in ms a connection may be idle before it answers a ping on its way out of the pool
+    probeIdle: z.number().min(0),
+    // time in ms that ping may take before the connection is destroyed
+    probeTimeout: limitMs,
+    // the statements after which a connection is reset when it goes back to the pool
+    resetAfterStatements: z.number().int().min(1),
     // time in seconds
     slowQueryTime: z.number(),
     redisFactor: z.number(),
@@ -120,6 +126,9 @@ const defaultPoolSettings = z.strictObject({
     queryTimeout: poolFields.queryTimeout.default(2 * 60 * 1000),
     resetTimeout: poolFields.resetTimeout.default(1000),
     maxPreparedStatements: poolFields.maxPreparedStatements.default(100),
+    probeIdle: poolFields.probeIdle.default(1000),
+    probeTimeout: poolFields.probeTimeout.default(1000),
+    resetAfterStatements: poolFields.resetAfterStatements.default(1000),
     slowQueryTime: poolFields.slowQueryTime.default(1),
     redisFactor: poolFields.redisFactor.default(1),
     // no default: left out, the pool picks them from its server (src/pool/ServerFlags.ts)

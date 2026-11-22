@@ -74,7 +74,8 @@ const makeNode = (steps: Step[]) => {
                         if (step === 'held') node.answerHeld = () => done(null, PASS);
                         else if (step !== 'hang') done(null, step);
                     },
-                    release: jest.fn(), destroy: jest.fn()
+                    release: jest.fn(), destroy: jest.fn(),
+                    on: jest.fn(), removeListener: jest.fn()
                 });
             }
         }

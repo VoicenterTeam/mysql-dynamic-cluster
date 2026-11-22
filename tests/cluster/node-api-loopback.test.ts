@@ -37,10 +37,11 @@ const STATUS = [
     { Variable_name: 'wsrep_local_recv_queue_avg', Value: '0' }
 ];
 
-// Answers the login and every query, and counts the logins
-const listen = (): Promise<{ port: number, logins: () => number }> => {
+// Answers the login and every query, and counts the logins and the resets
+const listen = (): Promise<{ port: number, logins: () => number, resets: () => number }> => {
     const server: any = (mysql as any).createServer();
     const connections: any[] = [];
+    let resets = 0;
     closers.push(() => {
         connections.forEach(connection => connection.stream.destroy());
         server.close();
@@ -58,9 +59,10 @@ const listen = (): Promise<{ port: number, logins: () => number }> => {
             authCallback: (_params: object, done: (err: null) => void) => done(null)
         });
         // The pool sends no change of user. It resets a connection whose query failed, and one
-        // the app had, before it uses it again
+        // the app had, when the app releases it
         connection.on('packet', (_packet: object, known: boolean, code: number) => {
             if (!known && code === COM_RESET_CONNECTION) {
+                resets++;
                 connection.sequenceId = 1;
                 connection.writeOk({ serverStatus: 2 });
             }
@@ -75,7 +77,8 @@ const listen = (): Promise<{ port: number, logins: () => number }> => {
         server.listen(0, '127.0.0.1', () => {
             resolve({
                 port: (server._server.address() as AddressInfo).port,
-                logins: () => connections.length
+                logins: () => connections.length,
+                resets: () => resets
             });
         });
     });
@@ -102,6 +105,19 @@ const connectCluster = async (port: number, connectionLimit = 1): Promise<any> =
     clusters.push(cluster);
     await cluster.connect();
     return cluster;
+};
+
+// Poll until `done` says yes. It gives up after 500 turns, about 5 s, and says what it saw
+const until = async (done: () => boolean, saw: () => unknown): Promise<void> => {
+    for (let turn = 0; turn < 500 && !done(); turn++) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    if (!done()) throw new Error('gave up waiting, saw ' + JSON.stringify(saw()));
+};
+// The release() of a lent connection resets it first: wait for the counts after that
+const countsAfterReset = async (cluster: any, wanted: object): Promise<void> => {
+    const stats = () => cluster.getPoolStats()[0];
+    await until(() => JSON.stringify(stats()) === JSON.stringify(wanted), stats);
 };
 
 const ask = (connection: any): Promise<any[]> => new Promise((resolve, reject) => {
@@ -136,7 +152,10 @@ describe('the node API against a real mysql2 pool', () => {
 
         cluster.failWaiting(4, new Error('node 4 is leaving'));
         held.connection.release();
-        expect(stats()).toEqual({ nodeId: 4, used: 0, idle: 1, pending: 0, limit: 1 });
+        // in use until its reset is answered
+        expect(stats()).toEqual({ nodeId: 4, used: 1, idle: 0, pending: 0, limit: 1 });
+        await countsAfterReset(cluster, { nodeId: 4, used: 0, idle: 1, pending: 0, limit: 1 });
+        expect(server.resets()).toBe(1);
     });
 
     it('failWaiting fails the waiting requests and leaves the connection in use', async () => {
@@ -289,12 +308,12 @@ describe('getConnection with a signal against a real mysql2 pool', () => {
         const other = quiet(cluster.getConnection());
         controller.abort();
 
-        // mysql2 takes the next waiter out of its queue as it releases
+        // mysql2 takes the next waiter out of its queue as it releases, after the reset
         held.connection.release();
-        expect(stats()).toEqual({ nodeId: 4, used: 1, idle: 0, pending: 0, limit: 1 });
+        await countsAfterReset(cluster, { nodeId: 4, used: 1, idle: 0, pending: 0, limit: 1 });
         (await other).connection.release();
-        expect(stats()).toEqual({ nodeId: 4, used: 0, idle: 1, pending: 0, limit: 1 });
-        expect(server.logins()).toBe(1);
+        await countsAfterReset(cluster, { nodeId: 4, used: 0, idle: 1, pending: 0, limit: 1 });
+        expect([server.logins(), server.resets(), stats().pending]).toEqual([1, 2, 0]);
     });
 
     it('takes two calls out of the middle of six waiters and serves the other four', async () => {
@@ -306,7 +325,7 @@ describe('getConnection with a signal against a real mysql2 pool', () => {
         expect(stats().pending).toBe(4);
         held.connection.release();
         expect(await served).toEqual([0, 2, 3, 5]);
-        expect(stats()).toEqual({ nodeId: 4, used: 0, idle: 1, pending: 0, limit: 1 });
+        await countsAfterReset(cluster, { nodeId: 4, used: 0, idle: 1, pending: 0, limit: 1 });
     });
 
     // The second round starts where the first left the queue of mysql2, which is a ring: its
@@ -323,8 +342,8 @@ describe('getConnection with a signal against a real mysql2 pool', () => {
             expect(stats().pending).toBe(80);
             taken.connection.release();
             expect(await served).toEqual(kept);
+            await countsAfterReset(cluster, { nodeId: 4, used: 0, idle: 1, pending: 0, limit: 1 });
         }
-        expect(stats()).toEqual({ nodeId: 4, used: 0, idle: 1, pending: 0, limit: 1 });
     });
 
     it('releases the connection that arrives for a call aborted while it logged in', async () => {
@@ -421,7 +440,7 @@ describe('getConnection with a signal against a real mysql2 pool', () => {
         expect(cluster.getPoolStats()[0]).toMatchObject({ used: 1, idle: 0 });
         expect(await ask(connection)).toHaveLength(STATUS.length);
         connection.release();
-        expect(cluster.getPoolStats()[0]).toMatchObject({ used: 0, idle: 1 });
+        await countsAfterReset(cluster, { nodeId: 4, used: 0, idle: 1, pending: 0, limit: 1 });
     });
 
     it('failWaiting fails a waiting call that has a signal, once, with nodeId', async () => {

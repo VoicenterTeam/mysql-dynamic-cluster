@@ -161,7 +161,9 @@ const listen = async (connections = 1): Promise<INode> => {
             if (sql === NOT_READY) return refuse(1047, 'WSREP has not yet prepared node');
             if (sql === EARLY_DIRTY) {
                 connection.writeOk({ serverStatus: MORE_RESULTS });
-                return ok();
+                // the second result goes on with the sequence numbers of the first, as a
+                // server's does: the pool destroys a connection whose packets come out of order
+                return connection.writeOk({ serverStatus: flags() });
             }
             if (sql === BEGIN || sql === CALL_OPEN) session.inTransaction = true;
             if (sql === 'COMMIT' || sql === 'ROLLBACK') session.inTransaction = false;
@@ -170,6 +172,8 @@ const listen = async (connections = 1): Promise<INode> => {
                 connection.writeColumns([column('a')]);
                 connection.writeTextRow(['1']);
                 connection.writeEof(0, MORE_RESULTS | flags());
+                // the header goes on with the sequence numbers of the rows
+                return connection.writeOk({ serverStatus: flags() });
             }
             ok();
         };
@@ -497,27 +501,30 @@ describe('a connection the app had through getConnection()', () => {
         expect(result.serverStatus).toBe(AUTOCOMMIT);
     });
 
-    it('whose reset never answers: dropped within resetTimeout, the next node gets the query',
-        async () => {
-            const [n1, n2] = [await listen(1), await listen(9)];
-            const cluster = await clusterOf([n1, n2]);
-            const { connection, nodeId } = await cluster.getConnection();
-            expect(nodeId).toBe(1);
-            connection.release();
-            n1.become('ignores the reset');
-            const started = Date.now();
+    // The release() of the app resets the connection. The query waits for the one slot of
+    // the pool meanwhile, and gets a new connection when the reset ran out of time
+    it('whose reset at release() never answers: dropped within resetTimeout, the query that ' +
+        'waits gets a new connection', async () => {
+        const [n1, n2] = [await listen(1), await listen(9)];
+        const cluster = await clusterOf([n1, n2]);
+        const { connection, nodeId } = await cluster.getConnection();
+        expect(nodeId).toBe(1);
+        const logins = n1.logins();
+        n1.become('ignores the reset');
+        connection.release();
+        const started = Date.now();
 
-            const { result } = await call(cluster, CLEAN, { maxRetry: 2 });
-            const took = Date.now() - started;
-            await until(() => n1.closed() === 1);
+        const { result } = await call(cluster, CLEAN, { maxRetry: 2 });
+        const took = Date.now() - started;
+        await until(() => n1.closed() === 1);
 
-            expect(result.serverStatus).toBe(AUTOCOMMIT);
-            expect(took).toBeGreaterThanOrEqual(RESET - 50);
-            expect(took).toBeLessThan(RESET + 500);
-            expect([n1.app(), n2.app()]).toEqual([['reset'], [CLEAN]]);
-            expect(n1.closed()).toBe(1);
-            expect(stats(cluster, 1)).toMatchObject({ used: 0, idle: 0, pending: 0 });
-        });
+        expect(result.serverStatus).toBe(AUTOCOMMIT);
+        expect(took).toBeGreaterThanOrEqual(RESET - 50);
+        expect(took).toBeLessThan(RESET + 500);
+        expect([n1.app(), n2.app(), n1.logins() - logins]).toEqual([['reset', CLEAN], [], 1]);
+        expect(n1.closed()).toBe(1);
+        expect(stats(cluster, 1)).toMatchObject({ used: 0, idle: 1, pending: 0 });
+    });
 });
 
 describe('the health check of a node without a healthCheck block', () => {

@@ -33,7 +33,9 @@ const conn = (
     reset: jest.fn(reset),
     release: jest.fn(),
     destroy: jest.fn(),
-    stream: { destroy: jest.fn() }
+    stream: { destroy: jest.fn() },
+    on: jest.fn(),
+    removeListener: jest.fn()
 });
 
 // A real Pool whose mysql2 pool answers getConnection() as `connection` says. The pool with

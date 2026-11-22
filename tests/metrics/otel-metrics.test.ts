@@ -67,7 +67,9 @@ const makeConn = (opts: { queryErr?: any, rows?: any } = {}) => ({
     reset: jest.fn((cb: Cb) => cb(null)),
     query: jest.fn((_o: any, cb: Cb) => cb(opts.queryErr ?? null, opts.rows)),
     release: jest.fn(),
-    destroy: jest.fn()
+    destroy: jest.fn(),
+    on: jest.fn(),
+    removeListener: jest.fn()
 });
 
 const makePool = (conn: any, id: number = 1): Pool => {

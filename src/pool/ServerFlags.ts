@@ -84,11 +84,15 @@ const CLOSE_GRACE_MS = 2000;
 /**
  * Close a connection for good. mysql2's destroy() only ends the writing side of the socket
  * and clears its own connect timer: a server that never answers would keep the socket,
- * and with it the process, open
+ * and with it the process, open.
+ * Without an error, a command still out on the connection never gets its callback: mysql2
+ * tells it nothing of a socket it closed itself. With one, mysql2 fails that command with it
+ * when the socket closes
+ * @param error what a command still out on the connection fails with
  */
-export function drop(connection: any): void {
+export function drop(connection: any, error?: Error): void {
     connection.destroy();
-    connection.stream?.destroy();
+    connection.stream?.destroy(error);
 }
 
 /**

@@ -59,16 +59,21 @@ describe('PoolStatus.checkStatus validity', () => {
         expect(status.isValid).toBe(true);
     });
 
+    // The arguments of the status query: the last says no probe, see Pool.query()
+    const asked = (timeout: number) => [
+        'SHOW GLOBAL STATUS;', { redis: false, timeout }, {}, undefined, false, false
+    ];
+
     it('the status query times out at the longest check interval, or queryTimeout if lower', async () => {
         pool.query.mockResolvedValue([]);
         const slow = new PoolStatus(pool as any, { ...settings, queryTimeout: 120000 }, true);
         await slow.checkStatus();
-        expect(pool.query).toHaveBeenLastCalledWith('SHOW GLOBAL STATUS;', { redis: false, timeout: 10000 });
+        expect(pool.query).toHaveBeenLastCalledWith(...asked(10000));
         slow.stopTimerCheck();
 
         const fast = new PoolStatus(pool as any, { ...settings, queryTimeout: 3000 }, true);
         await fast.checkStatus();
-        expect(pool.query).toHaveBeenLastCalledWith('SHOW GLOBAL STATUS;', { redis: false, timeout: 3000 });
+        expect(pool.query).toHaveBeenLastCalledWith(...asked(3000));
         fast.stopTimerCheck();
     });
 
@@ -76,7 +81,7 @@ describe('PoolStatus.checkStatus validity', () => {
         pool.query.mockResolvedValue([]);
         const noTimeout = new PoolStatus(pool as any, { ...settings, queryTimeout: 0 }, true);
         await noTimeout.checkStatus();
-        expect(pool.query).toHaveBeenLastCalledWith('SHOW GLOBAL STATUS;', { redis: false, timeout: 10000 });
+        expect(pool.query).toHaveBeenLastCalledWith(...asked(10000));
         noTimeout.stopTimerCheck();
     });
 
