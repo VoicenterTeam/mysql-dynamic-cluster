@@ -43,6 +43,7 @@ Base configuration applied to every host in `hosts`.
 | `healthCheck` | object | not set: the node keeps the legacy check, see [below](#healthcheck) |
 | `queryTimeout` | `number` (ms) | `120000` |
 | `resetTimeout` | `number` (ms), 1 or more. How long the reset of a dirty connection may take. One that fails or takes longer ends with the connection destroyed with its socket. See [subsystems/pool.md](subsystems/pool.md#the-session-of-a-connection). Since 5.0.0 | `1000` |
+| `maxPreparedStatements` | `number`, a whole number, 1 or more. How many statements of `execute()` mysql2 keeps prepared per connection; past it the one used longest ago is closed. The server counts every one against `max_prepared_stmt_count` (16382 by default), for all its clients: keep `processes × connectionLimit × maxPreparedStatements` per node below it, with room for the other clients. See [subsystems/cluster.md](subsystems/cluster.md#execute-and-bound-values). Since 5.0.0 | `100` |
 | `slowQueryTime` | `number` (s) | `1` |
 | `redisFactor` | `number` | `1` |
 | `flags` | `string` or `string[]` | not set: picked per node, see [below](#flags) |

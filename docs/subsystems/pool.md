@@ -202,18 +202,24 @@ The `Promise` callback chain is, in order
    database. Most of the time it sends nothing. No change of user is sent,
    since 5.0.0. The statement is only sent from its success callback. A
    failed or timed-out reset or `USE` rejects with `sent: false`.
-3. The guard, since 5.0.0: a call without `execute` whose `values` hold at
-   least one value (`_writesValues`: a non-empty array, an object with an
-   own key, a string or a number), on a connection whose
-   `_session.noBackslashEscapes(conn)` is true, rejects
+3. The guard, since 5.0.0: a call without `execute` whose `valuesInText`
+   is set (the cluster's formatting changed the text), on a connection
+   whose `_session.noBackslashEscapes(conn)` is true, rejects
    with `MDC_UNSAFE_SQL_MODE` and `sent: false` through `fail()`. Nothing
    is sent, and the connection goes back as it is. See
    [cluster.md](./cluster.md#values-in-the-text-under-no_backslash_escapes).
 4. The send step, the one step a bound statement does differently:
    `conn.query({ sql, timeout })` for text, `conn.execute({ sql, values,
    timeout })` with the option `execute`. mysql2 prepares a bound statement
-   once per connection and keeps it until a reset. Both hand their reply
-   to the same callback. `_session.observe()` applies the dirty rule to
+   once per connection and keeps it until a reset, a `USE` of another
+   database or the cap of `maxPreparedStatements` closes it. Before a bound
+   send, `_session.executed(conn, sql)` notes the text, and a timer with
+   the query's `timeout` starts: mysql2 times only the execute, not the
+   prepare. It fails the call with `PROTOCOL_SEQUENCE_TIMEOUT`, which
+   destroys the connection, and is cleared whenever the call settles. A
+   throw of mysql2 at the send, such as for values it refuses, fails the
+   call with `sent: false`, so a direct call cannot hang. Both forms hand
+   their reply to the same callback. `_session.observe()` applies the dirty rule to
    the reply. On
    success the connection goes back through `_session.release()`: a clean
    one at once, a dirty one after a reset. On error it goes through
@@ -337,10 +343,11 @@ per query, a reset of the whole session each time, and on a Galera node
 outside the primary component a change of user gets no answer, so the
 query waited for its whole timeout instead of failing with 1047 at once.
 
-`SessionState` keeps three things per connection, in a `WeakMap`: the
-database the session is on, whether it is dirty, and whether its server
-has `NO_BACKSLASH_ESCAPES`. It is the one place for the switch of database,
-the dirty rule, that bit and the reset with its time limit. `query()` and
+`SessionState` keeps four things per connection, in a `WeakMap`: the
+database the session is on, whether it is dirty, whether its server has
+`NO_BACKSLASH_ESCAPES`, and the texts `execute` prepared on it. It is the
+one place for the switch of database, the dirty rule, that bit, those
+texts and the reset with its time limit. `query()` and
 `multiStatementQuery()` call it.
 
 - **A connection seen for the first time** is on the `database` of the
@@ -386,10 +393,25 @@ the dirty rule, that bit and the reset with its time limit. `query()` and
   `session_track_schema=OFF` the pool cannot see such a `USE`: an app must
   not send `USE` through `query()` there, and should use the `database`
   option instead.
+- **The texts of `execute`.** Since 5.0.0 (#91). mysql2 keeps one
+  prepared statement per text and connection, whatever the database, and
+  the server runs it in the database it was prepared in. `executed()`
+  notes each text, the one used last at the end. `prepare()` closes all of
+  them (`connection.unprepare(sql)`, `COM_STMT_CLOSE`) before it sends a
+  `USE` of another database, and forgets them. A header with `0x4000`
+  makes the database unknown, so the next statement sends `USE` and closes
+  them the same way. A reset forgets them too: mysql2 clears its own cache
+  when the reset is answered. Past `maxPreparedStatements` texts the one
+  used longest ago is closed at once, so mysql2 never keeps a statement
+  the list lost. A connection that takes no command any more makes
+  `unprepare` throw. That is caught, and the `USE` or statement that
+  follows fails the call.
 - **`noBackslashEscapes`.** Since 5.0.0 (#91). `observe()` sets it from
   bit 512 of the last header of a reply (`SERVER_STATUS_NO_BACKSLASH_ESCAPES`)
   and clears it when that header lacks the bit, each time: it is not
-  sticky. A reply without a header, rows only or an error, leaves it. A
+  sticky. The reply to the `USE` of `prepare()` counts too. A reply without
+  a header, rows only or an error, leaves it: mysql2 does not pass on the
+  status flags of the end of the rows. A
   connection seen for the first time has it off. A reset turns it off: the
   session gets the `sql_mode` of the server back, and mysql2 does not show
   the header of the reply to a reset, so it counts as off until the next
@@ -403,7 +425,8 @@ the dirty rule, that bit and the reset with its time limit. `query()` and
   `GET_LOCK()`, tables locked with `LOCK TABLES`, temporary tables and
   prepared statements. Up to 4.x the change of user released all of them.
   The statements `execute` prepares stay too, in the cache mysql2 keeps
-  per connection, until a reset clears both.
+  per connection, up to `maxPreparedStatements`, until a reset or a `USE`
+  of another database closes them.
 - **A connection the app had.** `GaleraCluster.getConnection()` calls
   `pool.lend(connection)`. The pool sees neither the `USE` nor the
   transaction the app sends on it, so it marks the connection dirty and

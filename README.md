@@ -219,13 +219,13 @@ Params:
 cluster.query(`SELECT SLEEP(?)`, [100], { redis: true })
 ```
 
-The values are written into the query string and escaped, those of an object too. A server whose `sql_mode` has `NO_BACKSLASH_ESCAPES` does not read that escaping, so on such a connection a query with values rejects with the code `MDC_UNSAFE_SQL_MODE` and is not sent. Use [execute](#execute) there.
+The values are written into the query string and escaped, those of an object too. A server whose `sql_mode` has `NO_BACKSLASH_ESCAPES` does not read that escaping. Once a connection has seen that mode in a reply header (of a `SET`, `INSERT`, `UPDATE`, `USE` or `CALL`, never of rows), a query that writes values into its text rejects with the code `MDC_UNSAFE_SQL_MODE` and is not sent. Before that it is sent. Under that mode [execute](#execute) is the only safe way to send values.
 
 ### execute
-Like [query](#query), but mysql2 prepares the statement and the server binds the values: they never become part of the query string. The same choice of node, retry and errors as `query`. No Redis. The same as `query` with the [query option](#query-options) `execute: true` <br>
+Like [query](#query), but mysql2 prepares the statement and the server binds the values: they never become part of the query string. The same choice of node, retry and errors as `query`. No Redis. The same as `query` with the [query option](#query-options) `execute: true`. The connection keeps the prepared statement for the next call of the same text, up to `maxPreparedStatements` of the [pool settings](#pool-settings) <br>
 Params:
 1. **Query string** - request to the database, with `?` for each value
-2. **Query values** - an array of values. An object or a string rejects with a `TypeError`
+2. **Query values** - an array of values, or none. A `TypeError` rejects the call before any node is asked when the values are an object, a string or a number, or an array that holds `undefined`, a hole (`[, 'x']`) or a function. Use `null` for SQL `NULL`
 3. [Query options](#query-options) - configuration only for this request
 
 ```javascript
@@ -462,6 +462,14 @@ General pool settings which inherited by [user pool settings](#user-pool-setting
             <td>number</td>
             <td>-</td>
             <td>1000</td>
+        </tr>
+        <tr>
+            <td>maxPreparedStatements</td>
+            <td>How many statements of <a href="#execute">execute</a> mysql2 keeps prepared per connection; past it the one used longest ago is closed. The server counts every one of every client against <code>max_prepared_stmt_count</code> (16382 by default): keep processes × connectionLimit × maxPreparedStatements per node below it. 1 or more</td>
+            <td>false</td>
+            <td>number</td>
+            <td>-</td>
+            <td>100</td>
         </tr>
         <tr>
             <td>validators</td>

@@ -418,26 +418,56 @@ The two forms take the same path: the choice of node, the retry rule of
 step 8, the error of step 9, the signal, the metrics and passive health.
 The one difference is in `Pool.query`, which hands the statement to
 mysql2's `conn.execute({ sql, values, timeout })` in place of
-`conn.query({ sql, timeout })`. mysql2 prepares the statement on that
-connection and keeps it in a cache of its own (`maxPreparedStatements`,
-16000 by default), so the second call of the same text on that connection
-is one command. The values go in the execute packet as parameters and
-never become part of the text. A reset of the connection clears that
-cache, so the next call prepares again: the connection forgets its
-prepared statements on a reset too.
+`conn.query({ sql, timeout })`. The values go in the execute packet as
+parameters and never become part of the text.
 
-- **Values.** An array, or none (`undefined` or `null`). An object or a
-  string rejects with the `TypeError` `execute: values must be an array,
-  with no undefined and no function in it`, before the service-name
-  lookup and any node, and is recorded as a failed query. So does an array
-  that holds `undefined` or a function: mysql2 would throw for those
-  instead of failing the call. Use `null` for SQL `NULL`.
+mysql2 prepares the statement on that connection and keeps it in a cache of
+its own, keyed by the text alone, so the second call of the same text on
+that connection is one command. That cache has costs, and the pool bounds
+them:
+
+- **Each kept statement holds memory on the server**, and the server counts
+  every statement of every client against `max_prepared_stmt_count`
+  (16382 by default). The pool setting `maxPreparedStatements` (100 by
+  default) caps the statements of one connection: past it the one used
+  longest ago is closed (`COM_STMT_CLOSE`). Keep
+  `processes × connectionLimit × maxPreparedStatements` per node below
+  `max_prepared_stmt_count`, with room for the other clients of the
+  server. 4 processes with `connectionLimit: 10` and the default use at
+  most 4000. An app that sends many distinct texts, such as an `IN` list
+  of a length that varies, fills the cap and prepares again: send such a
+  statement with `query()`.
+- **A statement runs in the database it was prepared in**, also after a
+  `USE` of another one, and the cache key has no database. So the pool
+  closes every statement `execute` prepared on a connection before it
+  sends a `USE` of another database there, and the next call prepares
+  again. That also covers a `USE` of the app, which the reply header
+  shows by bit `0x4000`: the next statement of the pool sends `USE`
+  first. `SessionState` keeps the texts, see
+  [pool.md](./pool.md#the-session-of-a-connection). mysql2 3.24 sends
+  each close twice; the server ignores the second.
+- **A reset** forgets every prepared statement, on the server and in
+  mysql2, so the next call prepares again.
+
+- **Values.** An array, or none (`undefined` or `null`). Everything else
+  rejects with the `TypeError` `execute: values must be an array, with no
+  undefined and no function in it`, before the service-name lookup and any
+  node, and is recorded as a failed query: an object, a string, a number,
+  and an array that holds `undefined`, a hole (`[, 'x']`) or a function.
+  mysql2 would throw for those, or fail the call after the prepare. Use
+  `null` for SQL `NULL`.
 - **No Redis.** An `execute` call neither reads Redis nor writes it,
   whatever the `redis` option says, also when no node is valid.
 - **Errors.** A prepare that fails, such as a syntax error, comes back as
-  the error of the call, with `sent: true`: the prepare went to the server.
-- **Timeout.** mysql2 times the execute with the `timeout` of the query,
-  not the prepare before it. The signal ends either.
+  the error of the call, with `sent: true`: the prepare went to the server,
+  so no other node is tried, and the connection is reset before it goes
+  back. A node that answers the prepare with 1047 is left for the next
+  node, as for a statement.
+- **Timeout.** The `timeout` of the query covers the prepare and the
+  execute together: `Pool.query` arms it when it sends the statement, since
+  mysql2 times only the execute. On expiry the call fails with
+  `code: 'PROTOCOL_SEQUENCE_TIMEOUT'` and `sent: true`, and the connection
+  is destroyed. The signal ends either step.
 - **Metrics.** The same records and attributes as `query()`.
 
 ### Values in the text under `NO_BACKSLASH_ESCAPES`
@@ -449,7 +479,7 @@ value is SQL. The server says so in bit 512 of the status flags of every OK
 header. `SessionState` keeps the bit of the last header on each connection,
 see [pool.md](./pool.md#the-session-of-a-connection).
 
-A `query()` with values and without `execute` takes its connection and gets
+A `query()` that wrote values into its text takes its connection and gets
 it ready as any other. If the state of that connection says
 `NO_BACKSLASH_ESCAPES`, `Pool.query` rejects before the statement is sent,
 with an `Error` whose `code` is `MDC_UNSAFE_SQL_MODE` and whose message
@@ -460,24 +490,28 @@ names the mode and `execute()`. Always: there is no setting.
 - The connection goes back to the pool as it is: no reset, not destroyed.
   Passive health is not told.
 - `execute`, and a `query()` without values, run as before.
-- "With values" means at least one value would be written into the text:
-  a non-empty array, an object with an own key, a string or a number
-  (`Pool._writesValues`). `query(sql, [])` and `query(sql, {})` run as
-  before.
+- "Wrote values" has one rule: `_formatSQL` changed the text. `query()`
+  passes that to the pool as `valuesInText`. So `query(sql, [])`,
+  `query(sql, {})` and an object whose keys match no `:name` run as before.
 - The package's own statements with values go through `execute`: the
   service-name lookup of `ServiceNames` and, in `ClusterHashing`,
   `SP_NodeServiceUpdate`, `SP_NodeInsert` and the `information_schema`
   checks of `_upgradeInPlace()`. So a server with the mode does not stop
   them. Its statements without values still go through `query()`.
-- A connection the pool has seen no header on yet, a new one or one just
-  reset, counts as without the mode: the pool does not read the status
-  flags of the server greeting, and mysql2 does not show the header of the
-  reply to a reset. So on a server whose global `sql_mode` has the mode,
-  the first statement with values on such a connection is not refused.
-  Use `execute` there.
-- The bit of each later header is read again: one without it lets values
-  through again. A reply of rows has no header and leaves the state as it
-  was.
+- **A connection learns the mode only from an OK header**: the reply to a
+  `SET`, an `INSERT`, an `UPDATE`, a `USE` (the one the pool sends too) or
+  a `CALL`. Never from rows: mysql2 reads the status flags of the end of
+  the rows for itself and does not pass them on. A new connection, and one
+  just reset, count as without the mode until such a header arrives: the
+  pool does not read the status flags of the server greeting, and mysql2
+  does not show the header of the reply to a reset. Until then every
+  statement with values on that connection is written into the text and
+  sent. On a server whose `sql_mode` has `NO_BACKSLASH_ESCAPES`, a `SELECT`
+  with values on a fresh connection goes out unsafe. Under that mode
+  `execute()` is the only safe way to send values. The guard only stops
+  `query()` once the connection has seen the bit.
+- The bit of each later OK header is read again: one without it lets
+  values through again. A reply of rows leaves the state as it was.
 
 ## Public API summary
 
