@@ -24,6 +24,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 - [7. `ClusterHashing` SQL-asset paths are dist-depth fragile](#7-clusterhashing-sql-asset-paths-are-dist-depth-fragile)
 - [8. `Redis.connect` double-connect risk](#8-redisconnect-double-connect-risk)
 - [9. `config.load(userSettings).validate` lacks call parens](#9-configloadusersettingsvalidate-lacks-call-parens)
+- [16. `Borrow._leaveQueue` reads mysql2's private `_connectionQueue`](#16-borrow_leavequeue-reads-mysql2s-private-_connectionqueue)
 
 ### Data model & SQL constraints
 - [10. Hashing tables capped at 127 entries each (signed TINYINT)](#10-hashing-tables-capped-at-127-entries-each-signed-tinyint)
@@ -276,6 +277,28 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   at boot instead of being silently ignored.
 
 ---
+
+### 16. `Borrow._leaveQueue` reads mysql2's private `_connectionQueue`
+
+- **Severity:** **low**
+- **Location:** `_leaveQueue()` in [src/pool/Borrow.ts](../src/pool/Borrow.ts)
+- **Description:** a request whose signal aborts while it waits for a
+  connection has to leave mysql2's queue, and mysql2 has no public call for
+  that. `_leaveQueue()` searches the private `_connectionQueue` of the mysql2
+  pool (a `Denque` in mysql2 3) for the callback of the request and takes it
+  out with `get()` and `removeOne()`. The code came with
+  `getConnection({ signal })` in 4.7.0 and moved into `Borrow` in 5.0.0, so
+  `query()` and `execute()` with a signal rely on it too.
+  `failWaiting()` and `stats()` of `Pool` and the reaper read private fields
+  of the mysql2 pool too. If mysql2 renames the field or changes its shape,
+  nothing throws: `_leaveQueue()` logs one warning per mysql2 pool, the
+  aborted request stays in the queue, and the connection that arrives for it
+  on its turn goes straight back to the pool.
+- **Suggested fix:** none while mysql2 3 keeps the field. After a mysql2
+  upgrade, run
+  [tests/pool/get-connection-signal.test.ts](../tests/pool/get-connection-signal.test.ts),
+  which covers the abort of a waiting request and the warning. Use a public
+  call of mysql2 if one is added.
 
 ## Data model & SQL constraints
 
