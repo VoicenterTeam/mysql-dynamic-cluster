@@ -97,7 +97,7 @@ entries — `SELECT * FROM t WHERE id = 1` and
 
 ## Write path
 
-[src/pool/Pool.ts:215-222](../../src/pool/Pool.ts#L215).
+`query()` in [src/pool/Pool.ts](../../src/pool/Pool.ts).
 
 After a successful pool query, `Pool.query` writes the result back to
 Redis when `queryOptions.redis` is true:
