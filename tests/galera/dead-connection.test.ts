@@ -95,8 +95,10 @@ describeRig('a connection whose path died silently, on Galera', () => {
 
             proxy.cut();
             await new Promise(resolve => setTimeout(resolve, 1100));
+            // a statement sent on the dead connection would wait for the query timeout
             const result = await cluster.query<any>(
-                `INSERT INTO ${TABLE} (conn) VALUES (CONNECTION_ID())`
+                `INSERT INTO ${TABLE} (conn) VALUES (CONNECTION_ID())`, null,
+                { signal: AbortSignal.timeout(10000) }
             );
 
             expect(result.affectedRows).toBe(1);
