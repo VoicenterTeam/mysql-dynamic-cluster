@@ -46,7 +46,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   helper that hands the connection back once and returns; the query only runs
   after `changeUser` succeeds.
 - **Severity:** **high**
-- **Location:** [src/pool/Pool.ts:265-340](../src/pool/Pool.ts#L265-L340), `Pool.query`
+- **Location:** `query()` in [src/pool/Pool.ts](../src/pool/Pool.ts), `Pool.query`
   as it is now. The description is of the code before 3.2.2.
 - **Description:** Inside the nested `getConnection` -> `changeUser` -> `query`
   callback chain, every error branch calls `reject(err)` without a following
@@ -123,7 +123,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   logging on and `log_bin_trust_function_creators=0`), fixed in the same
   release.
 - **Severity:** **high**
-- **Location:** [src/pool/Pool.ts:347-430](../src/pool/Pool.ts#L347-L430),
+- **Location:** `multiStatementQuery()` in [src/pool/Pool.ts](../src/pool/Pool.ts),
   `Pool.multiStatementQuery` as it is now. The description is of the code
   before 3.2.2.
 - **Description:** Inside the `beginTransaction` callback, `sqls.forEach` fires
