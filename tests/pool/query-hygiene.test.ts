@@ -114,8 +114,10 @@ describe('Pool.query connection hygiene', () => {
             const conn = makeConn();
             conn.changeUser.mockImplementation((_o: any, cb: Cb) => { late = cb; });
             const p = makePool(null, conn).query('SELECT 1', { timeout: 500 });
-            jest.advanceTimersByTime(500);
-            await expect(p).rejects.toMatchObject({ code: 'PROTOCOL_SEQUENCE_TIMEOUT' });
+            const rejected = expect(p).rejects.toMatchObject({ code: 'PROTOCOL_SEQUENCE_TIMEOUT' });
+            // the change of database starts once the promise of getConnection() resolved
+            await jest.advanceTimersByTimeAsync(500);
+            await rejected;
             late(null);
             expect(conn.query).not.toHaveBeenCalled();
             expect(conn.destroy).toHaveBeenCalledTimes(1);

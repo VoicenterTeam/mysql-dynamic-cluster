@@ -17,7 +17,7 @@ import Redis from "../Redis/Redis";
 import { IRedisData } from "../types/RedisInterfaces";
 import { IdleConnectionReaper, IIdlePing } from './IdleConnectionReaper';
 import { CheckConnection } from './CheckConnection';
-import { flagsForServer, IServerGreeting, IServerProbe, probeServer } from './ServerFlags';
+import { drop, flagsForServer, IServerGreeting, IServerProbe, probeServer } from './ServerFlags';
 
 // AKA galera node
 export class Pool {
@@ -264,7 +264,9 @@ export class Pool {
      * @param sql mysql query string
      * @param queryOptions query options like timeout, database, multipleStatements etc
      * @param outcome gets `sent`: whether the statement went to the server. A failed call
-     * also writes it on its error, when the error can take it
+     * also writes it on its error, when the error can take it. Gets `aborted: true` when the
+     * signal of the options ended the call, which then rejects with the reason of the signal
+     * as it is: nothing is written on it, and passive health is not told
      */
     public async query<T extends QueryResult>(
         sql: string, queryOptions?: IQueryOptions, outcome: IQueryOutcome = {}
@@ -278,6 +280,7 @@ export class Pool {
                 redisExpire: this._redisExpire,
                 ...queryOptions
             }
+            const signal = queryOptions.signal;
             const poolMetricOption: IOperationMetricOptions = {
                 ...this._metricOptions(queryOptions.database),
                 sql
@@ -293,25 +296,60 @@ export class Pool {
 
             // mysql2 can call back twice (timeout, then a late server error), settle only once
             let settled = false;
-            const fail = (error: any, conn?: mysql.PoolConnection) => {
+            // the connection of the call, from its arrival until the call settled
+            let held: mysql.PoolConnection | undefined;
+            const stopListening = () => signal?.removeEventListener('abort', onAbort);
+            // told: getConnection() told passive health of it already
+            const fail = (error: any, conn?: mysql.PoolConnection, told = false) => {
                 if (settled) return;
                 settled = true;
+                stopListening();
                 queryTimer.end();
                 Metrics.recordOperation(queryTimer.get(), { ...poolMetricOption, error });
                 // Before the caller hears of it, so every call after this one sees the node
                 // as it is now. Without a connection the error came instead of one. The
                 // check of a node with a healthCheck block is not here: it asks on its own
                 // connection. That of a node without one is, and passive health skips it
-                this._status.realFailure(error, !conn);
+                if (!told) this._status.realFailure(error, !conn);
                 Pool._handBack(conn, error);
                 Pool._writeSent(error, outcome.sent);
                 reject(error);
             }
+            // the signal ended the call: its reason as it is, recorded as the error of the
+            // attempt. The abort is never told to passive health
+            const abort = (reason: unknown) => {
+                settled = true;
+                outcome.aborted = true;
+                queryTimer.end();
+                Metrics.recordOperation(queryTimer.get(), {
+                    ...poolMetricOption, error: reason || {}
+                });
+                reject(reason);
+            }
+            // The signal of the app calls this inside its abort(). Nothing may be thrown there.
+            // The change of database or the statement may still run on the connection, so it
+            // is destroyed, never handed back: the pool opens a new one in its place
+            const onAbort = () => {
+                if (settled) return;
+                stopListening();
+                try {
+                    drop(held);
+                } catch (thrown) {
+                    Logger.warn("Pool " + this.name + ": could not destroy the connection of " +
+                        "an aborted query", { nodeId: this.id, pool: this.name,
+                        error: thrown?.message || thrown });
+                }
+                abort(Pool.abortReason(signal));
+            };
 
-            if (!this._pool) return fail(this._notConnected());
-            this._pool.getConnection((err, conn) => {
-                if (err) return fail(err);
+            // the queue and an abort while the request waits in it are getConnection()'s
+            const asked: IAbortOutcome = {};
+            this.getConnection(signal, asked).then(conn => {
                 if (!conn) return fail(new Error("Can't find connection. Maybe it was unexpectedly closed."));
+                held = conn;
+                // the signal aborted after getConnection() took its listener off
+                if (signal?.aborted) return onAbort();
+                signal?.addEventListener('abort', onAbort);
 
                 // change database
                 Logger.debug("Changing database to " + queryOptions.database);
@@ -325,6 +363,7 @@ export class Pool {
                         if (error) return fail(error, conn);
                         if (settled) return;
                         settled = true;
+                        stopListening();
                         conn.release();
 
                         queryTimer.end();
@@ -345,6 +384,9 @@ export class Pool {
                         resolve(result);
                     });
                 })
+            }, error => {
+                if (asked.aborted) return abort(error);
+                fail(error, undefined, true);
             })
         })
     }

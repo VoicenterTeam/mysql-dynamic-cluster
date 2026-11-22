@@ -51,7 +51,10 @@ export interface IQueryOptions {
     // Try the next node after a node answered 1047, not ready. Default true. False for a
     // statement that can do part of its work before the 1047, such as a procedure that commits
     // on its way
-    retryNotReady?: boolean
+    retryNotReady?: boolean,
+    // Ends the call when it aborts: the call rejects with the reason of the signal as it is,
+    // and no other node is tried. A connection the call holds then is destroyed
+    signal?: AbortSignal
 }
 
 // How far one Pool.query() call got. The caller hands in an empty object and the pool fills
@@ -61,7 +64,9 @@ export interface IQueryOutcome {
     // False from the start of the call, true once the statement was handed to the connection:
     // from then on it may run on the server, whatever the call ends with. It stays false when
     // no connection came or the change of database failed. Not set by a pool that tells nothing
-    sent?: boolean
+    sent?: boolean,
+    // true when the call was rejected because its signal aborted. Not set in any other case
+    aborted?: boolean
 }
 
 // How the health check of one connect() ended. The caller of Pool.connect() hands in an empty

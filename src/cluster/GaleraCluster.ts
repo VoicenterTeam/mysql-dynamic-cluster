@@ -359,6 +359,24 @@ export class GaleraCluster {
             });
         }
 
+        // null stands for no signal, as undefined does
+        const signal = queryOptions.signal ?? undefined;
+        if (signal !== undefined && !GaleraCluster._isAbortSignal(signal)) {
+            const error = new TypeError("query: options.signal must be an AbortSignal");
+            record(undefined, error);
+            throw error;
+        }
+        // The caller gave up: the call rejects with the reason of the signal as it is, never
+        // with stale data of Redis. A falsy reason is a failed query to the metric too
+        const stopIfAborted = () => {
+            if (!signal?.aborted) return;
+            const reason = Pool.abortReason(signal);
+            record(undefined, reason || {});
+            throw reason;
+        };
+        // before the service name, Redis and the nodes: an aborted call asks none of them
+        stopIfAborted();
+
         try {
             if (!serviceId && queryOptions?.serviceName) {
                 serviceId = await this._serviceNames.getID(queryOptions.serviceName);
@@ -372,9 +390,13 @@ export class GaleraCluster {
             activePools = await this._getActivePools(serviceId);
             retryCount = this._maxRetryCount(queryOptions.maxRetry, activePools.length);
         } catch (e) {
+            // the signal aborted while the nodes were looked for
+            stopIfAborted();
             // no pool passed the validator: serve cached data, even expired, as when every pool fails
             if (queryOptions.redis && !queryOptions.redisRefreshCache) {
                 const redisResult = await Redis.get(this._formatSQL(sql, values, queryOptions.escapeNamedValues));
+                // or while Redis was read
+                stopIfAborted();
                 if (redisResult) {
                     Logger.warn("No valid pool. Use old data from Redis");
                     // parsed before the record: a cached value that doesn't parse is a failed query
@@ -429,6 +451,8 @@ export class GaleraCluster {
 
         // the error of each node tried, in the order they were tried
         const errors: { nodeId: number, error: any }[] = [];
+        // what a pool rejected with when the signal aborted in its call
+        let aborted: { reason: unknown } | undefined;
 
         for (let i = 0; i < retryCount; i++) {
             const pool = activePools[i];
@@ -440,15 +464,29 @@ export class GaleraCluster {
                 record('pool');
                 return res;
             } catch (e) {
-                errors.push({ nodeId: pool.id, error: GaleraCluster._fromNode(e, pool.id) });
-                Logger.error(`Query failed in pool ${pool.name}: ${e?.message}`);
-                // a statement that may have run on this node must not run on another one
+                if (outcome.aborted) {
+                    // the reason of the signal is the app's: no node id goes on it
+                    aborted = { reason: e };
+                    Logger.debug(`Query in pool ${pool.name} was aborted`);
+                } else {
+                    errors.push({ nodeId: pool.id, error: GaleraCluster._fromNode(e, pool.id) });
+                    Logger.error(`Query failed in pool ${pool.name}: ${e?.message}`);
+                }
+                // a statement that may have run on this node must not run on another one, and
+                // no node gets it once the signal aborted
                 if (!mayTryNextNode(e, outcome, queryOptions)) break;
                 if (i + 1 < retryCount) {
                     Logger.debug("Retrying query...");
                 }
             }
         }
+
+        // the signal aborted in a node, or before the next one was asked: no stale data
+        if (aborted) {
+            record(undefined, aborted.reason || {});
+            throw aborted.reason;
+        }
+        stopIfAborted();
 
         if (redisData) {
             Logger.warn("The query failed. Use old data from Redis");
