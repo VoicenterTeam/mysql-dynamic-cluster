@@ -110,12 +110,17 @@ cmd_up() {
 }
 
 cmd_down() {
-  local n
+  local n pid
   for n in "${NODES[@]}"; do docker rm -f "$NAME-$n" > /dev/null 2>&1; done
-  # the pids of a state dir that up made, never of another dir
+  # the pids of a state dir that up made, never of another dir, and only while the process is
+  # still the run of that node: the pid of a stale state dir may be another process's by now
   if [ -f "$STATE/.mdc-rig" ]; then
     for n in "${NODES[@]}"; do
-      [ -f "$STATE/node$n.pid" ] && kill "$(cat "$STATE/node$n.pid")" 2> /dev/null
+      [ -f "$STATE/node$n.pid" ] || continue
+      pid=$(cat "$STATE/node$n.pid")
+      case "$(ps -o args= -p "$pid" 2> /dev/null)" in
+        *"--name $NAME-$n "*) kill "$pid" 2> /dev/null ;;
+      esac
     done
   fi
   docker network rm "$NET" > /dev/null 2>&1
