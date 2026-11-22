@@ -472,6 +472,30 @@ General pool settings which inherited by [user pool settings](#user-pool-setting
             <td>100</td>
         </tr>
         <tr>
+            <td>probeIdle</td>
+            <td>Time in ms a pooled connection may be idle before it answers a ping on its way to a query or to <code>getConnection()</code>. 0 or more</td>
+            <td>false</td>
+            <td>number</td>
+            <td>-</td>
+            <td>1000</td>
+        </tr>
+        <tr>
+            <td>probeTimeout</td>
+            <td>Time in ms that ping may take before the connection is destroyed and the next one of the node is taken. 1 or more</td>
+            <td>false</td>
+            <td>number</td>
+            <td>-</td>
+            <td>1000</td>
+        </tr>
+        <tr>
+            <td>resetAfterStatements</td>
+            <td>Statements after which a connection is reset when it goes back to the pool. 1 or more</td>
+            <td>false</td>
+            <td>number</td>
+            <td>-</td>
+            <td>1000</td>
+        </tr>
+        <tr>
             <td>validators</td>
             <td>Validator params to check if pool is valid (pool status) and ready for work</td>
             <td>false</td>

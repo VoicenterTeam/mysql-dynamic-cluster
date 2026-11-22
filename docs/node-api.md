@@ -12,7 +12,7 @@ themselves, or want to know which nodes are up. Before 4.5.0 such an app had to 
 | Member | What it does |
 | --- | --- |
 | [`nodes()`](#nodes) | Lists the nodes with their id, validity, load score and the error of their last health check. |
-| [`getConnection(options?)`](#getconnectionoptions) | Takes one connection of the best node. The caller owns it. |
+| [`getConnection(options?)`](#getconnectionoptions) | Takes one connection of the best node, probed when it was idle. Since 5.0.0 the cluster resets it at `release()`. |
 | [`ready`](#ready) | Tells when every node finished its first connect, and how. |
 | [`firstReady`](#firstready) | Tells when the first node passed its first connect. Added in 4.6.0. |
 | [`getPoolStats()`](#getpoolstats) | Counts used, idle and waiting connections per node. |
@@ -174,6 +174,7 @@ aborts:
 | Before the call | The promise rejects with the reason. No node is asked and nothing is queued. This comes before the search for a node, so it is the answer also when no node is valid. |
 | While the request waits in the queue of the node | The promise rejects with the reason at that moment. The request is taken out of the queue, so `getPoolStats()` shows one `pending` less right away. |
 | While a new connection for the call logs in | The promise rejects with the reason at that moment. The login goes on. When the connection arrives the package releases it to the pool, where it is `idle` for the next caller. If the login fails instead, nobody is told. |
+| While the connection answers its [probe](#the-probe-on-the-way-out) | The promise rejects with the reason at that moment. The connection is destroyed: its ping may still be out. Since 5.0.0 |
 | After the promise resolved | Nothing. You have the connection and you release it. |
 | After the promise rejected | Nothing. The first rejection stays. |
 
@@ -251,7 +252,7 @@ releases the connection at once and the next waiter gets it. No connection is lo
 | Rejection | When |
 | --- | --- |
 | `Error` with `code: 'MDC_NO_NODE_AVAILABLE'` | No node is left: none is valid, or every valid node is in `exclude`. This is also the answer before `connect()`. |
-| The error of mysql2, with `nodeId` added | The node gave no connection. It is the same object mysql2 made, so `code`, `errno` and `fatal` are as mysql2 set them. Examples: a refused login, a node that went down after its last check, `Pool is closed.` after `disconnect()`. |
+| The error of mysql2, with `nodeId` added | The node gave no connection. It is the same object mysql2 made, so `code`, `errno` and `fatal` are as mysql2 set them. Examples: a refused login, a node that went down after its last check, `Pool is closed.` after `disconnect()`. Since 5.0.0 also the error of the last [probe](#the-probe-on-the-way-out) when `connectionLimit + 1` connections in a row failed theirs, `Probe timeout` with `code: 'PROTOCOL_SEQUENCE_TIMEOUT'` for one that got no answer. |
 | The error passed to `failWaiting()`, with `nodeId` added | The request waited and `failWaiting()` failed it. |
 | The reason of the `signal`, as it is, with no `nodeId` | The signal was aborted before the call, or it aborted while the call waited. See [The reason](#the-reason). |
 | `TypeError` | `exclude` is given and is not an array of numbers. No node is asked. |
@@ -276,12 +277,16 @@ down. The package does not see what happens on a
 connection after it handed it to you. See
 [passive health](subsystems/health-and-scoring.md#passive-health).
 
-### You own the connection
+### What the cluster does with the connection
 
-The cluster does nothing to the connection before it hands it over. After you release it,
-the cluster resets it and selects its database again before its own next use of it, see
-[Reset before you release](#reset-before-you-release).
+Since 5.0.0 the connection goes through the same steps as one of the cluster's own queries
+(#93): a probe on the way out, and a reset when it comes back. There is no option to skip
+either. Up to 4.x the cluster did nothing to it, and the app had to reset it before its
+release.
 
+- A probe when it was idle, see [The probe on the way out](#the-probe-on-the-way-out).
+- A reset at `release()`, see [The reset at release()](#the-reset-at-release).
+- Packets out of order end it, see [Packets out of order](#packets-out-of-order).
 - No timeout. A statement you send has the timeout you give it, or none. `queryTimeout` of
   the settings is not applied.
 - No database change. This connection is on whatever database its last user left it on.
@@ -289,20 +294,73 @@ the cluster resets it and selects its database again before its own next use of 
   queries send `USE` only when a connection is on another database than the one they need.
 - No metric. Nothing you run on it shows in `mysql_dynamic_cluster.query.duration` or
   `mysql_dynamic_cluster.operation.duration`. The connection itself counts as `used` in
-  `mysql_dynamic_cluster.connection.count` while you hold it.
-- No reset on the way out, and none at `release()`. A query of the cluster that gets the
-  connection later resets it first. Another `getConnection()` caller gets it as you left it.
+  `mysql_dynamic_cluster.connection.count` while you hold it, and until its reset is answered.
 
 The events `acquire`, `connection` and `release` fire for it as they do for the cluster's own
 connections.
 
-When you are done, give it back with `connection.release()`. If it is broken or you are not
-sure what state it is in, call `connection.destroy()` instead. The pool then opens a new one
-when it needs it. A connection you never give back counts against `connectionLimit` for good.
+When you are done, give it back with `connection.release()`. If it is broken, you can call
+`connection.destroy()` instead. The pool then opens a new one when it needs it. A connection
+you never give back counts against `connectionLimit` for good.
 Hold all of them and the health check of that node waits in the queue too, times out, and
 after two failed checks the node is no longer valid. That is the legacy check. A node with a
 `healthCheck` block is checked on a connection of its own and stays valid, while the
 requests of the app go on waiting.
+
+#### The probe on the way out
+
+A connection that was idle in the pool longer than `probeIdle` (1000 ms by default) answers
+a ping before you get it. On a node with a `healthCheck` block the idle connections get a
+ping every `idleCheckInterval`, and an answered one counts as well: the time runs from the
+later of the release and that answer. When such a ping is still out, the cluster waits for
+its answer, within `probeTimeout`, instead of sending a second one. A connection
+that answers in time is yours. One that fails, does not answer within `probeTimeout`
+(1000 ms by default) or meets packets out of order is destroyed with its socket, passive
+health hears of it as a lost connection, and the cluster takes the next connection of the
+same node. A new connection needs no ping, so the call ends with one at the latest. A path
+that forgot an idle connection, such as a firewall or a NAT, costs you nothing then: the
+ping meets it, not your first statement.
+
+So the call can take up to `probeTimeout` longer per connection that does not answer. A
+connection used within `probeIdle` gets no ping.
+
+#### The reset at release()
+
+`release()` resets the connection before it goes back to the pool: one `COM_RESET_CONNECTION`,
+bounded by `resetTimeout`. The server rolls back an open transaction and drops its locks,
+temporary tables, user variables, prepared statements and session settings. A reset that
+fails or runs out of time destroys the connection, and it never goes back. The next caller,
+a `getConnection()` or a query of the cluster, gets the connection only after the reset was
+answered. A query of the cluster sends `USE` before it, since the cluster does not know which
+database you left the connection on.
+
+The first `release()` does that. A second one does nothing, until a later `getConnection()`
+hands out the same connection again: the object then belongs to that caller.
+
+Do not reset the connection yourself before you release it. It costs a second reset, and
+the cluster's reset follows anyway.
+
+```ts
+const { connection } = await cluster.getConnection();
+const db = connection.promise();
+try {
+    await db.query('START TRANSACTION');
+    await db.query('UPDATE accounts SET balance = balance - 10 WHERE id = 1');
+    await db.query('UPDATE accounts SET balance = balance + 10 WHERE id = 2');
+    await db.query('COMMIT');
+} finally {
+    // a transaction left open by a failed statement is rolled back by the reset
+    connection.release();
+}
+```
+
+#### Packets out of order
+
+mysql2 only warns when the packets of a reply come with a wrong sequence number, and then
+waits on, often until the timeout of the statement (#94). While you hold the connection, the
+cluster listens for that warning. It destroys the connection with its socket, and the
+command you have out on it fails with the warning of mysql2: an `Error` with the numbers
+`expected` and `received`, and `fatal: true`. Your `release()` after that does nothing.
 
 ### Who releases what after an abort
 
@@ -330,43 +388,6 @@ try {
 } finally {
     connection.release();
 }
-```
-
-### Reset before you release
-
-mysql2 does not reset a connection that is released into these pools. The package does not
-set `resetOnRelease`, and the default of mysql2 is `false`. So reset the connection yourself
-before you release it. If you do not, the session state you leave on it goes to the next user
-of the pool: user variables, session settings, temporary tables, an open transaction and its
-locks, the current database. The next user can be another `getConnection()` caller, or one of
-the cluster's own queries.
-
-Since 5.0.0 a query or a transaction of the cluster that gets a connection after an app had
-it resets it first and selects its database again: one reset and one `USE`, once, bounded by
-`resetTimeout`. A reset that fails or runs out of time destroys the connection, and the query
-goes to the next node as one that was not sent. Do not rely on it. An open transaction keeps
-its locks until that reset arrives, which can be much later on a quiet pool. And another
-`getConnection()` caller gets the connection with no reset at all. Up to 4.x the cluster's
-own queries sent a change-user command before every statement instead.
-
-`connection.reset()` of mysql2 sends the reset command of the server. mysql2 states it needs
-MySQL 5.7.3 or later.
-
-```ts
-const { connection } = await cluster.getConnection();
-const db = connection.promise();
-try {
-    await db.query('START TRANSACTION');
-    await db.query('UPDATE accounts SET balance = balance - 10 WHERE id = 1');
-    await db.query('UPDATE accounts SET balance = balance + 10 WHERE id = 2');
-    await db.query('COMMIT');
-} catch (error) {
-    // closing the connection makes the server drop the transaction
-    connection.destroy();
-    throw error;
-}
-// a connection that cannot be reset does not go back to the pool
-connection.reset(error => error ? connection.destroy() : connection.release());
 ```
 
 ## `ready`

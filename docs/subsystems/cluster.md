@@ -271,12 +271,16 @@ have run on the one that failed, so one call never writes twice.
 [src/cluster/QueryRetry.ts](../../src/cluster/QueryRetry.ts) decides it,
 and nothing else does. `Pool.query` fills `outcome.sent`: `false` from the
 start of the call, `true` once it hands the statement to the connection. It
-stays `false` when there is no mysql2 pool, `getConnection` failed or gave
-no connection, or the session could not be got ready: a reset of a dirty
-connection or a `USE` of another database failed or timed out. See
-[pool.md](pool.md#the-session-of-a-connection). Since 5.0.0 the pool sends
-no change of user, so a pooled connection the path forgot fails under the
-statement itself, with `sent: true`, and the next node is not tried.
+stays `false` when the borrow of the connection failed: there is no mysql2
+pool, mysql2 gave no connection, every connection failed its probe, or the
+session could not be got ready, as a reset of a dirty connection or a
+`USE` of another database that failed or timed out. See
+[pool.md](pool.md#borrow-taking-and-giving-back-a-connection). Since 5.0.0
+the pool sends no change of user. A pooled connection the path forgot
+that was idle longer than `probeIdle` fails its probe, which costs the
+call nothing: the pool takes the next connection of the node (#93). One
+used more recently fails under the statement itself, with `sent: true`,
+and the next node is not tried.
 The pool also writes `sent` on the error when the error can take it, but
 the loop reads the outcome: a frozen error, or one the app handed
 `failWaiting()` that many queries share, is decided the same way.
@@ -285,6 +289,7 @@ the loop reads the outcome: a frozen error, or one the app handed
 | --- | --- |
 | errno 1045, 1698, 1044, 3118, 3955 or 1130, a refused login | no, although `sent` is `false` |
 | `MDC_UNSAFE_SQL_MODE`, values in the text under `NO_BACKSLASH_ESCAPES` | no, although `sent` is `false` |
+| `MDC_PACKETS_OUT_OF_ORDER`, a reply whose packets came with a wrong sequence number (#94) | no: a defect of the client or the server, which another node would meet again |
 | any other error with `sent: false` | yes |
 | errno 1047, not ready, with `sent: true` | yes, unless `retryNotReady: false` |
 | an error reply, a timeout, a connection lost after the statement went out | no |
@@ -379,8 +384,8 @@ reason: no `nodeId`, `errors` or `sent`.
 | before `query()` is called | rejects at once: no service name is looked up, Redis is not read, no node is asked, no listener is added |
 | during the service-name lookup or the choice of nodes (steps 3 and 4) | rejects right after them: Redis is not read and no node is asked |
 | while no valid node is found (step 4) | rejects before stale data of Redis is read, or after the read, before it is served |
-| while the request waits for a connection | `Pool.getConnection(signal)` takes the request out of mysql2's queue. A connection whose login was still running goes back to the pool when it arrives |
-| during the reset of a dirty connection, the `USE` of another database or the statement | the pool destroys the connection with its socket (`drop()` of [ServerFlags.ts](../../src/pool/ServerFlags.ts)) and never releases it: the statement may still run. mysql2 opens a new connection in its place for the next request |
+| while the request waits for a connection | the borrow takes the request out of mysql2's queue. A connection whose login was still running goes back to the pool when it arrives |
+| during the probe of an idle connection, the reset of a dirty connection, the `USE` of another database or the statement | the pool destroys the connection with its socket (`drop()` of [ServerFlags.ts](../../src/pool/ServerFlags.ts)) and never releases it: the statement may still run. mysql2 opens a new connection in its place for the next request |
 | after a node failed, before the next one | `mayTryNextNode` says no, and the call rejects with the reason |
 | after the answer | nothing: no listener is left |
 
@@ -393,10 +398,11 @@ after the Redis read of step 7: an abort during that read still gets a
 fresh hit, and a call whose entry was expired goes on to a node, whose
 pool rejects it at once.
 
-`Pool.query` takes its connection through `Pool.getConnection(signal,
-outcome)`, which does the queue, so `getConnection()` and `query()` leave
-it the same way. From the arrival of the connection until the call
-settled, `Pool.query` holds a listener of its own. Neither listener stays
+`Pool.query` takes its connection through the borrow, as `getConnection()`
+does, so both leave the queue the same way. An abort during the probe, the
+reset or the `USE` destroys the connection. From the arrival of the
+connection until the call settled, `Pool.query` holds a listener of its
+own. See [pool.md](pool.md#borrow-taking-and-giving-back-a-connection). Neither listener stays
 once the call settled, whatever way it ends. The abort is recorded as the
 error of the attempt (`mysql_dynamic_cluster.operation.duration`) and of
 the call (`mysql_dynamic_cluster.query.duration`), as any other rejection;
@@ -407,7 +413,7 @@ A `signal` that is no `AbortSignal` rejects with the `TypeError`
 `query: options.signal must be an AbortSignal`, recorded as a failed
 query. `_isAbortSignal` tells a signal by its members, as for
 `getConnection()`. The status query of a node without a `healthCheck`
-block passes no signal. `multiStatementQuery()` reads no signal.
+block passes no signal, and its connection gets no probe. `multiStatementQuery()` reads no signal.
 
 ### `execute()` and bound values
 
@@ -533,7 +539,7 @@ names the mode and `execute()`. Always: there is no setting.
 | `execute<T>(sql, values?, queryOptions?)` | [`execute`](../../src/cluster/GaleraCluster.ts) | Since 5.0.0. `query()` with the option `execute`: values bound by the server. No Redis. |
 | `ready: Promise<INodeReadyResult[]>` (getter) | [`ready`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Resolves once every pool finished the first connect of the current `connect()` call. Never rejects. Since 4.6.0 a result has `checkError` when the health check of that connect did not get its answer. |
 | `firstReady: Promise<INodeReadyResult[]>` (getter) | [`firstReady`](../../src/cluster/GaleraCluster.ts) | Since 4.6.0. Resolves when the first pool passed the first connect of the current `connect()` call, with the results that are in by then. With every result when none passed. Never rejects. |
-| `getConnection(options?)` | [`getConnection`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. One connection of the valid node with the lowest load score. The caller owns it. The `signal` option, which came after 4.6.0, ends the wait: the call rejects with the reason of the signal. |
+| `getConnection(options?)` | [`getConnection`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. One connection of the valid node with the lowest load score. The `signal` option, which came after 4.6.0, ends the wait: the call rejects with the reason of the signal. Since 5.0.0 the connection is probed on the way out when it was idle, and its `release()` resets it before it goes back (#93). |
 | `failWaiting(nodeId, error): number` | [`failWaiting`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Fails the requests that wait for a connection of one node. |
 | `getPoolStats(): INodePoolStats[]` | [`getPoolStats`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Used, idle and waiting connections per node. |
 | `nodes(): INodeInfo[]` | [`nodes`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. A snapshot of the nodes as plain objects. Since 4.6.0 a node has `checkError` when its last health check did not get its answer. |
@@ -546,7 +552,10 @@ then whether the signal is already aborted. Only after that it calls
 `_validPools`, so an aborted call asks no node. `_isAbortSignal` tells a
 signal by its members, a boolean `aborted` and the functions
 `addEventListener` and `removeEventListener`, not by its class. The signal
-goes to `Pool.getConnection(signal, outcome)`, which does the waiting and the
-abort, see [pool.md](./pool.md#a-signal-on-getconnection). The cluster adds
-`nodeId` to a rejection of the pool unless the pool set `outcome.aborted`:
-the reason of an abort goes back to the app as it is.
+goes to `Pool.getConnection(signal, outcome)`, which does the waiting, the
+probe and the abort through the borrow, see
+[pool.md](./pool.md#borrow-taking-and-giving-back-a-connection). Then
+`pool.lend(connection)` hands the `release()` of the connection to the
+borrow. The cluster adds `nodeId` to a rejection of the pool unless the
+pool set `outcome.aborted`: the reason of an abort goes back to the app as
+it is.

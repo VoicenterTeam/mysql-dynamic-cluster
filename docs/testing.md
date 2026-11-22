@@ -76,6 +76,7 @@ tests/
     passive-health.test.ts       # Passive health of a healthCheck node: the four kinds of error from query, transaction and getConnection, the check that opens a new connection for one it lost, once, the check that asks on a new connection after a call that could open none, the check that finds no route itself and counts toward fall, what never counts, one check at a time, fall and rise, passive false, the legacy check, timing
     node-api.test.ts             # Pool.getConnection, failWaiting and stats over a mocked mysql2 pool
     get-connection-signal.test.ts # Pool.getConnection with a signal over a mocked mysql2 pool: queue, login, listener, reason
+    borrow.test.ts               # Borrow with the real mysql2 on loopback, counting the commands of the server: the probe after probeIdle and its timeout, the ping of the reaper, a failed probe, an abort during it, the health check that is never probed, resetAfterStatements, packets out of order, the reset at release() of getConnection()
   toolchain/
     compiler.test.ts             # The compiler parses the syntax zod 4 needs; every import resolves through exports maps
     declarations.test.ts         # The built declarations export the node API types and type the healthCheck block, checked by compiling an app

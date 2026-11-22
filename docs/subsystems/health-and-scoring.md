@@ -658,12 +658,16 @@ connection a query meets before that fails one attempt with
 `ECONNRESET`, as in 4.6.0 and as with `passive: false`. No node goes down
 for it: the first loss starts a check, which passes, and the losses after
 it in the same `interval` are kept for the check of the timer, which
-passes too. Since 5.0.0 the reset comes on the statement itself, since the
-pool sends no change of user ahead of it. The statement went out, so
-`cluster.query()` does not send the query to the next node: it may have run.
-Up to 4.x the reset came on the change of user, with the statement not sent,
-and the next node got the query. The probe of an idle connection before it
-is lent (#93) finds such a connection before the statement again. What an
+passes too. Since 5.0.0 a connection idle longer than `probeIdle` (1000 ms
+by default) answers a ping before a statement goes to it (#93). The ping
+meets the reset, the connection is destroyed, passive health hears of a
+lost connection, and the query goes on the next connection of the node,
+with nothing lost. Only a connection used within `probeIdle` gets no ping:
+a query that meets such a forgotten connection fails under the statement
+itself, since the pool sends no change of user ahead of it. The statement
+went out, so `cluster.query()` does not send the query to the next node:
+it may have run. Up to 4.x the reset came on the change of user, with the
+statement not sent, and the next node got the query. What an
 app behind such a path sets
 is in [A quiet app behind a path with an idle
 timeout](#a-quiet-app-behind-a-path-with-an-idle-timeout).
@@ -696,6 +700,10 @@ The same is in
 with the real mysql2 behind the same kind of proxy. Three queries at once
 per node are rejected with `ECONNRESET`, the check that starts opens a new
 connection for its own forgotten one and passes, and no node goes down.
+Those queries come at once, within `probeIdle`. After a pause longer than
+`probeIdle` every query through `cluster.query()` is answered on its node:
+the probes meet the six forgotten connections, and the check that passive
+health starts meets the forgotten check connection.
 The three forgotten connections that are left in a pool fail one query
 each, and the queries after those pass. A node behind a proxy that resets
 every connection is down after one check.
@@ -726,15 +734,17 @@ it on and counts it as use.
   of Node runs late in a busy process, so leave room. The ping never comes
   more often than every 100 ms, also with a lower `idleCheckInterval`, see
   [pool.md](pool.md#the-pace-of-the-ping).
-- **Behind a path with a shorter idle timeout the defaults still fail.**
-  The path forgets the connection before the first ping. The first query
-  after the pause is rejected with `ECONNRESET`, on every node whose
-  pooled connection the path forgot. Since 5.0.0 the reset comes on the
-  statement, which went out, so `cluster.query()` rejects without trying
-  the next node: the statement may have run. Up to 4.x it came on the
-  change of user, and the next node got the query. No node goes down: the
-  check that starts passes. Set `idleCheckInterval` below the idle timeout
-  of the path there.
+- **Behind a path with a shorter idle timeout the probe catches what the
+  ping missed.** The path forgets the connection before the first ping.
+  Since 5.0.0 the first query after the pause finds the connection idle
+  longer than `probeIdle`, so the pool pings it first (#93): the ping meets
+  the reset, the connection is destroyed, and the query is answered on a
+  new one, after a login. A path that swallows the packets costs up to
+  `probeTimeout` before that. Up to 4.x and in the rows of the table below
+  the first query was rejected with `ECONNRESET`. No node goes down: the
+  check that passive health starts passes. Set `idleCheckInterval` below
+  the idle timeout of the path to keep the connections, and save the
+  logins.
 - **A ping that fails closes its connection.** When the path forgot a
   connection before its ping, the path answers that ping with a reset. The
   connection is destroyed and leaves the pool, so the app does not draw
@@ -746,8 +756,12 @@ it on and counts it as use.
   default. A path that drops the packets of a flow it forgot, where
   another path answers with a reset, gives no answer. After `timeout` the
   connection is destroyed with its socket. Until then it is in the pool. A
-  query that draws it in that time waits behind the ping and ends at its
-  own timeout, as it would have without the ping. The same `timeout` means
+  query that draws it in that time, when the connection was idle longer
+  than `probeIdle` since its release or its last answered ping, waits for
+  that ping within `probeTimeout` and sends no second one: no answer
+  destroys the connection, and the query takes the next one. A query that
+  draws it sooner waits behind the ping and ends at its own timeout, as it
+  would have without the ping. The same `timeout` means
   two things: a check that takes longer costs one count toward `fall`, and
   a ping that takes longer costs the connection, so the next query pays
   for a login.
@@ -794,7 +808,13 @@ row does not name are at their defaults.
 | No block, `idleCheckInterval: 500` | Rejected | Rejected | 0 | 1 |
 
 Each row was the same in its 3 runs on each side. The four queries after
-the first were answered in every run, and no node went down in any.
+the first were answered in every run, and no node went down in any. The
+table is from before the probe of #93. With it, the pause of 3 s is longer
+than `probeIdle`, so the first query pings a forgotten connection before
+its statement and is answered on a new one: the rows that say "Rejected"
+under "With the ping" no longer fail that query. That was not measured by
+this probe. It is pinned for a node without the block in
+[tests/cluster/idle-ping-loopback.test.ts](../../tests/cluster/idle-ping-loopback.test.ts).
 
 - In the sixth row `idleCheckInterval` is above the 1500 ms of the path.
   The one ping of the pause came after the path forgot the connection, got
