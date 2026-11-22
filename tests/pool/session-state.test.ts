@@ -646,9 +646,10 @@ describe('send(): the time limit of a command', () => {
         expect(connection.query.mock.calls[0][0]).toEqual({ sql: 'SELECT 1' });
         expect(jest.getTimerCount()).toBe(1);
         answer(null, 'rows');
+        // gone at once, not only swallowed when it fires
+        expect(jest.getTimerCount()).toBe(0);
         jest.advanceTimersByTime(LIMIT);
 
-        expect(jest.getTimerCount()).toBe(0);
         expect(reply.mock.calls).toEqual([[null, 'rows']]);
     });
 
@@ -702,9 +703,10 @@ describe('send(): the time limit of a command', () => {
 
         expect(() => state().send(connection, LIMIT, () => { throw thrown; }, reply))
             .toThrow(thrown);
+        // gone at once, not only swallowed when it fires
+        expect(jest.getTimerCount()).toBe(0);
         jest.advanceTimersByTime(LIMIT);
 
-        expect(jest.getTimerCount()).toBe(0);
         expect(reply).not.toHaveBeenCalled();
     });
 
@@ -720,9 +722,13 @@ describe('send(): the time limit of a command', () => {
         jest.useRealTimers();
         const { connection, ask } = silent();
         const session = state();
-        // Node 17.3 and later. An unref'd timer is not listed
-        const timers = () => (process as unknown as { getActiveResourcesInfo: () => string[] })
-            .getActiveResourcesInfo().filter(name => name === 'Timeout').length;
+        // An unref'd timer is not listed. Node 17.3 and later, see docs/testing.md
+        const info = (process as unknown as { getActiveResourcesInfo?: () => string[] })
+            .getActiveResourcesInfo;
+        if (typeof info !== 'function') {
+            throw new Error('this test needs process.getActiveResourcesInfo(), Node 17.3+');
+        }
+        const timers = () => info.call(process).filter((name: string) => name === 'Timeout').length;
         const before = timers();
 
         session.send(connection, LIMIT, ask, jest.fn());
