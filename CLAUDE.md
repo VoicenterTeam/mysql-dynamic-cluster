@@ -32,6 +32,10 @@ There is **no** `lint`, `typecheck`, or `test:load` script, and no linter is ins
 | You're touching… | Read first |
 | --- | --- |
 | `GaleraCluster.query` / routing | [docs/subsystems/cluster.md](docs/subsystems/cluster.md) |
+| `execute()` / bound values, values in the text under `NO_BACKSLASH_ESCAPES` | [docs/subsystems/cluster.md](docs/subsystems/cluster.md#execute-and-bound-values) |
+| The retry rule, `mayTryNextNode` in `src/cluster/QueryRetry.ts` | [docs/subsystems/cluster.md](docs/subsystems/cluster.md#8-retry-loop) |
+| `Borrow` (`src/pool/Borrow.ts`): take, probe, give back | [docs/subsystems/pool.md](docs/subsystems/pool.md#borrow-taking-and-giving-back-a-connection) |
+| `SessionState` (`src/pool/SessionState.ts`): dirty rule, reset, `USE`, sql_mode | [docs/subsystems/pool.md](docs/subsystems/pool.md#the-session-of-a-connection) |
 | Pool health checks / scoring, the `healthCheck` block | [docs/subsystems/health-and-scoring.md](docs/subsystems/health-and-scoring.md), which has both check modes |
 | Redis caching | [docs/subsystems/redis-cache.md](docs/subsystems/redis-cache.md) |
 | `getConnection` / `ready` / `firstReady` / `failWaiting` / `getPoolStats` / `nodes` / `checkError` | [docs/node-api.md](docs/node-api.md) |
@@ -52,7 +56,7 @@ There is **no** `lint`, `typecheck`, or `test:load` script, and no linter is ins
 
 ## Conventions
 
-- **TypeScript:** interfaces named `I*` (e.g. `IClusterSettings`); default exports for singletons (`Logger`, `Redis`, `Metrics`, `config`, `Events`); 2-space indent.
+- **TypeScript:** interfaces named `I*` (e.g. `IClusterSettings`); default exports for singletons (`Logger`, `Redis`, `Metrics`, `config`, `Events`); 4-space indent.
 - **Build:** `tsc -p tsconfig.build.json` only (target `es6`, module `commonjs`). No Babel, esbuild, or bundler.
 - **Linting:** none. `tslint` was removed after 4.1.0 (deprecated, never wired). Don't add a linter as part of feature work.
 - **Layout:** new subsystems live under `src/<area>/`; their types go in `src/types/`.
