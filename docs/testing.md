@@ -86,8 +86,34 @@ tests/
     settings.test.ts             # Merge of user settings + defaults via Settings (stale, dev API)
     utils.test.ts                # Pure-unit tests for Timer and Utils.clamp
     timer.test.ts                # Timer: one pending run, dispose, activate
+  galera/
+    rig.test.ts                  # Smoke test of the three-node Galera rig: connect, each node answers, wsrep_cluster_size is 3. Skipped unless MDC_TEST_GALERA is set
   loads/
     load.test.ts                 # Manual load harness; ignored by jest config (stale)
+```
+
+## The Galera rig
+
+`tests/rig/galera.sh` runs three nodes of `codership/mysql-galera:8.0.42` in docker, for suites that need a real Galera cluster. The image must be on the machine already: the script never pulls or builds. Three nodes, because with two, isolating one leaves no primary component to fail over to.
+
+```
+bash tests/rig/galera.sh up       # prints the path of the env file when all three nodes are Synced
+MDC_TEST_GALERA=1 npx jest tests/galera
+bash tests/rig/galera.sh down     # removes containers, network and state; safe to run twice
+bash tests/rig/galera.sh status   # one line per node
+```
+
+- `up` returns when each node reports `wsrep_cluster_size = 3`, `wsrep_cluster_status = Primary` and `wsrep_local_state_comment = Synced`. After `MDC_RIG_TIMEOUT` seconds (default 240) it names the node that is not ready, prints the tail of its log and exits 1.
+- Each node is published on a random port of 127.0.0.1 only, on the user-defined network `mdc-rig-net`. The passwords are generated at every `up` and stay in the state dir (mode 700, under `${TMPDIR:-/tmp}`), which `down` removes.
+- The env file (`MDC_GALERA_HOST`, `MDC_GALERA_PORT1`..`3`, `MDC_GALERA_USER`, `MDC_GALERA_PASSWORD`, `MDC_GALERA_DATABASE`) is `${TMPDIR:-/tmp}/mdc-rig-state/rig.env`. The suites read it. Set `MDC_RIG_ENV` to move it, for `up` and the jest run alike.
+- Without `MDC_TEST_GALERA` the suites under `tests/galera` are skipped, so `npm test` needs no docker.
+- Other settings: `MDC_RIG_IMAGE`, `MDC_RIG_NAME` (prefix of the containers and the network, default `mdc-rig`), `MDC_RIG_STATE`.
+- The nodes use the package's default settings and no server settings beyond what Galera needs to form a cluster.
+
+`MDC_RIG_DOCKER_RUN` is the command that starts a node, default `docker run`. A node runs in the foreground, in the background of the script, with its output in `<state dir>/node<N>.log`. On the shared CI machine a bare `docker run` is refused, and the container must go through the slot:
+
+```
+export MDC_RIG_DOCKER_RUN="bash $HOME/ci-box/tests/slot.sh docker run"
 ```
 
 ## Prerequisites for integration suites
