@@ -17,11 +17,15 @@ import Redis from '../../src/Redis/Redis';
 
 // What a failed query() rejects with, for rejections mysql2 does not make: one error object
 // from two nodes, as failWaiting() can hand out, a frozen error and a value that is no object.
-// The node with the lowest loadScore is tried first
+// The node with the lowest loadScore is tried first. Every node fails before its statement
+// went out, as a request failWaiting() failed does, so query() tries the next one
 const node = (id: number, rejection: unknown, loadScore = id): any => ({
     id, name: 'node' + id, host: 'host' + id,
     status: { isValid: true, loadScore },
-    query: jest.fn(() => Promise.reject(rejection))
+    query: jest.fn((_sql: string, _options: object, outcome: any) => {
+        outcome.sent = false;
+        return Promise.reject(rejection);
+    })
 });
 
 // a cluster over these pools, built without the config singletons

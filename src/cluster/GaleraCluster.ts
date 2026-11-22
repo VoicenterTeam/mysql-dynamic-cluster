@@ -3,12 +3,15 @@
  */
 
 import { IUserSettings } from "../types/SettingsInterfaces";
-import { IQueryOptions, QueryValues, ClusterEvent, QueryResult } from '../types/PoolInterfaces'
+import {
+    IQueryOptions, IQueryOutcome, QueryValues, ClusterEvent, QueryResult
+} from '../types/PoolInterfaces'
 import Logger from "../utils/Logger";
 
 import { format as MySQLFormat, escape as MySQLEscape } from 'mysql2';
 import { Pool } from "../pool/Pool";
 import { ClusterHashing } from "./ClusterHashing";
+import { mayTryNextNode } from "./QueryRetry";
 import Metrics from "../metrics/Metrics";
 import Events from "../utils/Events";
 import Redis from "../Redis/Redis";
@@ -429,14 +432,18 @@ export class GaleraCluster {
 
         for (let i = 0; i < retryCount; i++) {
             const pool = activePools[i];
+            // the pool says in it whether the statement went to the node
+            const outcome: IQueryOutcome = {};
             try {
                 Logger.debug("Query use host: " + pool.host);
-                const res = await this._queryRequest(sql, pool, queryOptions) as T;
+                const res = await this._queryRequest(sql, pool, queryOptions, outcome) as T;
                 record('pool');
                 return res;
             } catch (e) {
                 errors.push({ nodeId: pool.id, error: GaleraCluster._fromNode(e, pool.id) });
                 Logger.error(`Query failed in pool ${pool.name}: ${e?.message}`);
+                // a statement that may have run on this node must not run on another one
+                if (!mayTryNextNode(e, outcome, queryOptions)) break;
                 if (i + 1 < retryCount) {
                     Logger.debug("Retrying query...");
                 }
@@ -444,7 +451,7 @@ export class GaleraCluster {
         }
 
         if (redisData) {
-            Logger.warn("Every pool failed. Use old data from Redis");
+            Logger.warn("The query failed. Use old data from Redis");
             record('stale_cache');
             return redisData.data;
         }
@@ -463,13 +470,23 @@ export class GaleraCluster {
      * @param sql MySQL query string
      * @param pool active pool
      * @param queryOptions options to configure query
+     * @param outcome handed to the pool, which says in it whether the statement was sent
      * @private
      */
-    private async _queryRequest<T extends QueryResult>(sql: string, pool: Pool, queryOptions: IQueryOptions): Promise<T> {
-        const result = await pool.query(sql, queryOptions) as T;
+    private async _queryRequest<T extends QueryResult>(
+        sql: string, pool: Pool, queryOptions: IQueryOptions, outcome: IQueryOutcome
+    ): Promise<T> {
+        const result = await pool.query(sql, queryOptions, outcome) as T;
 
         if (queryOptions?.serviceId && this._clusterHashing.connected) {
-            await this._clusterHashing?.updateNodeForService(queryOptions?.serviceId, pool.id);
+            // the statement ran: a failure from here on must not send it to another node
+            try {
+                await this._clusterHashing?.updateNodeForService(queryOptions?.serviceId, pool.id);
+            } catch (error) {
+                Logger.warn("Query passed in pool " + pool.name + ", but the hashing table " +
+                    "was not updated: " + (error?.message || error),
+                    { nodeId: pool.id, serviceId: queryOptions.serviceId });
+            }
         }
         return result;
     }

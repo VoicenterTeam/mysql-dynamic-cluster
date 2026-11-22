@@ -93,6 +93,11 @@ const makeCluster = (...pools: Pool[]): GaleraCluster => Object.assign(Object.cr
 });
 
 const accessDenied = Object.assign(new Error('Access denied'), { code: 'ER_ACCESS_DENIED_ERROR', errno: 1045 });
+// the node is not ready: the statement did not run, and the cluster tries the next node
+const notReady = Object.assign(
+    new Error('WSREP has not yet prepared node for application use'),
+    { code: 'ER_UNKNOWN_COM_ERROR', errno: 1047 }
+);
 
 describe('OpenTelemetry metrics', () => {
     beforeAll(async () => {
@@ -259,13 +264,16 @@ describe('OpenTelemetry metrics', () => {
     });
 
     it('records every attempt of a retried query, and the cluster query once', async () => {
-        const cluster = makeCluster(makePool(makeConn({ queryErr: accessDenied }), 1), makePool(makeConn({ rows: [{ a: 4 }] }), 2));
+        const cluster = makeCluster(
+            makePool(makeConn({ queryErr: notReady }), 1),
+            makePool(makeConn({ rows: [{ a: 4 }] }), 2)
+        );
         await expect(cluster.query('SELECT 1', null, { redis: false })).resolves.toEqual([{ a: 4 }]);
 
         const collected = await collect();
         const attempts = collected[OPERATION].points.map(point => [point.attributes['server.address'], point.attributes['error.type']]);
         expect(attempts).toHaveLength(2);
-        expect(attempts).toContainEqual(['10.0.0.1', 'ER_ACCESS_DENIED_ERROR']);
+        expect(attempts).toContainEqual(['10.0.0.1', 'ER_UNKNOWN_COM_ERROR']);
         expect(attempts).toContainEqual(['10.0.0.2', undefined]);
         expect(counts(collected, OPERATION)).toEqual([1, 1]);
         expect(counts(collected, QUERY)).toEqual([1]);

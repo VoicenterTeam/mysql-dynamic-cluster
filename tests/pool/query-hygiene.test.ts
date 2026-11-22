@@ -75,7 +75,9 @@ describe('Pool.query connection hygiene', () => {
 
     it('SQL error: rejects, releases once, no slow-query warning, no redis write', async () => {
         const conn = makeConn({ queryErr: { code: 'ER_PARSE_ERROR' } });
-        await expect(makePool(null, conn).query('SELEC 1', { redis: true })).rejects.toEqual({ code: 'ER_PARSE_ERROR' });
+        // the statement went to the server
+        await expect(makePool(null, conn).query('SELEC 1', { redis: true }))
+            .rejects.toEqual({ code: 'ER_PARSE_ERROR', sent: true });
         expect(conn.release).toHaveBeenCalledTimes(1);
         expect(conn.destroy).not.toHaveBeenCalled();
         expect(Logger.warn).not.toHaveBeenCalled();

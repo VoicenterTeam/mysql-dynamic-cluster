@@ -47,7 +47,21 @@ export interface IQueryOptions {
     redisExpire?: number,
     redisRefreshCache?: boolean,
     // escape the values of an object of values, for this query. Default: the escapeNamedValues setting
-    escapeNamedValues?: boolean
+    escapeNamedValues?: boolean,
+    // Try the next node after a node answered 1047, not ready. Default true. False for a
+    // statement that can do part of its work before the 1047, such as a procedure that commits
+    // on its way
+    retryNotReady?: boolean
+}
+
+// How far one Pool.query() call got. The caller hands in an empty object and the pool fills
+// it, so the caller knows also for an error that cannot take a property: a frozen one, or one
+// the app handed failWaiting(), which many queries can share
+export interface IQueryOutcome {
+    // False from the start of the call, true once the statement was handed to the connection:
+    // from then on it may run on the server, whatever the call ends with. It stays false when
+    // no connection came or the change of database failed. Not set by a pool that tells nothing
+    sent?: boolean
 }
 
 // How the health check of one connect() ended. The caller of Pool.connect() hands in an empty

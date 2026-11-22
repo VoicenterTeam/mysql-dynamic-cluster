@@ -6,7 +6,9 @@ import mysql, { PoolConnection } from "mysql2";
 import Logger from "../utils/Logger";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
-import { IAbortOutcome, ICheckOutcome, IQueryOptions, QueryResult } from "../types/PoolInterfaces";
+import {
+    IAbortOutcome, ICheckOutcome, IQueryOptions, IQueryOutcome, QueryResult
+} from "../types/PoolInterfaces";
 import Events from "../utils/Events";
 import { IHealthCheck, IUserPoolSettings } from "../types/PoolSettingsInterfaces";
 import { QueryTimer } from "../utils/QueryTimer";
@@ -261,9 +263,14 @@ export class Pool {
      * Pool query
      * @param sql mysql query string
      * @param queryOptions query options like timeout, database, multipleStatements etc
+     * @param outcome gets `sent`: whether the statement went to the server. A failed call
+     * also writes it on its error, when the error can take it
      */
-    public async query<T extends QueryResult>(sql: string, queryOptions?: IQueryOptions): Promise<T | T[]> {
+    public async query<T extends QueryResult>(
+        sql: string, queryOptions?: IQueryOptions, outcome: IQueryOutcome = {}
+    ): Promise<T | T[]> {
         return new Promise(async (resolve, reject) => {
+            outcome.sent = false;
             queryOptions = {
                 timeout: this._queryTimeout,
                 database: this._database,
@@ -297,6 +304,7 @@ export class Pool {
                 // connection. That of a node without one is, and passive health skips it
                 this._status.realFailure(error, !conn);
                 Pool._handBack(conn, error);
+                Pool._writeSent(error, outcome.sent);
                 reject(error);
             }
 
@@ -311,6 +319,8 @@ export class Pool {
                     if (error) return fail(error, conn);
 
                     Logger.debug(`Query in pool by host ${this.host}`);
+                    // from here on the statement can run on the server, whatever comes back
+                    outcome.sent = true;
                     conn.query({ sql, timeout: queryOptions.timeout }, (error, result: T) => {
                         if (error) return fail(error, conn);
                         if (settled) return;
@@ -470,6 +480,21 @@ export class Pool {
             done = true;
             callback(error);
         });
+    }
+
+    /**
+     * Write on the error of a failed query() whether its statement was sent. A frozen error,
+     * or one that is no object, goes to the caller without it: the outcome says it too
+     * @param error what the query is rejected with
+     * @param sent whether the statement went to the server
+     * @private
+     */
+    private static _writeSent(error: any, sent: boolean): void {
+        try {
+            error.sent = sent;
+        } catch {
+            // the outcome of the call carries it
+        }
     }
 
     /**

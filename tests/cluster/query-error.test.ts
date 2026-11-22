@@ -47,10 +47,12 @@ const DEADLOCK = {
     errno: 1213, sqlState: '40001',
     message: 'Deadlock found when trying to get lock; try restarting transaction'
 };
-const LOCK_WAIT = {
-    errno: 1205, sqlState: 'HY000',
-    message: 'Lock wait timeout exceeded; try restarting transaction'
+// The two texts a server answers 1047 with: the node is not ready, the statement did not run,
+// and the cluster tries the next node
+const NOT_READY = {
+    errno: 1047, sqlState: '08S01', message: 'WSREP has not yet prepared node for application use'
 };
+const UNKNOWN_COMMAND = { errno: 1047, sqlState: '08S01', message: 'Unknown command' };
 
 // A node that passes its health check and answers every other query as `answer` says
 const listen = async (answer: Answer): Promise<number> => {
@@ -176,9 +178,9 @@ describe('cluster.query() on a node that closes the connection on the query', ()
     });
 });
 
-describe('cluster.query() on two nodes that fail with 1213 and 1205', () => {
+describe('cluster.query() on two nodes that both answer 1047', () => {
     it('rejects with the error of the node tried last, and lists the one before it', async () => {
-        const ports = [await listen(DEADLOCK), await listen(LOCK_WAIT)];
+        const ports = [await listen(NOT_READY), await listen(UNKNOWN_COMMAND)];
         const error = await failedQuery(await connected(ports));
 
         // the id of each node, in the order the servers were asked
@@ -189,14 +191,14 @@ describe('cluster.query() on two nodes that fail with 1213 and 1205', () => {
         expect(error.errors[0].error.nodeId).toBe(tried[0]);
     });
 
-    it('has both codes, each with its own node', async () => {
-        const ports = [await listen(DEADLOCK), await listen(LOCK_WAIT)];
+    it('has the error of each node, each with its own node', async () => {
+        const ports = [await listen(NOT_READY), await listen(UNKNOWN_COMMAND)];
         const error = await failedQuery(await connected(ports));
 
         const both = [...error.errors, { nodeId: error.nodeId, error }]
-            .map((entry: any) => [entry.nodeId, entry.error.code])
+            .map((entry: any) => [entry.nodeId, entry.error.sqlMessage])
             .sort();
-        expect(both).toEqual([[1, 'ER_LOCK_DEADLOCK'], [2, 'ER_LOCK_WAIT_TIMEOUT']]);
+        expect(both).toEqual([[1, NOT_READY.message], [2, UNKNOWN_COMMAND.message]]);
     });
 });
 

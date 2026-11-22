@@ -31,14 +31,18 @@ const makeCluster = (pools: any[], hashing: object = { connected: false }): any 
         _clusterHashing: hashing
     });
 
-// query() fails on every pool here, so the order of the attempts is the order of its pools
+// query() fails on every pool here before the statement went out, so it tries every pool and
+// the order of the attempts is the order of its pools
 describe('the pool order of GaleraCluster.query', () => {
     const order = async (pools: any[], hashing: object, serviceId?: number): Promise<number[]> => {
         const tried: number[] = [];
-        pools.forEach(pool => pool.query.mockImplementation(() => {
-            tried.push(pool.id);
-            return Promise.reject(new Error('down'));
-        }));
+        pools.forEach(pool => pool.query.mockImplementation(
+            (_sql: string, _options: object, outcome: any) => {
+                tried.push(pool.id);
+                outcome.sent = false;
+                return Promise.reject(new Error('down'));
+            }
+        ));
         const cluster = makeCluster(pools, hashing);
         await cluster.query('SELECT 1', undefined, { serviceId }).catch(() => undefined);
         return tried;
