@@ -511,7 +511,9 @@ Borrow.ts, `{ signal?, target?, probe? }`, internal and in no public type;
    through `IPoolCall` of `Pool.query()`.
 3. **For a statement** (`target` given), `_prepare` calls
    `SessionState.prepare()`: a reset when dirty, `USE` for another
-   database. An error there is told to passive health and gives the
+   database, and `DO 0` when the target has `valuesInText` and the
+   `sql_mode` of the connection is unknown. An error there is told to
+   passive health and gives the
    connection back. An abort, or packets out of order, drop it. Without a
    target, for `getConnection()`, the connection is handed out as it is.
 

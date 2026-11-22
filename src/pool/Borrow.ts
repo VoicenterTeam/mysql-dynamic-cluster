@@ -79,8 +79,8 @@ export class Borrow {
     /**
      * Take a connection, see the class. Rejects with the error of mysql2 when no connection
      * came, with the error of the last probe when no connection passed, with the error of the
-     * reset or the USE, or with the reason of the signal. Passive health was told by then of
-     * what it hears of, and the statement was not sent
+     * reset, the USE or the DO 0, or with the reason of the signal. Passive health was told by
+     * then of what it hears of, and the statement was not sent
      * @param options the signal, the statement and whether to probe, see ITakeOptions
      * @param outcome gets `aborted: true` when the signal ended the call
      */
