@@ -54,6 +54,11 @@ const NBE_OFF = 'SET SESSION sql_mode = DEFAULT';
 const CLEAN = 'UPDATE t SET a = 1';
 // answered with a deadlock: the connection is dirty and is reset before it goes back
 const FAIL = 'UPDATE t SET b = 1';
+// answered with rows, which carry no OK header: the sql_mode stays unknown
+const ROWS = 'SELECT a FROM t';
+const ROWS_OF = 'SELECT a FROM t WHERE a = ?';
+// what the pool sends to read the sql_mode of a session it does not know
+const DO_0 = 'DO 0';
 
 // The reply to a prepare: the id of the statement, no columns and no parameters. mysql2 sends
 // the values it was given, whatever count of parameters the reply says. In the shape
@@ -79,7 +84,10 @@ type Mode =
     // answers a prepare with 1064, a syntax error
     | 'refuses the prepare'
     // answers a prepare with 1047, as a Galera node outside the primary component does
-    | 'is not ready for the prepare';
+    | 'is not ready for the prepare'
+    | 'ignores DO 0'
+    // answers DO 0 with 1047
+    | 'is not ready for DO 0';
 
 interface INode {
     port: number,
@@ -162,6 +170,13 @@ const listen = async (connections = 1, serverMode = false): Promise<INode> => {
                 return connection.writeTextResult(status(connections), columns);
             }
             if (sql === FAIL) return refuse(1213, 'Deadlock found');
+            if (sql === DO_0 && mode === 'ignores DO 0') return;
+            if (sql === DO_0 && mode === 'is not ready for DO 0') {
+                return refuse(1047, 'WSREP not ready');
+            }
+            if (sql.startsWith(ROWS)) {
+                return connection.writeTextResult([{ a: '1' }], [column('a')]);
+            }
             if (sql.startsWith('USE ')) return ok(0, SESSION_STATE_CHANGED);
             if (sql === NBE_ON) session.noBackslashEscapes = true;
             if (sql === NBE_OFF) session.noBackslashEscapes = false;
@@ -266,7 +281,8 @@ describe('query() without execute', () => {
 
         await cluster.query(SELECT, ['x']);
 
-        expect(node.app()).toEqual(["SELECT 'x' AS v"]);
+        // DO 0 first: the sql_mode of a new connection is unknown
+        expect(node.app()).toEqual([DO_0, "SELECT 'x' AS v"]);
     });
 });
 
@@ -548,7 +564,7 @@ describe('a connection whose last header has bit 512, NO_BACKSLASH_ESCAPES', () 
         expect(node.app()).toEqual([NBE_ON, NBE_OFF, "SELECT 'x' AS v"]);
     });
 
-    it('counts as off after a reset, until a header says otherwise', async () => {
+    it('is unknown after a reset: DO 0 reads the mode of the server again', async () => {
         const node = await listen();
         const cluster = await clusterOf(node);
         await cluster.query(NBE_ON);
@@ -556,8 +572,92 @@ describe('a connection whose last header has bit 512, NO_BACKSLASH_ESCAPES', () 
 
         await cluster.query(SELECT, ['x']);
 
-        expect(node.app()).toEqual([NBE_ON, FAIL, 'reset', "SELECT 'x' AS v"]);
+        expect(node.app()).toEqual([NBE_ON, FAIL, 'reset', DO_0, "SELECT 'x' AS v"]);
     });
+});
+
+describe('a connection whose sql_mode the pool does not know', () => {
+    it('a server with NO_BACKSLASH_ESCAPES, a connection that only returned rows: DO 0, ' +
+        'then the query() with values is refused', async () => {
+        const node = await listen(1, true);
+        const cluster = await clusterOf(node);
+        await cluster.query(ROWS);
+
+        const { error } = await settle(cluster.query(SELECT, ['x']));
+
+        expect([error.code, error.sent]).toEqual(['MDC_UNSAFE_SQL_MODE', false]);
+        expect(node.app()).toEqual([ROWS, DO_0]);
+    });
+
+    it('a server without it: one DO 0, then the statement, and none on the next call',
+        async () => {
+            const node = await listen();
+            const cluster = await clusterOf(node);
+
+            await cluster.query(ROWS_OF, ['x']);
+            await cluster.query(ROWS_OF, ['y']);
+
+            expect(node.app()).toEqual([
+                DO_0, "SELECT a FROM t WHERE a = 'x'", "SELECT a FROM t WHERE a = 'y'"
+            ]);
+        });
+
+    it('sends DO 0 again after a reset, and refuses when the server has the mode',
+        async () => {
+            const node = await listen(1, true);
+            const cluster = await clusterOf(node);
+            // known after this: on
+            await settle(cluster.query(SELECT, ['x']));
+            await settle(cluster.query(FAIL));
+
+            const { error } = await settle(cluster.query(SELECT, ['x']));
+
+            expect(error.code).toBe('MDC_UNSAFE_SQL_MODE');
+            expect(node.app()).toEqual([DO_0, FAIL, 'reset', DO_0]);
+        });
+
+    it('sends none for execute() or a query() that writes no value into the text',
+        async () => {
+            const node = await listen(1, true);
+            const cluster = await clusterOf(node);
+
+            await cluster.execute(SELECT, ['x']);
+            await cluster.query(ROWS);
+            await cluster.query(ROWS, []);
+            await cluster.query(SELECT, ['x'], { execute: true });
+
+            expect(node.app()).toEqual([
+                'prepare ' + SELECT, 'execute ["x"]', ROWS, ROWS, 'execute ["x"]'
+            ]);
+        });
+
+    it('a DO 0 that gets no answer: bounded by the timeout of the query, sent false, the ' +
+        'connection destroyed', async () => {
+        const node = await listen();
+        const cluster = await clusterOf(node);
+        node.become('ignores DO 0');
+        const closed = node.closed();
+
+        const ended = await within(3000, cluster.query(SELECT, ['x'], { timeout: 200 }));
+
+        expect(ended).not.toBe('still waiting');
+        const { error } = ended as { error: any };
+        expect([error.code, error.sent]).toEqual(['PROTOCOL_SEQUENCE_TIMEOUT', false]);
+        expect(node.app()).toEqual([DO_0]);
+        await until(() => node.closed() > closed);
+        expect(node.closed()).toBe(closed + 1);
+    });
+
+    it('a DO 0 the node answers with 1047: sent false, the next node runs the query',
+        async () => {
+            const { cluster, n1, n2 } = await twoNodes();
+            n1.become('is not ready for DO 0');
+
+            await cluster.query(SELECT, ['x'], { maxRetry: 2 });
+
+            expect(n1.app()).toEqual([DO_0]);
+            expect(n2.app()).toEqual([DO_0, "SELECT 'x' AS v"]);
+        });
 });
 
 describe('Pool.query() called directly', () => {
@@ -587,7 +687,7 @@ describe('named values', () => {
 
         await cluster.query('SELECT :n AS v', { n: "a'b" });
 
-        expect(node.app()).toEqual(["SELECT 'a\\'b' AS v"]);
+        expect(node.app()).toEqual([DO_0, "SELECT 'a\\'b' AS v"]);
     });
 });
 

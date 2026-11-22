@@ -219,7 +219,7 @@ Params:
 cluster.query(`SELECT SLEEP(?)`, [100], { redis: true })
 ```
 
-The values are written into the query string and escaped, those of an object too. A server whose `sql_mode` has `NO_BACKSLASH_ESCAPES` does not read that escaping. Once a connection has seen that mode in a reply header (of a `SET`, `INSERT`, `UPDATE`, `USE` or `CALL`, never of rows), a query that writes values into its text rejects with the code `MDC_UNSAFE_SQL_MODE` and is not sent. Before that it is sent. Under that mode [execute](#execute) is the only safe way to send values.
+The values are written into the query string and escaped, those of an object too. A server whose `sql_mode` has `NO_BACKSLASH_ESCAPES` does not read that escaping, so on such a connection a query that writes values into its text rejects with the code `MDC_UNSAFE_SQL_MODE` and is not sent. The pool reads the mode from a reply header (of a `SET`, `INSERT`, `UPDATE`, `USE` or `CALL`, never of rows). When a connection has not shown one since its login or its last reset, the pool sends `DO 0` before such a query to read it: one extra command per connection and per reset, only for queries that write values into the text. Under that mode [execute](#execute) is the only safe way to send values.
 
 ### execute
 Like [query](#query), but mysql2 prepares the statement and the server binds the values: they never become part of the query string. The same choice of node, retry and errors as `query`. No Redis. The same as `query` with the [query option](#query-options) `execute: true`. The connection keeps the prepared statement for the next call of the same text, up to `maxPreparedStatements` of the [pool settings](#pool-settings) <br>

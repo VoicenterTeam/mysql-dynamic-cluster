@@ -192,14 +192,15 @@ The `Promise` callback chain is, in order
    see [Borrow](#borrow-taking-and-giving-back-a-connection): the queue of
    mysql2 and an abort while the request waits, the probe of a connection
    that was idle longer than `probeIdle`, or one the reaper's ping is
-   still out on, then a reset when it is dirty
-   and `USE` when it is on another database, see
+   still out on, then a reset when it is dirty,
+   `USE` when it is on another database, and `DO 0` for a call with
+   values in its text when the `sql_mode` of the connection is unknown, see
    [The session of a connection](#the-session-of-a-connection). Most of
    the time it sends nothing. No change of user is sent, since 5.0.0. On
    error, records the attempt with its `error.type` and rejects with
    `sent: false`: mysql2 gave no connection, `"Can't find connection.
    Maybe it was unexpectedly closed."`, every connection failed its probe,
-   or the reset or `USE` failed or timed out. With the `signal` query
+   or the reset, `USE` or `DO 0` failed or timed out. With the `signal` query
    option, an abort in any of these steps destroys the connection the call
    holds, see [cluster.md](./cluster.md#the-signal-option).
 2. From here on `_borrow.watch(conn, ...)` listens for packets out of
@@ -210,8 +211,10 @@ The `Promise` callback chain is, in order
 3. The guard, since 5.0.0: a call without `execute` whose `valuesInText`
    is set (the cluster's formatting changed the text), on a connection
    whose `_session.noBackslashEscapes(conn)` is true, rejects
-   with `MDC_UNSAFE_SQL_MODE` and `sent: false` through `fail()`. Nothing
-   is sent, and the connection goes back as it is. See
+   with `MDC_UNSAFE_SQL_MODE` and `sent: false` through `fail()`. The
+   statement is not sent, and the connection goes back as it is. The
+   borrow passed `valuesInText` to the prepare step, which sent `DO 0`
+   when the mode was unknown, so the guard reads a known mode. See
    [cluster.md](./cluster.md#values-in-the-text-under-no_backslash_escapes).
 4. The send step, the one step a bound statement does differently:
    `conn.query({ sql, timeout })` for text, `conn.execute({ sql, values,
@@ -358,7 +361,7 @@ query waited for its whole timeout instead of failing with 1047 at once.
 
 `SessionState` keeps four things per connection, in a `WeakMap`: the
 database the session is on, whether it is dirty, whether its server has
-`NO_BACKSLASH_ESCAPES`, and the texts `execute` prepared on it. It is the
+`NO_BACKSLASH_ESCAPES` (on, off or unknown), and the texts `execute` prepared on it. It is the
 one place for the switch of database, the dirty rule, that bit, those
 texts and the reset with its time limit. `query()` and
 `multiStatementQuery()` call it.
@@ -431,13 +434,16 @@ texts and the reset with its time limit. `query()` and
   and clears it when that header lacks the bit, each time: it is not
   sticky. The reply to the `USE` of `prepare()` counts too. A reply without
   a header, rows only or an error, leaves it: mysql2 does not pass on the
-  status flags of the end of the rows. A
-  connection seen for the first time has it off. A reset turns it off: the
-  session gets the `sql_mode` of the server back, and mysql2 does not show
-  the header of the reply to a reset, so it counts as off until the next
-  header says otherwise. `query()` reads it through
-  `noBackslashEscapes(connection)` to refuse values written into the
-  text. Inside a transaction of `multiStatementQuery()` only the
+  status flags of the end of the rows. It has three states: on, off and
+  unknown. A connection seen for the first time has it unknown, and a
+  reset makes it unknown again: the session gets the `sql_mode` of the
+  server back, and mysql2 does not show the header of the reply to a
+  reset. `prepare()` takes `valuesInText`: when it is set and the mode is
+  unknown, it sends `DO 0` after the reset and the `USE`, within the
+  timeout of the query, and `observe()` reads its header. An error there
+  marks the connection dirty and fails the call with `sent: false`.
+  `query()` reads the bit through `noBackslashEscapes(connection)`, false
+  while unknown, to refuse values written into the text. Inside a transaction of `multiStatementQuery()` only the
   `COMMIT` or `ROLLBACK` sets it, as for the dirty rule.
 - **What a clean query leaves stays.** A statement whose reply is clean
   leaves its session state on the connection for the next query that gets

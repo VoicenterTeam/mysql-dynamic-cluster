@@ -18,7 +18,8 @@ interface ISession {
     dropped?: boolean,
     // the last header on the connection had NO_BACKSLASH_ESCAPES: the server reads a
     // backslash in a string as a character, so a value escaped into the text is not safe.
-    // Unknown after a reset, which counts as off, as for a new connection
+    // Undefined while unknown: on a new connection and after every reset, until a header.
+    // prepare() asks with DO 0 before a statement with values in its text
     noBackslashEscapes?: boolean,
     // The texts execute() sent on the connection since its last reset or USE, the one used
     // last at the end. mysql2 keeps a prepared statement per text, whatever the database,
@@ -78,22 +79,34 @@ export class SessionState {
 
     /**
      * Get a connection ready for a statement on `database`: a reset when it is dirty, then
-     * USE when it is on another database. Calls back with nothing when the statement can go,
-     * at once when nothing has to be sent. An error means the statement was not sent: a
-     * reset that failed or ran out of time has destroyed the connection by then, and a USE
-     * that failed left it dirty
+     * USE when it is on another database, then DO 0 when the statement has values in its
+     * text and the sql_mode of the session is unknown. Calls back with nothing when the
+     * statement can go, at once when nothing has to be sent. An error means the statement
+     * was not sent: a reset that failed or ran out of time has destroyed the connection by
+     * then, and a USE or DO 0 that failed left it dirty
      * @param database left out or empty: the one of the pool, as the change of user of 4.x
      * took it
-     * @param timeout timeout of the USE, the one of the query. 0 means none
+     * @param timeout timeout of the USE and the DO 0, the one of the query. 0 means none
+     * @param valuesInText the statement has values written into its text: see
+     * noBackslashEscapes()
      */
     public prepare(
         connection: mysql.PoolConnection, database: string | undefined, timeout: number,
-        done: (error?: any) => void
+        valuesInText: boolean, done: (error?: any) => void
     ): void {
         const session = this._session(connection);
         database = database || this._database;
+        // The OK header of DO 0 has the bit of NO_BACKSLASH_ESCAPES. Rows have no header,
+        // so a connection that only returned rows would never learn it otherwise
+        const learnMode = () => {
+            if (!valuesInText || session.noBackslashEscapes !== undefined) return done();
+            connection.query({ sql: 'DO 0', timeout }, (error, result) => {
+                this.observe(connection, error, result);
+                done(error);
+            });
+        };
         const use = () => {
-            if (session.database === database) return done();
+            if (session.database === database) return learnMode();
             // A statement prepared in another database must not run in this one. Back in the
             // one they were prepared in, such as after a header with 0x4000, they stay
             if (session.statementsIn !== database) {
@@ -102,8 +115,9 @@ export class SessionState {
             const sql = 'USE ' + mysql.escapeId(database);
             connection.query({ sql, timeout }, (error, result) => {
                 this.observe(connection, error, result);
-                if (!error) session.database = database;
-                done(error);
+                if (error) return done(error);
+                session.database = database;
+                learnMode();
             });
         };
         if (!session.dirty) return use();
@@ -179,8 +193,10 @@ export class SessionState {
     /**
      * Whether the last header on the connection had bit 512, NO_BACKSLASH_ESCAPES: the server
      * then reads a backslash in a string as a character, and the escaping of mysql2 does not
-     * protect a value written into the text. False before the first header, and after a reset
-     * until the next one: mysql2 does not show the header of the reply to a reset
+     * protect a value written into the text. Unknown before the first header, and after a
+     * reset until the next one: mysql2 does not show the header of the reply to a reset.
+     * prepare() sends DO 0 for a statement with values in its text then, so the answer is
+     * known by the time it is read. False while unknown
      */
     public noBackslashEscapes(connection: object): boolean {
         return this._sessions.get(connection)?.noBackslashEscapes === true;
@@ -250,9 +266,8 @@ export class SessionState {
      * Reset a connection, within resetTimeout: mysql2 has no time limit for a reset, and a
      * Galera node outside the primary component never answers one, also 8 s after it is
      * Primary again (measured in #93). After a reset the session is clean and on the same
-     * database, and its sql_mode is the one of the server, which counts as no
-     * NO_BACKSLASH_ESCAPES. One that fails or runs out of time destroys the connection with
-     * its socket
+     * database, and its sql_mode is the one of the server, unknown until the next header.
+     * One that fails or runs out of time destroys the connection with its socket
      * @private
      */
     private _reset(
@@ -271,7 +286,7 @@ export class SessionState {
             } else {
                 session.dirty = false;
                 session.sinceReset = 0;
-                session.noBackslashEscapes = false;
+                session.noBackslashEscapes = undefined;
                 // mysql2 forgot its statements when the reset was answered, the server too
                 session.statements?.clear();
             }

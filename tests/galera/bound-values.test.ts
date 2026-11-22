@@ -1,6 +1,6 @@
 import { RowDataPacket } from 'mysql2';
 import { createPoolCluster } from '../../index';
-import { describeRig, logger, readEnv } from './support';
+import { describeRig, logger, readEnv, rootTo } from './support';
 
 // The contract test of #91 on the three-node Galera rig (tests/rig/galera.sh), MySQL 8.0.42.
 // Skipped unless MDC_TEST_GALERA is set. The second part loads the package from dist/, so run
@@ -82,6 +82,64 @@ describeRig('bound values on MySQL 8.0.42', () => {
                 expect(rows[0].v).toBe(value);
             });
         }
+    });
+});
+
+// The mode set for the server, not by a statement of the app: a new session has it, and the
+// pool learns it from the header of DO 0. sql_mode is not replicated, so one node is enough
+describeRig('a node whose global sql_mode has NO_BACKSLASH_ESCAPES', () => {
+    let cluster: any;
+    let root: any;
+    let before: string | undefined;
+
+    beforeAll(async () => {
+        const env = readEnv();
+        root = await rootTo(env, 1);
+        const [rows] = await root.query('SELECT @@GLOBAL.sql_mode AS mode');
+        before = rows[0].mode;
+        await root.query("SET GLOBAL sql_mode = " +
+            "CONCAT_WS(',', NULLIF(@@GLOBAL.sql_mode, ''), 'NO_BACKSLASH_ESCAPES')");
+        // after the SET, so every connection of the pool starts in the mode
+        cluster = createPoolCluster({
+            clusterName: 'globalmode',
+            useClusterHashing: false,
+            defaultPoolSettings: {
+                user: env.MDC_GALERA_USER,
+                password: env.MDC_GALERA_PASSWORD,
+                database: env.MDC_GALERA_DATABASE,
+                connectionLimit: 1,
+                healthCheck: { interval: LONG, passive: false }
+            },
+            hosts: [{ host: env.MDC_GALERA_HOST, port: Number(env.MDC_GALERA_PORT1) }],
+            logger: logger()
+        });
+        await cluster.connect();
+        await cluster.ready;
+    });
+
+    // every step, also when one before it fails
+    afterAll(async () => {
+        try {
+            await cluster?.disconnect();
+        } finally {
+            try {
+                if (before !== undefined) await root.query('SET GLOBAL sql_mode = ?', [before]);
+            } finally {
+                await root?.end();
+            }
+        }
+    });
+
+    it('a new connection that only returned rows refuses query() with values', async () => {
+        // rows only: no header tells the pool the mode
+        const rows = await cluster.query('SELECT @@SESSION.sql_mode AS mode');
+        expect(rows[0].mode).toContain('NO_BACKSLASH_ESCAPES');
+
+        const error = await cluster.query('SELECT ? AS v', ["it's"]).catch((e: any) => e);
+
+        expect([error.code, error.sent]).toEqual(['MDC_UNSAFE_SQL_MODE', false]);
+        const bound = await cluster.execute('SELECT ? AS v', ["it's"]) as RowDataPacket[];
+        expect(bound[0].v).toBe("it's");
     });
 });
 

@@ -393,11 +393,12 @@ export class Pool {
                 abort(abortReason(signal));
             };
 
-            // The borrow takes the connection, probes it after idle, resets it when dirty and
-            // sends USE for another database. An abort meanwhile is the borrow's as well
+            // The borrow takes the connection, probes it after idle, resets it when dirty,
+            // sends USE for another database and DO 0 when the guard below needs the sql_mode.
+            // An abort meanwhile is the borrow's as well
             const asked: IAbortOutcome = {};
-            const { database, timeout } = queryOptions;
-            const target = { database, timeout };
+            const { database, timeout, execute } = queryOptions;
+            const target = { database, timeout, valuesInText: valuesInText && !execute };
             this._borrow.take({ signal, target, probe }, asked).then(conn => {
                 held = conn;
                 // the signal aborted after the borrow took its listener off
@@ -406,7 +407,8 @@ export class Pool {
                 // packets out of order: the borrow has dropped the connection by now
                 this._borrow.watch(conn, error => fail(error, conn));
                 const bound = queryOptions.execute;
-                // values in the text, where the server reads a backslash as a character
+                // values in the text, where the server reads a backslash as a character. The
+                // borrow made the sql_mode known for such a call
                 if (!bound && valuesInText && this._session.noBackslashEscapes(conn)) {
                     return fail(Pool._unsafeSqlMode(), conn);
                 }

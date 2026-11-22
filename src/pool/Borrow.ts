@@ -22,7 +22,9 @@ export interface IBorrowPool {
 // The database and the time limit of the statement a connection is taken for, see take()
 export interface IStatementTarget {
     database: string | undefined,
-    timeout: number
+    timeout: number,
+    // the statement has values written into its text, see SessionState.prepare()
+    valuesInText?: boolean
 }
 
 // How take() takes a connection
@@ -44,8 +46,8 @@ export interface ITakeOptions {
  *   so does one the reaper's ping is still out on. One that fails is destroyed, passive
  *   health hears of it, and the next connection of the node is taken: at most
  *   connectionLimit + 1 tries, and a new connection needs no ping
- * - for a statement, a reset when the connection is dirty and USE when it is on another
- *   database, see SessionState
+ * - for a statement, a reset when the connection is dirty, USE when it is on another
+ *   database, and DO 0 for values in the text when the sql_mode is unknown, see SessionState
  * - a signal ends any of these steps
  *
  * A connection is given back through SessionState: at once when clean, reset first when dirty.
@@ -317,7 +319,8 @@ export class Borrow {
                 this._dropSafely(connection);
                 return end(abortReason(signal));
             }
-            this._session.prepare(connection, target.database, target.timeout, error => {
+            const { database, timeout, valuesInText = false } = target;
+            this._session.prepare(connection, database, timeout, valuesInText, error => {
                 if (!error) return end();
                 if (!end(error)) return;
                 this._pool.status.realFailure(error, false);

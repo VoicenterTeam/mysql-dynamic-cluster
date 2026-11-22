@@ -493,7 +493,8 @@ header. `SessionState` keeps the bit of the last header on each connection,
 see [pool.md](./pool.md#the-session-of-a-connection).
 
 A `query()` that wrote values into its text takes its connection and gets
-it ready as any other. If the state of that connection says
+it ready as any other, with a `DO 0` when the mode of the connection is
+unknown, see below. If the state of that connection says
 `NO_BACKSLASH_ESCAPES`, `Pool.query` rejects before the statement is sent,
 with an `Error` whose `code` is `MDC_UNSAFE_SQL_MODE` and whose message
 names the mode and `execute()`. Always: there is no setting.
@@ -512,17 +513,24 @@ names the mode and `execute()`. Always: there is no setting.
   checks of `_upgradeInPlace()`. So a server with the mode does not stop
   them. Its statements without values still go through `query()`.
 - **A connection learns the mode only from an OK header**: the reply to a
-  `SET`, an `INSERT`, an `UPDATE`, a `USE` (the one the pool sends too) or
-  a `CALL`. Never from rows: mysql2 reads the status flags of the end of
-  the rows for itself and does not pass them on. A new connection, and one
-  just reset, count as without the mode until such a header arrives: the
-  pool does not read the status flags of the server greeting, and mysql2
-  does not show the header of the reply to a reset. Until then every
-  statement with values on that connection is written into the text and
-  sent. On a server whose `sql_mode` has `NO_BACKSLASH_ESCAPES`, a `SELECT`
-  with values on a fresh connection goes out unsafe. Under that mode
-  `execute()` is the only safe way to send values. The guard only stops
-  `query()` once the connection has seen the bit.
+  `SET`, an `INSERT`, an `UPDATE`, a `USE` (the one the pool sends too), a
+  `CALL` or a `DO`. Never from rows: mysql2 reads the status flags of the
+  end of the rows for itself and does not pass them on. The pool does not
+  read the status flags of the server greeting either, and mysql2 does not
+  show the header of the reply to a reset. So the mode is unknown on a new
+  connection, after every reset, and on a connection that only returned
+  rows.
+- **`DO 0` when the mode is unknown.** For a `query()` with values in its
+  text on such a connection, the prepare step of the borrow sends one
+  `DO 0` after the reset and the `USE`, and its header sets the mode
+  before the guard reads it. `DO 0` has the `timeout` of the query and is
+  watched as the `USE` is: packets out of order and the signal end it, an
+  error or a timeout fails the call with `sent: false` (step 8 may try the
+  next node), and a timeout destroys the connection. The cost is one
+  `DO 0` per connection and per reset, only for calls that write values
+  into the text: `execute`, a `query()` without values,
+  `multiStatementQuery()` and the health check never send it. Under the
+  mode `execute()` is the only safe way to send values.
 - The bit of each later OK header is read again: one without it lets
   values through again. A reply of rows leaves the state as it was.
 
