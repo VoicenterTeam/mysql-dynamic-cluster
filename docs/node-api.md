@@ -585,12 +585,13 @@ and of no other check. It does not change later. For the state of a node now, re
 | A connect timeout of the operating system. | `{ code: 'ETIMEDOUT', errno: -110 }`. The number depends on the platform. | the socket |
 | A timeout of the server, or of a proxy in between, that closes the connection while the check uses it. | `{ code: 'PROTOCOL_CONNECTION_LOST' }` | mysql2 |
 
-`PROTOCOL_SEQUENCE_TIMEOUT` is the code mysql2 has for the `timeout` option of a query. The
-status query of the legacy check is sent with that option, the one of a node with a
-`healthCheck` block without it. A check that times out still does not report the
-code: the timer of the check has the same length and is set first, so it ends the check
-first, with `{}`. A check would report `PROTOCOL_SEQUENCE_TIMEOUT` only if mysql2 handed it
-that error before the check's own timer ran out.
+`PROTOCOL_SEQUENCE_TIMEOUT` is the code of a query that ran out of its `timeout`. The
+status query of the legacy check has that limit, by the timer of the pool (the `timeout`
+option of mysql2 up to 5.0.0), the one of a node with a `healthCheck` block has none. A
+check that times out still does not report the code: the timer of the check has the same
+length and is set first, so it ends the check first, with `{}`. A check would report
+`PROTOCOL_SEQUENCE_TIMEOUT` only if the pool handed it that error before the check's own
+timer ran out.
 
 ### A code is not always a refused login
 

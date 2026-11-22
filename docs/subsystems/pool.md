@@ -199,14 +199,16 @@ The `Promise` callback chain is, in order:
    when the mode was unknown, so the guard reads a known mode. See
    [cluster.md](./cluster.md#values-in-the-text-under-no_backslash_escapes).
 4. The send step, the one step a bound statement does differently:
-   `conn.query({ sql, timeout })` for text, `conn.execute({ sql, values,
-   timeout })` with the option `execute`. mysql2 prepares a bound statement
+   `conn.query({ sql })` for text, `conn.execute({ sql, values })` with the
+   option `execute`, both through `_session.send()`. mysql2 prepares a bound statement
    once per connection and keeps it until a reset, a `USE` of another
    database or the cap of `maxPreparedStatements` closes it. Before a bound
-   send, `_session.executed(conn, sql)` notes the text, and a timer with
-   the query's `timeout` starts: mysql2 times only the execute, not the
-   prepare. It fails the call with `PROTOCOL_SEQUENCE_TIMEOUT`, which
-   destroys the connection, and is cleared whenever the call settles. A
+   send, `_session.executed(conn, sql)` notes the text. The pool's own timer
+   bounds the statement with the query's `timeout`, the prepare of a bound
+   one included, and mysql2 is handed no `timeout`: see the time limit of a
+   command in [The session of a connection](#the-session-of-a-connection). On
+   expiry the call fails with `PROTOCOL_SEQUENCE_TIMEOUT` and `sent: true`,
+   and the connection is destroyed. A
    throw of mysql2 at the send, such as for values it refuses, fails the
    call with `sent: false`, so a direct call cannot hang. Both forms hand
    their reply to the same callback. `_session.observe()` applies the dirty rule to
@@ -312,12 +314,12 @@ The steps of `multiStatementQuery()` in [src/pool/Pool.ts](../../src/pool/Pool.t
    before anything else: the connection is dirty and is reset before it
    goes back, also after a `ROLLBACK` that passed, and a 1047 drops it at
    its release with no reset.
-3. `START TRANSACTION` (sent with `queryOptions.timeout`) — open a transaction. On error,
+3. `START TRANSACTION` (bounded by `queryOptions.timeout`, as every command here) — open a transaction. On error,
    the connection goes back through `_borrow.giveBack()`, reset first, and
    the call rejects.
 4. Run the statements one after another: each `conn.query` starts from
    the previous one's callback, and results are collected in order.
-5. `COMMIT` (sent with `queryOptions.timeout`) — issued only after the last
+5. `COMMIT` (bounded by `queryOptions.timeout`) — issued only after the last
    statement succeeded. A timed-out `COMMIT` destroys the connection; whether
    it committed on the server is unknown.
 6. Record the transaction as one `mysql_dynamic_cluster.operation.duration`
@@ -326,7 +328,7 @@ The steps of `multiStatementQuery()` in [src/pool/Pool.ts](../../src/pool/Pool.t
 
 Any error stops the sequence, records the attempt once with its
 `error.type` and rejects.
-A query or commit error sends `ROLLBACK` (with `queryOptions.timeout`),
+A query or commit error sends `ROLLBACK` (bounded by `queryOptions.timeout`),
 then gives the connection back, reset first since the error reply left it
 dirty — or destroys it, if the rollback itself fails. After a fatal
 error or `PROTOCOL_SEQUENCE_TIMEOUT` the connection is destroyed instead
@@ -348,15 +350,16 @@ query waited for its whole timeout instead of failing with 1047 at once.
 database the session is on, whether it is dirty, whether its server has
 `NO_BACKSLASH_ESCAPES` (on, off or unknown), and the texts `execute` prepared on it. It is the
 one place for the switch of database, the dirty rule, that bit, those
-texts and the reset with its time limit. `query()` and
+texts, the reset with its time limit and, since 5.0.1, the time limit of
+every other command of the pool. `query()` and
 `multiStatementQuery()` call it.
 
 - **A connection seen for the first time** is on the `database` of the
   pool, the one mysql2 logged it in with, and clean.
 - **`USE` only for another database.** The statement on the database the
   connection is on is one command. For another one, `USE` with the name
-  escaped by mysql2's `escapeId` goes first, as a query with the timeout
-  of the query, so no timer of the package is left. A `USE` that fails or
+  escaped by mysql2's `escapeId` goes first, bounded by the timeout of the
+  query as the statement is, see the time limit of a command below. A `USE` that fails or
   times out rejects with `sent: false`, and the next node may be tried. A
   timed-out one destroys the connection with its socket, as a timed-out
   statement does.
@@ -430,6 +433,26 @@ texts and the reset with its time limit. `query()` and
   `query()` reads the bit through `noBackslashEscapes(connection)`, false
   while unknown, to refuse values written into the text. Inside a transaction of `multiStatementQuery()` only the
   `COMMIT` or `ROLLBACK` sets it, as for the dirty rule.
+- **The time limit of a command.** Since 5.0.1 (#120). `send()` sends the
+  statement of `query()` and `execute()`, the `USE` and the `DO 0` before
+  it, and `START TRANSACTION`, the statements, `COMMIT` and `ROLLBACK` of
+  `multiStatementQuery()`, each within the `timeout` of the call, by a
+  timer of the pool. mysql2 is handed no `timeout`: it clears the timer of
+  that option when the command ends, not when the connection is destroyed.
+  So up to 5.0.0 a command still out on a connection the pool dropped (an
+  abort by the signal, packets out of order, a lost connection) kept a
+  timer that held the process open until it fired, after `queryTimeout`,
+  120 s by default, and then called back a second time. The timer of the
+  pool is unref'd, and is cleared at the reply, at `drop()` of the
+  connection and at a throw of mysql2. On expiry the command fails with the
+  error mysql2 gave a timeout (`Query inactivity timeout`, `code` and
+  `errorno` `PROTOCOL_SEQUENCE_TIMEOUT`, `syscall: 'query'`), not marked
+  as the package's own, and a reply after that is not passed on. A bound
+  statement fails with the package's `Query inactivity timeout`, code
+  `PROTOCOL_SEQUENCE_TIMEOUT`, marked as its own, as in 5.0.0. Either way
+  the connection counts as broken and is destroyed with its socket. A
+  `timeout` of 0, or none, is no limit. The reset has its own time limit,
+  `resetTimeout`, see above.
 - **What a clean query leaves stays.** A statement whose reply is clean
   leaves its session state on the connection for the next query that gets
   it: user variables, session variables set with `SET`, named locks of

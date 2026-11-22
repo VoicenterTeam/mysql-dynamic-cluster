@@ -445,8 +445,8 @@ works the same on `query()` itself. Nothing is switched to it for a caller:
 The two forms take the same path: the choice of node, the retry rule of
 step 8, the error of step 9, the signal, the metrics and passive health.
 The one difference is in `Pool.query`, which hands the statement to
-mysql2's `conn.execute({ sql, values, timeout })` in place of
-`conn.query({ sql, timeout })`. The values go in the execute packet as
+mysql2's `conn.execute({ sql, values })` in place of
+`conn.query({ sql })`. The values go in the execute packet as
 parameters and never become part of the text.
 
 mysql2 prepares the statement on that connection and keeps it in a cache of

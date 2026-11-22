@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.0.1 (unreleased)
+
+### Fixed
+
+- **A cancelled or dropped query no longer keeps the process alive until its timeout** (#120). The pool handed its `timeout` to mysql2, which clears the timer of that option only when the command ends, not when the connection is destroyed. So a command still out on a connection the pool dropped, after an abort by the `signal`, packets out of order or a lost connection, kept a timer that held the process open until it fired, up to `queryTimeout` (120 s by default), and on a lost connection called back a second time with `PROTOCOL_SEQUENCE_TIMEOUT`. An app that aborted a call and then ran `disconnect()` waited that long to exit. The pool now bounds each of its commands with a timer of its own, unref'd and cleared at the reply, at the drop of the connection and at a throw of mysql2: the statement of `query()` and `execute()`, the `USE` and the `DO 0` before it, and `START TRANSACTION`, the statements, `COMMIT` and `ROLLBACK` of `multiStatementQuery()`. mysql2 is handed no `timeout`. What a caller sees on a timeout is unchanged: a text statement, a `USE`, a `DO 0` and a command of `multiStatementQuery()` fail with the error mysql2 gave (`Query inactivity timeout`, `code` and `errorno` `PROTOCOL_SEQUENCE_TIMEOUT`, `syscall: 'query'`), a bound statement with the package's own error of that code, the statement with `sent: true` and the `USE` and `DO 0` with `sent: false`, and the connection is destroyed. `timeout: 0`, or none, is still no limit, and a value above 2147483647 ms is still clamped. The workaround of passing `timeout: 0` and bounding calls with the `signal` is no longer needed.
+- **A negative `queryTimeout` is refused** by strict validation, in `defaultPoolSettings` and on a host. It fired at once, so every statement timed out and its connection was destroyed. 0 still means no limit. A negative `timeout` query option makes `query()` and `execute()` reject with a `TypeError` before any node is asked.
+
 ## 5.0.0 (2026-11-22)
 
 ### Breaking changes

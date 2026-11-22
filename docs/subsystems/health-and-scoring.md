@@ -1131,7 +1131,7 @@ after any pass, and the next failed check is the first of `fall`.
 | `EADDRNOTAVAIL`, `ECONNABORTED`, `EHOSTDOWN`, `ENETDOWN` | Not among the codes above. The set is closed: a code of the network that is not named there changes nothing |
 | A refused login: 1045 and the rest of the [refusal list](#a-login-or-account-refusal) | The node answered. mysql2 marks it `fatal` when it comes at a change of user, which up to 4.x every query sent first, so `fatal` alone decides nothing. The next check gets the same answer and applies its own rule |
 | Too many connections, 1040. An account at its limit, 1226. A node that is not ready, 1047 | The node answered. The check and the validators decide. For 1040 that means the node stays up: the check passes on the connection it holds, and only a check that has to open a connection sees 1040. See below |
-| The query timeout of mysql2, `PROTOCOL_SEQUENCE_TIMEOUT` | The app stopped waiting. A slow query is not a dead node, and the error is not `fatal` |
+| The query timeout, `PROTOCOL_SEQUENCE_TIMEOUT`, by the timer of the pool since 5.0.1 | The app stopped waiting. A slow query is not a dead node, and the error is not `fatal` |
 | `HANDSHAKE_NO_SSL_SUPPORT`, `HANDSHAKE_SSL_ERROR`, `AUTH_SWITCH_PLUGIN_ERROR`, `PROTOCOL_ERROR` | `fatal` in mysql2, but about the settings of the connection or one packet. A check that runs into the same error counts it toward `fall` |
 | `Can't add new command when connection is in closed state` | `fatal`, with no code. The connection was closed on this side |
 | `Pool is closed.`, `Queue limit reached.`, `No connections available.` | The pool of mysql2 said no, not the node |
@@ -1559,11 +1559,12 @@ value is an empty object in these cases:
   answer. Only what the status query is rejected with is reduced.
 - The error is not an object, or reading one of the three fields throws.
 
-A check that times out ends by its own timer. The legacy check also sends
-its status query with the `timeout` option of mysql2. Both have the same
-length, and the timer of the check is set first: mysql2 sets its timer only
-after the connection was handed out and the database was changed, which is
-never in the same turn. A node with a `healthCheck` block sends the status
+A check that times out ends by its own timer. The status query of the legacy
+check is also bounded by the timer the pool puts on its commands (the
+`timeout` option of mysql2 up to 5.0.0). Both have the same length, and the
+timer of the check is set first: the pool sets its timer only when it sends
+the query, after the connection was handed out and the database was changed,
+which is never in the same turn. A node with a `healthCheck` block sends the status
 query with no such option. So a timed out check reports `{}` in both, not
 `PROTOCOL_SEQUENCE_TIMEOUT`. The connect timeout of mysql2 is set when the
 connection is made, before the timer of the check, and is 10 s. It ends the
