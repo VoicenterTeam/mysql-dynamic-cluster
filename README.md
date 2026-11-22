@@ -489,7 +489,7 @@ General pool settings which inherited by [user pool settings](#user-pool-setting
         </tr>
         <tr>
             <td>resetAfterStatements</td>
-            <td>Statements after which a connection is reset when it goes back to the pool. 1 or more</td>
+            <td>Replies after which a connection is reset when it goes back to the pool, counted since its last reset. A <code>USE</code> or <code>DO 0</code> the pool sends counts too. 1 or more</td>
             <td>false</td>
             <td>number</td>
             <td>-</td>
