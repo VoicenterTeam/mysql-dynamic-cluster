@@ -79,7 +79,9 @@ type Mode =
     // answers a reset with an error
     | 'refuses the reset'
     // answers every USE with error 1049, unknown database
-    | 'refuses USE';
+    | 'refuses USE'
+    // answers START TRANSACTION with a deadlock
+    | 'refuses START TRANSACTION';
 
 interface INode {
     port: number,
@@ -159,6 +161,9 @@ const listen = async (connections = 1): Promise<INode> => {
                 if (mode === 'refuses USE') return refuse(1049, 'Unknown database');
                 // the schema is tracked: the header says the session changed
                 return ok(SESSION_STATE_CHANGED);
+            }
+            if (sql === BEGIN && mode === 'refuses START TRANSACTION') {
+                return refuse(DEADLOCK, 'Deadlock found when trying to get lock');
             }
             if (sql === ROWS) return connection.writeTextResult([{ a: '1' }], [column('a')]);
             if (sql === FAIL) return refuse(DEADLOCK, 'Deadlock found when trying to get lock');
@@ -482,20 +487,22 @@ describe('multiStatementQuery()', () => {
             expect(result.serverStatus).toBe(AUTOCOMMIT);
         });
 
-    it('sends no reset after its own COMMIT or ROLLBACK', async () => {
-        const node = await listen();
-        const cluster = await clusterOf([node]);
-        const pool = cluster.pools[0];
+    it('sends no reset after its own COMMIT, and one after an error reply and its ROLLBACK',
+        async () => {
+            const node = await listen();
+            const cluster = await clusterOf([node]);
+            const pool = cluster.pools[0];
 
-        await pool.multiStatementQuery([CLEAN], {});
-        const failed = await pool.multiStatementQuery([FAIL], {}).catch((e: any) => e);
-        await call(cluster, CLEAN);
+            await pool.multiStatementQuery([CLEAN], {});
+            const failed = await pool.multiStatementQuery([FAIL], {}).catch((e: any) => e);
+            await call(cluster, CLEAN);
 
-        expect(failed.errno).toBe(DEADLOCK);
-        expect(node.app()).toEqual([
-            BEGIN, CLEAN, 'COMMIT', BEGIN, FAIL, 'ROLLBACK', CLEAN
-        ]);
-    });
+            expect(failed.errno).toBe(DEADLOCK);
+            // an error reply carries no status flags: the session is dirty until a reset
+            expect(node.app()).toEqual([
+                BEGIN, CLEAN, 'COMMIT', BEGIN, FAIL, 'ROLLBACK', 'reset', CLEAN
+            ]);
+        });
 
     it('sends USE first for another database, and no change of user', async () => {
         const node = await listen();
@@ -505,6 +512,35 @@ describe('multiStatementQuery()', () => {
 
         expect(node.app()).toEqual(['USE `h`', BEGIN, CLEAN, 'COMMIT']);
     });
+
+    it('a START TRANSACTION the node refuses: a reset before the next caller', async () => {
+        const node = await listen();
+        const cluster = await clusterOf([node]);
+        node.become('refuses START TRANSACTION');
+
+        const failed = await cluster.pools[0].multiStatementQuery([CLEAN], {})
+            .catch((e: any) => e);
+        node.become('answers');
+        await call(cluster, CLEAN);
+
+        expect(failed.errno).toBe(DEADLOCK);
+        expect(node.app()).toEqual([BEGIN, 'reset', CLEAN]);
+    });
+
+    it('an answer 1047 among its statements: the connection is dropped, with no reset',
+        async () => {
+            const node = await listen();
+            const cluster = await clusterOf([node]);
+
+            const failed = await cluster.pools[0].multiStatementQuery([NOT_READY], {})
+                .catch((e: any) => e);
+            const logins = node.logins();
+            await until(() => node.closed() === 1);
+
+            expect([failed.errno, node.closed()]).toEqual([1047, 1]);
+            await expectDropped(cluster, node, logins);
+            expect(node.app()).toEqual([BEGIN, NOT_READY, 'ROLLBACK', CLEAN]);
+        });
 });
 
 describe('a connection the app had through getConnection()', () => {

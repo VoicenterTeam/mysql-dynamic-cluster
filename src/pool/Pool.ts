@@ -491,8 +491,12 @@ export class Pool {
                 settled = true;
                 queryTimer.end();
                 Metrics.recordOperation(queryTimer.get(), { ...poolMetricOption, error });
-                // passive health, as in query()
-                if (conn) this._status.realFailure(error, false);
+                // passive health and the dirty rule, as in query(): an error reply leaves the
+                // session dirty, and a 1047 drops the connection at its release
+                if (conn) {
+                    this._status.realFailure(error, false);
+                    this._session.observe(conn, error);
+                }
                 // a broken connection can't roll back; destroying it makes the server discard the transaction
                 if (rollback && !isBroken(error)) {
                     const rollback = { sql: 'ROLLBACK', timeout: queryOptions.timeout };

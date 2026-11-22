@@ -328,9 +328,14 @@ omitted — this method does not cache:
    its own `COMMIT` or `ROLLBACK` goes through the whole rule and the
    connection back through `_borrow.giveBack()`: a clean one with no
    reset, one that the transaction left with autocommit off after a reset.
-   A failed `ROLLBACK` destroys it.
+   A failed `ROLLBACK` destroys it. An error reply of `START TRANSACTION`,
+   a statement or `COMMIT` goes through the whole rule too, in `fail()`,
+   before anything else: the connection is dirty and is reset before it
+   goes back, also after a `ROLLBACK` that passed, and a 1047 drops it at
+   its release with no reset.
 3. `START TRANSACTION` (sent with `queryOptions.timeout`) — open a transaction. On error,
-   `conn.release()` and reject.
+   the connection goes back through `_borrow.giveBack()`, reset first, and
+   the call rejects.
 4. Run the statements one after another: each `conn.query` starts from
    the previous one's callback, and results are collected in order.
 5. `COMMIT` (sent with `queryOptions.timeout`) — issued only after the last
@@ -343,7 +348,8 @@ omitted — this method does not cache:
 Any error stops the sequence, records the attempt once with its
 `error.type` and rejects.
 A query or commit error sends `ROLLBACK` (with `queryOptions.timeout`),
-then releases — or destroys, if the rollback itself fails. After a fatal
+then gives the connection back, reset first since the error reply left it
+dirty — or destroys it, if the rollback itself fails. After a fatal
 error or `PROTOCOL_SEQUENCE_TIMEOUT` the connection is destroyed instead
 (no rollback — closing the socket makes the server discard the
 transaction). Before 3.2.2 the statements were fired from a `forEach`

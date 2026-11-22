@@ -80,10 +80,12 @@ describe('Pool.multiStatementQuery', () => {
         expect(conn.destroy).not.toHaveBeenCalled();
     });
 
-    it('SQL error: stops, rolls back, never commits, releases once', async () => {
+    it('SQL error: stops, rolls back, never commits, resets, releases once', async () => {
         const conn = makeConn({ queryErrs: { B: { code: 'ER_PARSE_ERROR' } } });
         await expect(makePool(null, conn).multiStatementQuery(['A', 'B', 'C'], {})).rejects.toEqual({ code: 'ER_PARSE_ERROR' });
-        expect(conn.log).toEqual(['begin', 'A', 'B', 'rollback']);
+        // the error reply left the session dirty: the release resets it first
+        await new Promise(resolve => setImmediate(resolve));
+        expect(conn.log).toEqual(['begin', 'A', 'B', 'rollback', 'reset']);
         expect(conn.log).not.toContain('commit');
         expect(conn.release).toHaveBeenCalledTimes(1);
         expect(conn.destroy).not.toHaveBeenCalled();
@@ -100,10 +102,11 @@ describe('Pool.multiStatementQuery', () => {
         }
     });
 
-    it('commit error: rolls back, rejects, releases once', async () => {
+    it('commit error: rolls back, rejects, resets, releases once', async () => {
         const conn = makeConn({ commitErr: { code: 'ER_LOCK_DEADLOCK' } });
         await expect(makePool(null, conn).multiStatementQuery(['A'], {})).rejects.toEqual({ code: 'ER_LOCK_DEADLOCK' });
-        expect(conn.log).toEqual(['begin', 'A', 'commit', 'rollback']);
+        await new Promise(resolve => setImmediate(resolve));
+        expect(conn.log).toEqual(['begin', 'A', 'commit', 'rollback', 'reset']);
         expect(conn.release).toHaveBeenCalledTimes(1);
     });
 
@@ -165,10 +168,11 @@ describe('Pool.multiStatementQuery', () => {
         expect(conn.release).not.toHaveBeenCalled();
     });
 
-    it('START TRANSACTION fails: no statements, hands back once', async () => {
+    it('START TRANSACTION fails: no statements, resets, hands back once', async () => {
         const conn = makeConn({ beginErr: { code: 'ER_UNKNOWN' } });
         await expect(makePool(null, conn).multiStatementQuery(['A'], {})).rejects.toBeTruthy();
-        expect(conn.log).toEqual(['begin']);
+        await new Promise(resolve => setImmediate(resolve));
+        expect(conn.log).toEqual(['begin', 'reset']);
         expect(conn.release).toHaveBeenCalledTimes(1);
     });
 
