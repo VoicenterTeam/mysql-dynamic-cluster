@@ -46,6 +46,9 @@ interface IPoolSettings {
     // Time in ms a reset of a dirty connection may take. One that fails or takes longer ends
     // with the connection destroyed. 1 or more
     resetTimeout?: number,
+    // Statements execute() prepares that mysql2 keeps per connection; the one used longest ago
+    // is closed past it. 1 or more
+    maxPreparedStatements?: number,
     validators?: IValidatorParams[],
     loadFactors?: ILoadFactorParams[],
     // Time in ms. A half left out comes from the defaults
@@ -80,6 +83,7 @@ export interface IDefaultPoolSettings extends IPoolSettings {
     port: number,
     queryTimeout: number,
     resetTimeout: number,
+    maxPreparedStatements: number,
     connectionLimit: number,
     validators: IValidatorParams[],
     loadFactors: ILoadFactorParams[],

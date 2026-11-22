@@ -28,7 +28,9 @@ const defaultsOf322 = {
         timerCheckMultiplier: 1.3, queryTimeout: 120000, slowQueryTime: 1, redisFactor: 1,
         // not in 3.2.2: added in 5.0.0, which resets a dirty connection instead of changing
         // the user before every query
-        resetTimeout: 1000
+        resetTimeout: 1000,
+        // not in 3.2.2: added in 5.0.0 with execute()
+        maxPreparedStatements: 100
     },
     serviceMetrics: { database: 'swagger_realtime', table: 'Service' },
     clusterHashing: { nextCheckTime: 5000, dbName: 'mysql_dynamic_cluster' },

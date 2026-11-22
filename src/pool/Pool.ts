@@ -42,6 +42,8 @@ export class Pool {
     private readonly _redisFactor: number;
     private readonly _redisExpire: number;
     private readonly _flags?: string | string[];
+    // the statements of execute() mysql2 keeps per connection, see SessionState.executed()
+    private readonly _maxPreparedStatements: number;
 
     private _pool: mysql.Pool;
     // counts connect() and disconnect() calls: a connect() that comes back from asking the server
@@ -90,7 +92,10 @@ export class Pool {
         this._flags = settings.flags;
 
         this.connectionLimit = settings.connectionLimit;
-        this._session = new SessionState(this.name, this._database, settings.resetTimeout);
+        this._maxPreparedStatements = settings.maxPreparedStatements;
+        this._session = new SessionState(
+            this.name, this._database, settings.resetTimeout, this._maxPreparedStatements
+        );
 
         this._reaper = new IdleConnectionReaper(
             settings.minConnections,
@@ -122,6 +127,7 @@ export class Pool {
         this._pool = mysql.createPool({
             ...this._connectionOptions(),
             connectionLimit: this.connectionLimit,
+            maxPreparedStatements: this._maxPreparedStatements,
             ...flagsOption
         })
         // Nothing is opened here: the check below opens the connection, within its own
@@ -271,13 +277,13 @@ export class Pool {
      * also writes it on its error, when the error can take it. Gets `aborted: true` when the
      * signal of the options ended the call, which then rejects with the reason of the signal
      * as it is: nothing is written on it, and passive health is not told
-     * @param values the values of the caller. With the option `execute` the server binds them.
-     * Without it they are in sql already, and the pool refuses to send sql on a connection
-     * with NO_BACKSLASH_ESCAPES when they hold a value: MDC_UNSAFE_SQL_MODE, with `sent: false`
+     * @param values the values the server binds, with the option `execute`. Not read without it
+     * @param valuesInText the cluster wrote values into sql. The pool refuses to send such a
+     * statement on a connection with NO_BACKSLASH_ESCAPES: MDC_UNSAFE_SQL_MODE, `sent: false`
      */
     public async query<T extends QueryResult>(
         sql: string, queryOptions?: IQueryOptions, outcome: IQueryOutcome = {},
-        values?: QueryValues
+        values?: QueryValues, valuesInText = false
     ): Promise<T | T[]> {
         return new Promise(async (resolve, reject) => {
             outcome.sent = false;
@@ -306,7 +312,13 @@ export class Pool {
             let settled = false;
             // the connection of the call, from its arrival until the call settled
             let held: mysql.PoolConnection | undefined;
-            const stopListening = () => signal?.removeEventListener('abort', onAbort);
+            // the time limit of a bound statement, prepare included, see the send step
+            let boundTimer: NodeJS.Timeout | undefined;
+            // every way the call settles comes here, so the timer goes with the listener
+            const stopListening = () => {
+                clearTimeout(boundTimer);
+                signal?.removeEventListener('abort', onAbort);
+            };
             // told: getConnection() told passive health of what it had to tell
             const fail = (error: any, conn?: mysql.PoolConnection, told = false) => {
                 if (settled) return;
@@ -368,8 +380,7 @@ export class Pool {
                     if (error) return fail(error, conn);
                     const bound = queryOptions.execute;
                     // values in the text, where the server reads a backslash as a character
-                    const inText = !bound && Pool._writesValues(values);
-                    if (inText && this._session.noBackslashEscapes(conn)) {
+                    if (!bound && valuesInText && this._session.noBackslashEscapes(conn)) {
                         return fail(Pool._unsafeSqlMode(), conn);
                     }
 
@@ -401,9 +412,22 @@ export class Pool {
 
                         resolve(result);
                     };
-                    // the only step a bound statement does differently
-                    if (bound) conn.execute({ sql, values, timeout }, onReply);
-                    else conn.query({ sql, timeout }, onReply);
+                    try {
+                        // the only step a bound statement does differently
+                        if (bound) {
+                            this._session.executed(conn, sql);
+                            // mysql2 times the execute, not the prepare before it
+                            if (timeout) boundTimer = this._boundTimeout(timeout, conn, fail);
+                            conn.execute({ sql, values, timeout }, onReply);
+                        } else {
+                            conn.query({ sql, timeout }, onReply);
+                        }
+                    } catch (thrown) {
+                        // mysql2 refused the call before it wrote anything, such as values
+                        // with undefined in them
+                        outcome.sent = false;
+                        fail(thrown, conn);
+                    }
                 })
             }, error => {
                 if (asked.aborted) return abort(error);
@@ -527,14 +551,22 @@ export class Pool {
     }
 
     /**
-     * Whether the values of a query() put at least one value into its text: a non-empty
-     * array, an object with an own key, a string or a number. [] and {} write nothing
+     * The time limit of a bound statement from the moment it is sent: mysql2 arms its own
+     * timeout only when the execute starts, after the prepare. On expiry the call fails with
+     * the code mysql2 gives a timeout, so the connection counts as broken and is destroyed, as
+     * for a reset that runs out of time. The call clears it when it settles
      * @private
      */
-    private static _writesValues(values: unknown): boolean {
-        if (Array.isArray(values)) return values.length > 0;
-        if (typeof values === 'string' || typeof values === 'number') return true;
-        return typeof values === 'object' && values !== null && Object.keys(values).length > 0;
+    private _boundTimeout(
+        timeout: number, conn: mysql.PoolConnection, fail: (error: any, conn: any) => void
+    ): NodeJS.Timeout {
+        const timer = setTimeout(() => {
+            const error = PoolStatus.ownError(new Error("Query inactivity timeout"));
+            fail(Object.assign(error, { code: 'PROTOCOL_SEQUENCE_TIMEOUT' }), conn);
+        }, timeout);
+        // the socket keeps the process alive while the statement runs. This timer alone does not
+        timer.unref();
+        return timer;
     }
 
     /**

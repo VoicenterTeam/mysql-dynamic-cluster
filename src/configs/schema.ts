@@ -81,6 +81,9 @@ const poolFields = {
     // time in ms a reset of a dirty connection may take before the connection is destroyed.
     // A reset always has a limit: the server may never answer it
     resetTimeout: limitMs,
+    // statements execute() prepares that mysql2 keeps per connection. The server counts every
+    // one of every client against max_prepared_stmt_count
+    maxPreparedStatements: z.number().int().min(1),
     // time in seconds
     slowQueryTime: z.number(),
     redisFactor: z.number(),
@@ -116,6 +119,7 @@ const defaultPoolSettings = z.strictObject({
     healthCheck: poolFields.healthCheck.optional(),
     queryTimeout: poolFields.queryTimeout.default(2 * 60 * 1000),
     resetTimeout: poolFields.resetTimeout.default(1000),
+    maxPreparedStatements: poolFields.maxPreparedStatements.default(100),
     slowQueryTime: poolFields.slowQueryTime.default(1),
     redisFactor: poolFields.redisFactor.default(1),
     // no default: left out, the pool picks them from its server (src/pool/ServerFlags.ts)

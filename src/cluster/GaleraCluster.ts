@@ -378,10 +378,11 @@ export class GaleraCluster {
             record(undefined, error);
             throw error;
         }
-        // mysql2 throws for other values instead of failing the call. Before any node
+        // mysql2 throws for other values, or fails after the prepare. Before any node.
+        // includes() counts the holes of a sparse array as undefined
         const unbindable = queryOptions.execute && values !== undefined && values !== null
-            && !(Array.isArray(values)
-                && values.every(value => value !== undefined && typeof value !== 'function'));
+            && (!Array.isArray(values) || values.includes(undefined)
+                || values.some(value => typeof value === 'function'));
         if (unbindable) {
             const error = new TypeError("execute: values must be an array, with no undefined " +
                 "and no function in it");
@@ -443,8 +444,14 @@ export class GaleraCluster {
         stopIfAborted();
 
         // bound values stay apart from the text
-        if (!queryOptions.execute) sql = this._formatSQL(sql, values);
-        Logger.debug("formatSQL", {sql, values})
+        if (!queryOptions.execute) {
+            sql = this._formatSQL(sql, values);
+            Logger.debug("formatSQL", {sql, values})
+        }
+        // The one rule for values in the text: the formatting changed it. The pool refuses
+        // such a statement under NO_BACKSLASH_ESCAPES. [] and {}, or a :name the object does
+        // not have, write nothing
+        const valuesInText = sql !== originalSql;
         let redisData: IRedisData = null;
         if (queryOptions.redis && !queryOptions.redisRefreshCache) {
             const redisLatency = new QueryTimer();
@@ -486,7 +493,9 @@ export class GaleraCluster {
             const outcome: IQueryOutcome = {};
             try {
                 Logger.debug("Query use host: " + pool.host);
-                const res = await this._queryRequest(sql, pool, queryOptions, outcome, values) as T;
+                const res = await this._queryRequest(
+                    sql, pool, queryOptions, outcome, values, valuesInText
+                ) as T;
                 record('pool');
                 return res;
             } catch (e) {
@@ -535,14 +544,15 @@ export class GaleraCluster {
      * @param pool active pool
      * @param queryOptions options to configure query
      * @param outcome handed to the pool, which says in it whether the statement was sent
-     * @param values the values of the caller, see Pool.query()
+     * @param values the values the server binds, with the option `execute`
+     * @param valuesInText the formatting wrote values into sql, see Pool.query()
      * @private
      */
     private async _queryRequest<T extends QueryResult>(
         sql: string, pool: Pool, queryOptions: IQueryOptions, outcome: IQueryOutcome,
-        values: QueryValues
+        values: QueryValues, valuesInText: boolean
     ): Promise<T> {
-        const result = await pool.query(sql, queryOptions, outcome, values) as T;
+        const result = await pool.query(sql, queryOptions, outcome, values, valuesInText) as T;
 
         if (queryOptions?.serviceId && this._clusterHashing.connected) {
             // the statement ran: a failure from here on must not send it to another node

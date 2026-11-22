@@ -19,7 +19,11 @@ interface ISession {
     // the last header on the connection had NO_BACKSLASH_ESCAPES: the server reads a
     // backslash in a string as a character, so a value escaped into the text is not safe.
     // Unknown after a reset, which counts as off, as for a new connection
-    noBackslashEscapes?: boolean
+    noBackslashEscapes?: boolean,
+    // The texts execute() sent on the connection since its last reset or USE, the one used
+    // last at the end. mysql2 keeps a prepared statement per text, whatever the database,
+    // and the server runs it in the database it was prepared in
+    statements?: Set<string>
 }
 
 // status flags of the header of an OK reply
@@ -44,11 +48,13 @@ export class SessionState {
      * @param poolName name of the pool, for the log
      * @param database the database mysql2 logs every connection of the pool in with
      * @param resetTimeout time in ms a reset may take before the connection is destroyed
+     * @param maxStatements the maxPreparedStatements of the pool: how many texts are kept
      */
     constructor(
         private readonly _poolName: string,
         private readonly _database: string,
-        private readonly _resetTimeout: number
+        private readonly _resetTimeout: number,
+        private readonly _maxStatements: number
     ) {}
 
     /**
@@ -77,15 +83,36 @@ export class SessionState {
         database = database || this._database;
         const use = () => {
             if (session.database === database) return done();
+            // a statement prepared on the database the connection leaves must not run on the next
+            session.statements?.forEach(text => SessionState._unprepare(connection, text));
+            session.statements?.clear();
             const sql = 'USE ' + mysql.escapeId(database);
-            connection.query({ sql, timeout }, (error) => {
-                this.observe(connection, error);
+            connection.query({ sql, timeout }, (error, result) => {
+                this.observe(connection, error, result);
                 if (!error) session.database = database;
                 done(error);
             });
         };
         if (!session.dirty) return use();
         this._reset(connection, session, error => error ? done(error) : use());
+    }
+
+    /**
+     * execute() is about to send this text on the connection. The texts are closed before the
+     * next USE, see prepare(). Past maxPreparedStatements the one used longest ago is closed
+     * at once, so mysql2 never keeps a statement this list lost
+     * @param sql the text of the statement
+     */
+    public executed(connection: mysql.PoolConnection, sql: string): void {
+        const session = this._session(connection);
+        const texts = session.statements ??= new Set<string>();
+        // to the end: the order is the one of the last use, as in the cache of mysql2
+        texts.delete(sql);
+        texts.add(sql);
+        if (texts.size <= this._maxStatements) return;
+        const oldest = texts.values().next().value as string;
+        texts.delete(oldest);
+        SessionState._unprepare(connection, oldest);
     }
 
     /**
@@ -203,6 +230,8 @@ export class SessionState {
             } else {
                 session.dirty = false;
                 session.noBackslashEscapes = false;
+                // mysql2 forgot its statements when the reset was answered, the server too
+                session.statements?.clear();
             }
             done(error);
         };
@@ -218,6 +247,21 @@ export class SessionState {
         } catch (thrown) {
             // a reset that could not be sent fails here, so no call waits for it
             finish(thrown || new Error("Reset failed"));
+        }
+    }
+
+    /**
+     * Close the statement mysql2 keeps for a text: COM_STMT_CLOSE, which gets no reply. It
+     * does nothing when mysql2 keeps none. A connection that takes no command any more makes
+     * mysql2 emit an error with no listener here, which throws: the USE or the statement that
+     * follows fails the same way, and fails the call
+     * @private
+     */
+    private static _unprepare(connection: mysql.PoolConnection, sql: string): void {
+        try {
+            connection.unprepare(sql);
+        } catch {
+            // see above
         }
     }
 

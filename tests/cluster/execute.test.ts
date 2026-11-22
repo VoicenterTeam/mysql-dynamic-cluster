@@ -6,14 +6,16 @@ import Redis from '../../src/Redis/Redis';
 // cluster.execute() and the execute query option, with the cluster of createPoolCluster and
 // the real mysql2 against mysql2's own server class on the loopback interface. The fake server
 // writes down every command of the app: a text statement as it is, 'prepare <sql>',
-// 'execute <values as JSON>', 'reset' and 'close'. It keeps the sql_mode of each session and
-// sets bit 512 of the status flags of every OK header while NO_BACKSLASH_ESCAPES is on, as
-// MySQL does
+// 'execute <values as JSON>', 'reset' and 'close <statement id>'. It keeps the sql_mode of
+// each session and sets bit 512 of the status flags of every OK header while
+// NO_BACKSLASH_ESCAPES is on, as MySQL does. A USE gets bit 0x4000, session state changed, as
+// from a server that tracks the schema
 const COM_CHANGE_USER = 0x11;
 const COM_STMT_CLOSE = 0x19;
 const COM_RESET_CONNECTION = 0x1f;
 const AUTOCOMMIT = 2;
 const NO_BACKSLASH_ESCAPES = 512;
+const SESSION_STATE_CHANGED = 0x4000;
 const LONG = 600000;
 
 // loopback only: a hang here is a bug, not a slow network
@@ -71,7 +73,13 @@ const prepareOk = (statementId: number) => {
 };
 
 // What a node does from the moment a test says so. Until then it answers everything
-type Mode = 'answers' | 'ignores the prepare';
+type Mode =
+    | 'answers'
+    | 'ignores the prepare'
+    // answers a prepare with 1064, a syntax error
+    | 'refuses the prepare'
+    // answers a prepare with 1047, as a Galera node outside the primary component does
+    | 'is not ready for the prepare';
 
 interface INode {
     port: number,
@@ -85,7 +93,9 @@ interface INode {
     closed: () => number
 }
 
-const listen = async (connections = 1): Promise<INode> => {
+// `serverMode`: the sql_mode of the server has NO_BACKSLASH_ESCAPES, so every session starts
+// with it and a reset brings it back
+const listen = async (connections = 1, serverMode = false): Promise<INode> => {
     const server: any = (mysql as any).createServer();
     const sockets: any[] = [];
     const got: { id: number, what: string }[] = [];
@@ -104,11 +114,15 @@ const listen = async (connections = 1): Promise<INode> => {
     server.on('connection', (connection: any) => {
         const id = sockets.push(connection);
         // the sql_mode of this session, as a server keeps it
-        const session = { noBackslashEscapes: false };
-        const ok = (affectedRows = 0) => {
+        const session = { noBackslashEscapes: serverMode };
+        const ok = (affectedRows = 0, changed = 0) => {
             const mode = session.noBackslashEscapes ? NO_BACKSLASH_ESCAPES : 0;
             connection.sequenceId = 1;
-            connection.writeOk({ affectedRows, serverStatus: AUTOCOMMIT | mode });
+            connection.writeOk({ affectedRows, serverStatus: AUTOCOMMIT | mode | changed });
+        };
+        const refuse = (code: number, message: string) => {
+            connection.sequenceId = 1;
+            connection.writeError({ code, message });
         };
         connection.on('error', () => undefined);
         connection.stream.on('close', () => seen.closed++);
@@ -124,16 +138,19 @@ const listen = async (connections = 1): Promise<INode> => {
                 done(null);
             }
         });
-        connection.on('packet', (_packet: object, known: boolean, code: number) => {
+        connection.on('packet', (packet: any, known: boolean, code: number) => {
             if (known) return;
             // the check connection changes the user before its status query
             if (code === COM_CHANGE_USER) return ok();
-            // no reply: the client sends it and goes on
-            if (code === COM_STMT_CLOSE) return got.push({ id, what: 'close' });
+            if (code === COM_STMT_CLOSE) {
+                // the command, then the id of the statement. No reply: the client goes on
+                packet.readInt8();
+                return got.push({ id, what: 'close ' + packet.readInt32() });
+            }
             if (code !== COM_RESET_CONNECTION) return;
             got.push({ id, what: 'reset' });
             // a reset brings back the sql_mode of the server
-            session.noBackslashEscapes = false;
+            session.noBackslashEscapes = serverMode;
             ok();
         });
         const answer = (sql: string) => {
@@ -144,9 +161,8 @@ const listen = async (connections = 1): Promise<INode> => {
                 const columns = [column('Variable_name'), column('Value')];
                 return connection.writeTextResult(status(connections), columns);
             }
-            if (sql === FAIL) {
-                return connection.writeError({ code: 1213, message: 'Deadlock found' });
-            }
+            if (sql === FAIL) return refuse(1213, 'Deadlock found');
+            if (sql.startsWith('USE ')) return ok(0, SESSION_STATE_CHANGED);
             if (sql === NBE_ON) session.noBackslashEscapes = true;
             if (sql === NBE_OFF) session.noBackslashEscapes = false;
             ok();
@@ -158,6 +174,8 @@ const listen = async (connections = 1): Promise<INode> => {
             if (sql.startsWith('SET ')) return answer(sql);
             got.push({ id, what: 'prepare ' + sql });
             if (mode === 'ignores the prepare') return;
+            if (mode === 'refuses the prepare') return refuse(1064, 'You have an error');
+            if (mode === 'is not ready for the prepare') return refuse(1047, 'WSREP not ready');
             connection.sequenceId = 1;
             connection.writePacket(prepareOk(++seen.statements));
         });
@@ -187,14 +205,17 @@ afterEach(() => jest.restoreAllMocks());
 // a node gets the connection the call before it had. The node listed first reports fewer
 // connections, so a query tries it first. The health check asks on a connection of its own,
 // and no check runs after the one of connect()
-const clusterOf = async (...nodes: INode[]): Promise<any> => {
+const clusterOf = async (...nodes: INode[]): Promise<any> => clusterWith({}, ...nodes);
+// the same, with pool settings of the test on top
+const clusterWith = async (settings: object, ...nodes: INode[]): Promise<any> => {
     const cluster: any = createPoolCluster({
         clusterName: 'test',
         hosts: nodes.map((node, index) => ({ host: '127.0.0.1', port: node.port, id: index + 1 })),
         defaultPoolSettings: {
             user: 'u', password: 'p', database: 'd', flags: [], connectionLimit: 1,
             healthCheck: { interval: LONG, passive: false },
-            idleCheckInterval: LONG, queryTimeout: 2000, resetTimeout: 300
+            idleCheckInterval: LONG, queryTimeout: 2000, resetTimeout: 300,
+            ...settings
         },
         useClusterHashing: false,
         logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }
@@ -220,6 +241,16 @@ const until = async (done: () => boolean) => {
         await new Promise(resolve => setTimeout(resolve, 5));
     }
 };
+// what the call ends with within `ms`, or 'still waiting'
+const within = (ms: number, call: Promise<any>) => Promise.race([
+    settle(call),
+    new Promise(resolve => setTimeout(() => resolve('still waiting'), ms))
+]) as Promise<{ result?: any, error?: any } | 'still waiting'>;
+
+// What unprepare() of mysql2 3.24 sends for one statement: two closes. Its cache calls the
+// eviction handler, which closes, on delete, and unprepare() closes again. The server ignores
+// a close of a statement it does not have, and no close gets a reply
+const closes = (statementId: number) => ['close ' + statementId, 'close ' + statementId];
 
 // the two forms of a call that asks for bound values
 const forms: [string, (cluster: any, values: unknown, options?: object) => Promise<any>][] = [
@@ -265,6 +296,8 @@ describe.each(forms)('%s', (_name, run) => {
         ['an object', { v: 'x' }],
         ['a string', 'x'],
         ['an array that holds undefined', [undefined]],
+        // mysql2 skips a hole in its own check, then fails the execute after the prepare
+        ['an array with a hole', [, 'x']],
         ['an array that holds a function', [() => 'x']]
     ])('rejects values given as %s with a TypeError, and asks no node', async (_kind, values) => {
         const node = await listen();
@@ -291,7 +324,7 @@ describe('execute()', () => {
         await cluster.execute(SELECT, ['y']);
 
         expect(node.app()).toEqual([
-            'prepare ' + SELECT, 'execute ["x"]', FAIL, 'reset', 'close',
+            'prepare ' + SELECT, 'execute ["x"]', FAIL, 'reset', 'close 1',
             'prepare ' + SELECT, 'execute ["y"]'
         ]);
     });
@@ -308,6 +341,90 @@ describe('execute()', () => {
         // the same option on a query() reads and writes it
         await cluster.query(SELECT, ['x'], { redis: true });
         expect([get.mock.calls.length, set.mock.calls.length]).toEqual([1, 1]);
+    });
+
+    it('closes what it prepared before a USE of another database, and prepares again there',
+        async () => {
+            const node = await listen();
+            const cluster = await clusterOf(node);
+
+            await cluster.execute(SELECT, ['x']);
+            await cluster.execute(SELECT, ['y'], { database: 'b' });
+
+            expect(node.app()).toEqual([
+                'prepare ' + SELECT, 'execute ["x"]',
+                ...closes(1), 'USE `b`', 'prepare ' + SELECT, 'execute ["y"]'
+            ]);
+        });
+
+    it('prepares again after a USE of the app, which the header says changed the session',
+        async () => {
+            const node = await listen();
+            const cluster = await clusterOf(node);
+
+            await cluster.execute(SELECT, ['x']);
+            await cluster.query('USE other');
+            await cluster.execute(SELECT, ['y']);
+
+            expect(node.app()).toEqual([
+                'prepare ' + SELECT, 'execute ["x"]', 'USE other',
+                ...closes(1), 'USE `d`', 'prepare ' + SELECT, 'execute ["y"]'
+            ]);
+        });
+
+    it('keeps at most maxPreparedStatements statements on a connection', async () => {
+        const node = await listen();
+        const cluster = await clusterWith({ maxPreparedStatements: 2 }, node);
+
+        for (const n of [1, 2, 3, 1]) await cluster.execute(`SELECT ${n} + ?`, [n]);
+
+        expect(node.app()).toEqual([
+            'prepare SELECT 1 + ?', 'execute [1]',
+            'prepare SELECT 2 + ?', 'execute [2]',
+            ...closes(1), 'prepare SELECT 3 + ?', 'execute [3]',
+            ...closes(2), 'prepare SELECT 1 + ?', 'execute [1]'
+        ]);
+    });
+
+    it('gives the prepare the timeout of the query: it fails, the connection is destroyed',
+        async () => {
+            const node = await listen();
+            const cluster = await clusterOf(node);
+            node.become('ignores the prepare');
+            const closed = node.closed();
+
+            const ended = await within(3000, cluster.execute(SELECT, ['x'], { timeout: 200 }));
+
+            expect(ended).not.toBe('still waiting');
+            const { error } = ended as { error: any };
+            expect([error.code, error.sent, error.nodeId])
+                .toEqual(['PROTOCOL_SEQUENCE_TIMEOUT', true, 1]);
+            await until(() => node.closed() > closed);
+            expect(node.closed()).toBe(closed + 1);
+        });
+
+    it('a prepare the server refuses: sent, no other node, the connection is reset',
+        async () => {
+            const { cluster, n1, n2 } = await twoNodes();
+            n1.become('refuses the prepare');
+
+            const { error } = await settle(cluster.execute(SELECT, ['x'], { maxRetry: 2 }));
+
+            expect([error.errno, error.sent, error.nodeId]).toEqual([1064, true, 1]);
+            await until(() => n1.app().includes('reset'));
+            expect(n1.app()).toEqual(['prepare ' + SELECT, 'reset']);
+            expect(n2.app()).toEqual([]);
+        });
+
+    it('a prepare the node answers with 1047: the next node runs it', async () => {
+        const { cluster, n1, n2 } = await twoNodes();
+        n1.become('is not ready for the prepare');
+
+        const result = await cluster.execute(SELECT, ['x'], { maxRetry: 2 });
+
+        expect(result.affectedRows).toBe(1);
+        expect(n1.app()).toEqual(['prepare ' + SELECT]);
+        expect(n2.app()).toEqual(['prepare ' + SELECT, 'execute ["x"]']);
     });
 
     it('with no values: a prepare and an execute without parameters', async () => {
@@ -390,6 +507,16 @@ describe('a connection whose last header has bit 512, NO_BACKSLASH_ESCAPES', () 
         expect(node.app()).toEqual([NBE_ON]);
     });
 
+    it('learns the bit from the reply to the USE the pool sends', async () => {
+        const node = await listen(1, true);
+        const cluster = await clusterOf(node);
+
+        const { error } = await settle(cluster.query(SELECT, ['x'], { database: 'other' }));
+
+        expect(error.code).toBe('MDC_UNSAFE_SQL_MODE');
+        expect(node.app()).toEqual(['USE `other`']);
+    });
+
     it('lets values through again once a header comes without the bit', async () => {
         const node = await listen();
         const cluster = await clusterOf(node);
@@ -411,6 +538,24 @@ describe('a connection whose last header has bit 512, NO_BACKSLASH_ESCAPES', () 
 
         expect(node.app()).toEqual([NBE_ON, FAIL, 'reset', "SELECT 'x' AS v"]);
     });
+});
+
+describe('Pool.query() called directly', () => {
+    it('with values mysql2 refuses: rejects with sent false and hands the connection back',
+        async () => {
+            const node = await listen();
+            const cluster = await clusterOf(node);
+            const outcome: any = {};
+
+            const call = cluster.pools[0].query(SELECT, { execute: true }, outcome, [undefined]);
+            const ended = await within(3000, call);
+
+            expect(ended).not.toBe('still waiting');
+            expect((ended as { error: any }).error).toBeInstanceOf(TypeError);
+            expect(outcome.sent).toBe(false);
+            expect(node.app()).toEqual([]);
+            expect(stats(cluster, 1)).toMatchObject({ used: 0, idle: 1 });
+        });
 });
 
 describe('named values', () => {
