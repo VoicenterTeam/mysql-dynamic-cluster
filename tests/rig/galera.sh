@@ -76,7 +76,8 @@ cmd_up() {
     exit 1
   fi
   if [ -e "$ENVFILE" ]; then
-    echo "rig: $ENVFILE exists and was not written by the rig, not using it" >&2
+    echo "rig: $ENVFILE exists and was not written by the rig, not using it." \
+      "Delete it, or set MDC_RIG_ENV to another path, to go on" >&2
     exit 1
   fi
   mkdir -p "$STATE" || exit 1
