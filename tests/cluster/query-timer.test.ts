@@ -175,10 +175,16 @@ const until = async (done: () => boolean, what: string): Promise<void> => {
 };
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// What keeps the process alive, by kind. An unref'd timer is not listed. Node 17.3 and later:
-// the typings of Node in this repo are those of Node 16
-const resources = () => (process as unknown as { getActiveResourcesInfo: () => string[] })
-    .getActiveResourcesInfo();
+// What keeps the process alive, by kind. An unref'd timer is not listed. Node 17.3 and later,
+// see docs/testing.md: the typings of Node in this repo are those of Node 16
+const resources = (): string[] => {
+    const info = (process as unknown as { getActiveResourcesInfo?: () => string[] })
+        .getActiveResourcesInfo;
+    if (typeof info !== 'function') {
+        throw new Error('these tests need process.getActiveResourcesInfo(), Node 17.3+');
+    }
+    return info.call(process);
+};
 const timers = () => resources().filter(name => name === 'Timeout').length;
 // Run alone, the file shares its process with jest, whose child processes of the start hold
 // timers for a moment. The counts of the tests begin once they are gone
@@ -340,7 +346,9 @@ describe('a command that runs out of its timeout', () => {
         expect(n2.order()).toEqual([]);
     });
 
-    it('execute(): the timer of the pool covers the prepare, its error is the package\'s',
+    // The prepare under the same timer: execute.test.ts, 'gives the prepare the timeout of the
+    // query'
+    it('execute(): a silent execute fails with the package\'s own error, as in 5.0.0',
         async () => {
             const { cluster, n1, n2 } = await twoNodes();
             n1.become('ignores the statement');
