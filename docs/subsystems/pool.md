@@ -353,6 +353,17 @@ limit. `query()` and `multiStatementQuery()` call it.
   or a timeout, is destroyed as before, and an aborted one too.
 - **A reset keeps the database.** `COM_RESET_CONNECTION` does not change
   the current database of the session, so the state keeps it.
+- **A `USE` of the app.** A statement can change the database itself: a
+  `USE` the app sends through `query()`, or one in a multi-statement. An OK
+  header with bit `0x4000` (session state changed) makes the database of
+  the connection unknown, so the next query sends `USE` first. Only
+  `serverStatus` is read. The bit comes from session tracking, which mysql2
+  asks for and MySQL 8 has on by default. It costs one extra `USE` after
+  each tracked change of the session, and on a server that tracks GTIDs
+  (`session_track_gtids`) after every write. With
+  `session_track_schema=OFF` the pool cannot see such a `USE`: an app must
+  not send `USE` through `query()` there, and should use the `database`
+  option instead.
 - **What a clean query leaves stays.** A user variable or a session
   variable that a statement sets with `SET` answers with a clean header,
   so it stays on the connection for the next query that gets it. Up to 4.x

@@ -18,6 +18,7 @@ interface ISession {
 // status flags of the header of an OK reply
 const IN_TRANSACTION = 1;
 const AUTOCOMMIT = 2;
+const SESSION_STATE_CHANGED = 0x4000;
 
 /**
  * The session of the connections of one pool: which database each is on, and whether it is
@@ -80,13 +81,25 @@ export class SessionState {
      * Apply the dirty rule to the reply of a statement. The connection is dirty after an error
      * reply, since an error reply carries no status flags, or after a header with a
      * transaction open or autocommit off. Every header of a reply of many results counts. A
-     * reply of rows only has no header, and cannot open a transaction while autocommit is on
+     * reply of rows only has no header, and cannot open a transaction while autocommit is on.
+     * A header that says the session state changed makes the database of the connection
+     * unknown, so the next statement sends USE first
      * @param error the error the statement failed with
      * @param result the reply of mysql2
      */
     public observe(connection: object, error?: unknown, result?: unknown): void {
-        if (!error && !SessionState._leavesState(result)) return;
-        this._session(connection).dirty = true;
+        const flags = SessionState._flags(result);
+        const dirty = !!error ||
+            flags.some(status => (status & IN_TRANSACTION) !== 0 || (status & AUTOCOMMIT) === 0);
+        // A statement of the app can change the database itself: a USE it sends through
+        // query(), or one in a multi-statement. The header tells only through session
+        // tracking, which mysql2 asks for and MySQL 8 has on by default. Without it such a
+        // USE goes unseen
+        const changed = flags.some(status => (status & SESSION_STATE_CHANGED) !== 0);
+        if (!dirty && !changed) return;
+        const session = this._session(connection);
+        if (dirty) session.dirty = true;
+        if (changed) session.database = undefined;
     }
 
     /**
@@ -155,19 +168,17 @@ export class SessionState {
     }
 
     /**
-     * Whether a reply leaves a transaction open or autocommit off, by the status flags of its
-     * headers. A server without the flags in its header changes nothing
+     * The status flags of every header of a reply. Rows have none, and neither has the header
+     * of a server that sends no flags
      * @private
      */
-    private static _leavesState(result: unknown): boolean {
+    private static _flags(result: unknown): number[] {
         const parts = Array.isArray(result) ? result : [result];
-        return parts.some(part => {
+        return parts
             // a header is an object of mysql2's class, as its typings say. A row is not, also
             // when it has a column named serverStatus
-            if (part?.constructor?.name !== 'ResultSetHeader') return false;
-            const status = part.serverStatus;
-            if (typeof status !== 'number') return false;
-            return (status & IN_TRANSACTION) !== 0 || (status & AUTOCOMMIT) === 0;
-        });
+            .filter(part => part?.constructor?.name === 'ResultSetHeader')
+            .map(part => part.serverStatus)
+            .filter((status): status is number => typeof status === 'number');
     }
 }

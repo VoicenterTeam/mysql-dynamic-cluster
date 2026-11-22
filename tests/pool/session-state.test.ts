@@ -15,6 +15,8 @@ const COM_RESET_CONNECTION = 0x1f;
 const IN_TRANSACTION = 1;
 const AUTOCOMMIT = 2;
 const MORE_RESULTS = 8;
+// set by a server that tracks the session, as MySQL 8 does by default, after a change of it
+const SESSION_STATE_CHANGED = 0x4000;
 const LONG = 600000;
 // resetTimeout of the pools here
 const RESET = 300;
@@ -57,6 +59,8 @@ const AUTOCOMMIT_OFF = 'SET autocommit = 0';
 // rows, then a header: the reply of a procedure. The first leaves a transaction open
 const CALL_OPEN = 'CALL open_transaction()';
 const CALL_CLEAN = 'CALL read_rows()';
+// a USE the app sends as its own statement
+const APP_USE = 'USE other_db';
 const DEADLOCK = 1213;
 
 // What a node does from the moment a test says so. Until then it answers everything
@@ -99,9 +103,9 @@ const listen = async (connections = 1): Promise<INode> => {
         const session = { inTransaction: false, autocommit: true };
         const flags = () =>
             (session.inTransaction ? IN_TRANSACTION : 0) | (session.autocommit ? AUTOCOMMIT : 0);
-        const ok = () => {
+        const ok = (changed = 0) => {
             connection.sequenceId = 1;
-            connection.writeOk({ serverStatus: flags() });
+            connection.writeOk({ serverStatus: flags() | changed });
         };
         const refuse = (code: number, message: string) => {
             connection.sequenceId = 1;
@@ -143,8 +147,10 @@ const listen = async (connections = 1): Promise<INode> => {
                 const columns = [column('Variable_name'), column('Value')];
                 return connection.writeTextResult(status(connections), columns);
             }
-            if (sql.startsWith('USE ') && mode === 'refuses USE') {
-                return refuse(1049, 'Unknown database');
+            if (sql.startsWith('USE ')) {
+                if (mode === 'refuses USE') return refuse(1049, 'Unknown database');
+                // the schema is tracked: the header says the session changed
+                return ok(SESSION_STATE_CHANGED);
             }
             if (sql === ROWS) return connection.writeTextResult([{ a: '1' }], [column('a')]);
             if (sql === FAIL) return refuse(DEADLOCK, 'Deadlock found when trying to get lock');
@@ -286,6 +292,25 @@ describe('a query on another database', () => {
         expect([error.errno, error.sent]).toEqual([1049, false]);
         // the server kept the database of the pool, so the next query sends no USE
         expect(node.app()).toEqual(['USE `nope`', 'reset', CLEAN]);
+    });
+});
+
+describe('a statement of the app that changes the session', () => {
+    // as a USE the app sends through query() does on a server that tracks the schema
+    it.each([
+        ['a header that says the session changed: the next query sends USE', APP_USE,
+            [APP_USE, 'USE `d`', CLEAN]],
+        ['a header that does not: no USE', CLEAN, [CLEAN, CLEAN]]
+    ])('%s', async (_what, sql, sent) => {
+        const node = await listen();
+        const cluster = await clusterOf([node]);
+
+        const { result } = await call(cluster, sql);
+        await call(cluster, CLEAN);
+
+        expect(node.app()).toEqual(sent);
+        // no reset: the session is not dirty, only its database is not known
+        expect(result.serverStatus & IN_TRANSACTION).toBe(0);
     });
 });
 
