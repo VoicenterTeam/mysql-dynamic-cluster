@@ -504,8 +504,8 @@ export class Pool {
                 }
                 // a broken connection can't roll back; destroying it makes the server discard the transaction
                 if (rollback && !isBroken(error)) {
-                    const rollback = { sql: 'ROLLBACK', timeout: queryOptions.timeout };
-                    conn.query(rollback, (errorR, resultR) => {
+                    const rollbackQuery = { sql: 'ROLLBACK', timeout: queryOptions.timeout };
+                    conn.query(rollbackQuery, (errorR, resultR) => {
                         if (errorR) {
                             Logger.error("Rollback failed in pool by host " + this.host + ": " + errorR.message);
                             // the connection may have been lost under the rollback
