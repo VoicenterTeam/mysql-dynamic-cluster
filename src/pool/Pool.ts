@@ -21,6 +21,7 @@ import { flagsForServer, IServerGreeting, IServerProbe, probeServer } from './Se
 import { SessionState } from './SessionState';
 import { Borrow } from './Borrow';
 import { abortReason, isBroken, timeoutError, whenAborted } from '../utils/Abort';
+import { LONGEST_TIMER } from '../configs/schema';
 
 // What the cluster and the health check hand Pool.query() beside the options of the app. In
 // no type of the package's public interface
@@ -397,7 +398,11 @@ export class Pool {
             // sends USE for another database and DO 0 when the guard below needs the sql_mode.
             // An abort meanwhile is the borrow's as well
             const asked: IAbortOutcome = {};
-            const { database, timeout, execute } = queryOptions;
+            const { database, execute } = queryOptions;
+            // a longer wait would make the timers of mysql2 and of the bound statement fire
+            // after 1 ms, and destroy the connection
+            const timeout = queryOptions.timeout > LONGEST_TIMER
+                ? LONGEST_TIMER : queryOptions.timeout;
             const target = { database, timeout, valuesInText: valuesInText && !execute };
             this._borrow.take({ signal, target, probe }, asked).then(conn => {
                 held = conn;

@@ -219,6 +219,16 @@ describe('settings validation', () => {
         expect(lines).toContain(`  → at ${wrongPath}`);
     });
 
+    it('bounds queryTimeout by the longest wait of a timer of Node, 2147483647 ms', () => {
+        const longest = 2147483647;
+        expect(parseSettings({ defaultPoolSettings: { queryTimeout: longest } })
+            .defaultPoolSettings.queryTimeout).toBe(longest);
+        expect(() => parseSettings({ defaultPoolSettings: { queryTimeout: longest + 1 } }))
+            .toThrow();
+        expect(() => parseSettings({ hosts: [{ host: 'a', queryTimeout: longest + 1 }] }))
+            .toThrow();
+    });
+
     it('lists every problem in one error', () => {
         const message = errorOf({ ...base(), errorRetryCount: 'abc', bogusKey: 1 });
         expect(message).toContain('→ at errorRetryCount');

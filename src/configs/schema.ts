@@ -31,7 +31,7 @@ const timerCheckRange = z.strictObject({
 }).partial();
 
 // The longest wait a timer of Node takes, in ms. A longer one would fire after 1 ms
-const LONGEST_TIMER = 2147483647;
+export const LONGEST_TIMER = 2147483647;
 // A wait before the next check, in ms. Node turns a wait below 1 ms into 1 ms, and a wait
 // of a few ms would ask a node hundreds of times a second, each time with a login
 const waitMs = z.number().min(100).max(LONGEST_TIMER);
@@ -76,8 +76,8 @@ const poolFields = {
     timerCheckMultiplier: z.number(),
     // a node that has it is checked by its rules, and ignores the two keys above
     healthCheck,
-    // time in ms
-    queryTimeout: z.number(),
+    // time in ms. 0 means none
+    queryTimeout: z.number().max(LONGEST_TIMER),
     // time in ms a reset of a dirty connection may take before the connection is destroyed.
     // A reset always has a limit: the server may never answer it
     resetTimeout: limitMs,

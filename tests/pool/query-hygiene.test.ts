@@ -121,6 +121,16 @@ describe('Pool.query connection hygiene', () => {
         expect(conn.changeUser).not.toHaveBeenCalled();
     });
 
+    it('a timeout above the longest wait of a timer is 2147483647 ms, for the USE and the ' +
+        'statement', async () => {
+        const conn = makeConn({ rows: [] });
+
+        await makePool(null, conn).query('SELECT 1', { timeout: 2147483648, database: 'h' });
+
+        expect(conn.query.mock.calls.map(([options]) => [options.sql, options.timeout]))
+            .toEqual([['USE `h`', 2147483647], ['SELECT 1', 2147483647]]);
+    });
+
     it('a database option left undefined is the one of the pool: no USE', async () => {
         const conn = makeConn({ rows: [{ a: 1 }] });
         await makePool(null, conn).query('SELECT 1', { database: undefined });
