@@ -18,7 +18,7 @@ import { IRedisData } from "../types/RedisInterfaces";
 import { IdleConnectionReaper, IIdlePing } from './IdleConnectionReaper';
 import { CheckConnection } from './CheckConnection';
 import { flagsForServer, IServerGreeting, IServerProbe, probeServer } from './ServerFlags';
-import { SessionState } from './SessionState';
+import { Reply, SessionState } from './SessionState';
 import { Borrow } from './Borrow';
 import { abortReason, isBroken, timeoutError, whenAborted } from '../utils/Abort';
 import { LONGEST_TIMER } from '../configs/schema';
@@ -447,10 +447,10 @@ export class Pool {
                     // covers its prepare too
                     if (bound) {
                         this._session.executed(conn, sql);
-                        const ask = (sent: any) => conn.execute({ sql, values }, sent);
+                        const ask = (sent: Reply) => conn.execute({ sql, values }, sent);
                         this._session.send(conn, timeout, ask, onReply, Pool._boundTimedOut);
                     } else {
-                        const ask = (sent: any) => conn.query({ sql }, sent);
+                        const ask = (sent: Reply) => conn.query({ sql }, sent);
                         this._session.send(conn, timeout, ask, onReply);
                     }
                 } catch (thrown) {
@@ -487,8 +487,8 @@ export class Pool {
             queryTimer.start();
             const results: T[] = [];
             // every command of the transaction within the timeout, see SessionState.send()
-            const send = (conn: PoolConnection, sql: string, reply: (...r: any[]) => void) => {
-                const ask = (sent: any) => conn.query({ sql }, sent);
+            const send = (conn: PoolConnection, sql: string, reply: Reply) => {
+                const ask = (sent: Reply) => conn.query({ sql }, sent);
                 this._session.send(conn, queryOptions.timeout, ask, reply);
             };
 

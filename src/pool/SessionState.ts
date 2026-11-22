@@ -35,7 +35,7 @@ interface ISession {
 }
 
 // The callback of a command of the pool, see send()
-type Reply = (error: any, result?: any) => void;
+export type Reply = (error: any, result?: any) => void;
 
 // status flags of the header of an OK reply
 const IN_TRANSACTION = 1;
@@ -141,12 +141,12 @@ export class SessionState {
      * `reply` gets the error of `timedOut`, whose code isBroken() reads: the caller destroys the
      * connection. A reply of mysql2 after that is not passed on
      * @param timeout 0 or undefined: no limit
-     * @param send hands the callback to mysql2, through query() or execute()
+     * @param ask hands the callback to mysql2, through query() or execute()
      * @param reply gets the reply of mysql2 or the timeout, once at most
      * @param timedOut the error of the timeout. Left out, the one of mysql2's own timeout
      */
     public send(
-        connection: mysql.PoolConnection, timeout: number | undefined, send: (sent: Reply) => void,
+        connection: mysql.PoolConnection, timeout: number | undefined, ask: (sent: Reply) => void,
         reply: Reply, timedOut: () => Error = SessionState._inactivity
     ): void {
         const session = this._session(connection);
@@ -169,7 +169,7 @@ export class SessionState {
             session.command = timer;
         }
         try {
-            send(answer);
+            ask(answer);
         } catch (thrown) {
             // nothing was sent, and no reply comes: the caller has the throw
             stop();
@@ -302,6 +302,7 @@ export class SessionState {
         // The time limit of a command still out ends with the connection. First, so a throw
         // of the destroy cannot leave the timer
         clearTimeout(session.command);
+        session.command = undefined;
         drop(connection, error);
     }
 
