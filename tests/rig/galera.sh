@@ -21,7 +21,7 @@ DB_USER=mdc
 DB_NAME=mdc
 
 node_sql() { # node_sql <n> <sql>: the sql as root inside node n, the password not in argv
-  docker exec -e MYSQL_PWD="$ROOT_PW" "$NAME-$1" mysql -uroot -N -B -e "$2" 2> /dev/null
+  MYSQL_PWD="$ROOT_PW" docker exec -e MYSQL_PWD "$NAME-$1" mysql -uroot -N -B -e "$2" 2> /dev/null
 }
 
 wsrep() { # wsrep <n> <variable>
@@ -69,7 +69,12 @@ node_up() { docker exec "$NAME-$1" true > /dev/null 2>&1 && node_sql "$1" 'SELEC
 cmd_up() {
   cmd_down > /dev/null 2>&1
   umask 077
+  if [ -e "$STATE" ] && [ ! -f "$STATE/.mdc-rig" ]; then
+    echo "rig: $STATE exists and is not a rig state dir, not using it" >&2
+    exit 1
+  fi
   mkdir -p "$STATE" || exit 1
+  : > "$STATE/.mdc-rig"
   ROOT_PW=$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')
   APP_PW=$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')
   docker network create "$NET" > /dev/null || { echo "rig: no network" >&2; exit 1; }
@@ -102,7 +107,11 @@ cmd_down() {
     [ -f "$STATE/node$n.pid" ] && kill "$(cat "$STATE/node$n.pid")" 2> /dev/null
   done
   docker network rm "$NET" > /dev/null 2>&1
-  rm -rf "$STATE"
+  if [ -f "$STATE/.mdc-rig" ]; then
+    rm -rf "$STATE"
+  elif [ -e "$STATE" ]; then
+    echo "rig: $STATE is not a rig state dir (no .mdc-rig), left alone" >&2
+  fi
   [ "$ENVFILE" = "$STATE/rig.env" ] || rm -f "$ENVFILE"
   return 0
 }

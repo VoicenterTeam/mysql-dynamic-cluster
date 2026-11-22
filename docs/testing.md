@@ -104,7 +104,7 @@ bash tests/rig/galera.sh status   # one line per node
 ```
 
 - `up` returns when each node reports `wsrep_cluster_size = 3`, `wsrep_cluster_status = Primary` and `wsrep_local_state_comment = Synced`. After `MDC_RIG_TIMEOUT` seconds (default 240) it names the node that is not ready, prints the tail of its log and exits 1.
-- Each node is published on a random port of 127.0.0.1 only, on the user-defined network `mdc-rig-net`. The passwords are generated at every `up` and stay in the state dir (mode 700, under `${TMPDIR:-/tmp}`), which `down` removes.
+- Each node is published on a random port of 127.0.0.1 only, on the user-defined network `mdc-rig-net`. The passwords are generated at every `up` and stay in the state dir (mode 700, under `${TMPDIR:-/tmp}`), which `down` removes. `down` and `up` leave a `MDC_RIG_STATE` directory alone unless it holds the marker file `.mdc-rig` that `up` writes.
 - The env file (`MDC_GALERA_HOST`, `MDC_GALERA_PORT1`..`3`, `MDC_GALERA_USER`, `MDC_GALERA_PASSWORD`, `MDC_GALERA_DATABASE`) is `${TMPDIR:-/tmp}/mdc-rig-state/rig.env`. The suites read it. Set `MDC_RIG_ENV` to move it, for `up` and the jest run alike.
 - Without `MDC_TEST_GALERA` the suites under `tests/galera` are skipped, so `npm test` needs no docker.
 - Other settings: `MDC_RIG_IMAGE`, `MDC_RIG_NAME` (prefix of the containers and the network, default `mdc-rig`), `MDC_RIG_STATE`.
