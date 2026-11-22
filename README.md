@@ -443,6 +443,14 @@ General pool settings which inherited by [user pool settings](#user-pool-setting
             <td>120 000</td>
         </tr>
         <tr>
+            <td>resetTimeout</td>
+            <td>Time in ms the reset of a dirty connection may take before the connection is destroyed. 1 or more</td>
+            <td>false</td>
+            <td>number</td>
+            <td>-</td>
+            <td>1000</td>
+        </tr>
+        <tr>
             <td>validators</td>
             <td>Validator params to check if pool is valid (pool status) and ready for work</td>
             <td>false</td>

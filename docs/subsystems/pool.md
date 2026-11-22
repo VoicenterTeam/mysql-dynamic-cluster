@@ -193,18 +193,20 @@ The `Promise` callback chain is, in order
    unexpectedly closed."`. With the `signal` query option, an abort from
    the arrival of the connection on destroys it, see
    [cluster.md](./cluster.md#the-signal-option).
-2. `conn.changeUser({ database: queryOptions.database }, ...)` — swaps
-   the database on the borrowed connection so the same `Pool` can serve
-   queries against multiple databases.
-   It runs through `Pool._changeUser`, which adds a `queryOptions.timeout`
-   timer (mysql2 ignores `changeUser`'s own timeout option). The query is
-   only sent from its success callback.
+2. `_session.prepare(conn, database, timeout, ...)` — gets the session
+   ready, see [The session of a connection](#the-session-of-a-connection):
+   a reset when the connection is dirty, then `USE` when it is on another
+   database. Most of the time it sends nothing. No change of user is sent,
+   since 5.0.0. The statement is only sent from its success callback. A
+   failed or timed-out reset or `USE` rejects with `sent: false`.
 3. `conn.query({ sql, timeout: queryOptions.timeout }, ...)` — runs the
-   SQL. On success the connection is `release()`d. On error it goes
-   through `fail()`, which settles once and hands the connection back
-   once: `destroy()` after a fatal error (a failed `changeUser` is always
-   fatal) or `PROTOCOL_SEQUENCE_TIMEOUT` (the statement is still running
-   on the server), `release()` after a plain SQL error.
+   SQL. `_session.observe()` applies the dirty rule to the reply. On
+   success the connection goes back through `_session.release()`: a clean
+   one at once, a dirty one after a reset. On error it goes through
+   `fail()`, which settles once and hands the connection back once:
+   `destroy()` after a fatal error or `PROTOCOL_SEQUENCE_TIMEOUT` (the
+   statement is still running on the server), `_session.release()` after a
+   plain SQL error, which resets it first.
 4. On success: stops the `QueryTimer`, records the attempt as
    `mysql_dynamic_cluster.operation.duration`, logs a slow-query
    warning if `queryTimer.get() >= _slowQueryTime`
@@ -281,7 +283,11 @@ omitted — this method does not cache:
 
 1. `_pool.getConnection(...)` — same guards as `query()`. Reject on
    error or missing `conn`.
-2. `conn.changeUser({ database }, ...)` — same database swap.
+2. `_session.prepare(conn, database, timeout, ...)` — the same reset of a
+   dirty connection and `USE` as in `query()`. It is the only part of the
+   session state `multiStatementQuery()` uses: the dirty rule does not
+   look at its replies, since the transaction ends with its own `COMMIT`
+   or `ROLLBACK`. After either, the connection goes back with no reset.
 3. `START TRANSACTION` (sent with `queryOptions.timeout`) — open a transaction. On error,
    `conn.release()` and reject.
 4. Run the statements one after another: each `conn.query` starts from
@@ -302,6 +308,68 @@ error or `PROTOCOL_SEQUENCE_TIMEOUT` the connection is destroyed instead
 transaction). Before 3.2.2 the statements were fired from a `forEach`
 and committed before any of them ran — see
 [../known-issues.md#2-poolmultistatementquery-commits-before-queries-finish](../known-issues.md#2-poolmultistatementquery-commits-before-queries-finish).
+
+## The session of a connection
+
+[src/pool/SessionState.ts](../../src/pool/SessionState.ts). Since 5.0.0.
+Up to 4.x every query and every transaction sent a change of user
+(`COM_CHANGE_USER`) first, to switch the database. That was two commands
+per query, a reset of the whole session each time, and on a Galera node
+outside the primary component a change of user gets no answer, so the
+query waited for its whole timeout instead of failing with 1047 at once.
+
+`SessionState` keeps two things per connection, in a `WeakMap`: the
+database the session is on, and whether it is dirty. It is the one place
+for the switch of database, the dirty rule and the reset with its time
+limit. `query()` and `multiStatementQuery()` call it.
+
+- **A connection seen for the first time** is on the `database` of the
+  pool, the one mysql2 logged it in with, and clean.
+- **`USE` only for another database.** The statement on the database the
+  connection is on is one command. For another one, `USE` with the name
+  escaped by mysql2's `escapeId` goes first, as a query with the timeout
+  of the query, so no timer of the package is left. A `USE` that fails or
+  times out rejects with `sent: false`, and the next node may be tried. A
+  timed-out one destroys the connection, as a timed-out statement does.
+- **Dirty**, until the next reset: after an error reply on a connection
+  that is still alive, since an error reply carries no status flags, or
+  after an OK header with bit 1 (a transaction is open) set or bit 2
+  (autocommit) clear. Every header of a reply of many results counts, such
+  as the last one of a `CALL`. A reply of rows only has no header and
+  changes nothing: it cannot open a transaction while autocommit is on. A
+  header is told apart from a row by its class, `ResultSetHeader`, so a
+  row with a column named `serverStatus` is not read as one. A header
+  without `serverStatus`, from a server that sends no status flags,
+  changes nothing.
+- **Release.** A clean connection goes back to the pool with no command. A
+  dirty one gets `connection.reset()` (`COM_RESET_CONNECTION`) first and
+  goes back clean, so the next caller never gets a transaction or session
+  variables the last one left. A reset that fails or does not answer
+  within `resetTimeout` (1000 ms by default) destroys the connection with
+  its socket (`drop()` of [ServerFlags.ts](../../src/pool/ServerFlags.ts)),
+  logged at `warn`. mysql2 has no time limit for a reset, and a Galera
+  node outside the primary component never answers one. The slot of the
+  pool is free again either way. A broken connection, after a fatal error
+  or a timeout, is destroyed as before, and an aborted one too.
+- **A reset keeps the database.** `COM_RESET_CONNECTION` does not change
+  the current database of the session, so the state keeps it.
+- **What a clean query leaves stays.** A user variable or a session
+  variable that a statement sets with `SET` answers with a clean header,
+  so it stays on the connection for the next query that gets it. Up to 4.x
+  the change of user cleared it.
+- **A connection the app had.** `GaleraCluster.getConnection()` calls
+  `pool.lend(connection)`. The pool sees neither the `USE` nor the
+  transaction the app sends on it, so it marks the connection dirty and
+  on no known database. When a query or a transaction of the cluster gets
+  it after its `release()`, `prepare()` resets it first and then sends
+  `USE`: one reset and one `USE`, once. A reset that fails there or runs
+  out of time destroys the connection and rejects with `sent: false`, so
+  the next node may be tried.
+- **The health check of a node without a `healthCheck` block** runs
+  through `query()` on the database of the pool: no `USE`, and the same
+  dirty rule and reset. The check connection of a node with the block is
+  not part of this: it still sends a change of user before its status
+  query, see [The check connection](#the-check-connection).
 
 ## The check connection
 
@@ -337,8 +405,8 @@ away from the app. The rules of the check are in
   node with the block it holds no connection unless a query of the app
   opened one.
 - **`checkQuery(sql)`** sends one query of a check: a change of user to
-  the database of the node first, as `query()` does, then the query, with
-  no `timeout` of mysql2. It opens a connection when the node holds none
+  the database of the node first, which `query()` no longer does since
+  5.0.0, then the query, with no `timeout` of mysql2. It opens a connection when the node holds none
   and waits for the server to take the login before it sends anything, so
   a login the server refuses arrives as mysql2 made it, not `fatal`. It
   tells nothing to passive health. It rejects with the error of mysql2, or
@@ -531,12 +599,17 @@ not move. `GaleraCluster` calls them for the node API of
 [../node-api.md](../node-api.md). `_pool` stays private.
 
 - `getConnection(signal?, outcome?)` takes one connection from the mysql2
-  pool and resolves with it as it is. It does not change the database, sets
+  pool and resolves with it as it is. `query()` takes its connection here
+  too. It does not change the database, sets
   no timeout and records no metric. It rejects with the error object of
   mysql2, or with `POOL_NOT_CONNECTED` before `connect()` created the mysql2
   pool. An error of mysql2 is told to [passive health](#passive-health)
   first. Without a signal it does what it did before. With one, see
   [A signal on getConnection](#a-signal-on-getconnection).
+- `lend(connection)`, since 5.0.0, tells the pool that the app has the
+  connection. `GaleraCluster.getConnection()` calls it, not
+  `getConnection()` of the pool. See
+  [The session of a connection](#the-session-of-a-connection).
 - `failWaiting(error)` empties `_connectionQueue` of the mysql2 pool, then
   calls every callback it took out with `error`, and returns how many. The
   queue is emptied first, so a callback that asks for a connection again is
@@ -633,7 +706,8 @@ an error ended the call.
 The errors `Pool` makes with a code of its own are marked with
 `PoolStatus.ownError()`, so a health check that fails with one reports an
 empty `checkError`: the `POOL_NOT_CONNECTED` error of `_notConnected()` and
-the `PROTOCOL_SEQUENCE_TIMEOUT` error of the timer in `_changeUser`.
+the `PROTOCOL_SEQUENCE_TIMEOUT` error of the time limit of a reset in
+`SessionState`.
 `failWaiting(error)` marks the error of the app the same way. The mark
 changes nothing on the error object, and `query()`, `getConnection()` and
 the waiting requests reject with it as before.
@@ -654,6 +728,7 @@ the waiting requests reject with it as before.
 | `multiStatementQuery<T>(sqls, options)` | `async => Promise<T[]>` | [:347](../../src/pool/Pool.ts#L347) |
 | `getConnection(signal?, outcome?)` | `(signal?: AbortSignal, outcome?: IAbortOutcome) => Promise<PoolConnection>` | [`getConnection`](../../src/pool/Pool.ts) |
 | `Pool.abortReason(signal)` | `static (signal: AbortSignal) => unknown` | [`abortReason`](../../src/pool/Pool.ts) |
+| `lend(connection)` | `(connection: PoolConnection) => void` | [`lend`](../../src/pool/Pool.ts) |
 | `failWaiting(error)` | `(error: Error) => number` | [`failWaiting`](../../src/pool/Pool.ts) |
 | `stats()` | `() => { used, idle, pending }` | [`stats`](../../src/pool/Pool.ts) |
 | `checkError` | getter returning `INodeCheckError \| undefined` | [`checkError`](../../src/pool/Pool.ts) |

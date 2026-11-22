@@ -282,9 +282,9 @@ The cluster does nothing to the connection before it hands it over, and nothing 
 
 - No timeout. A statement you send has the timeout you give it, or none. `queryTimeout` of
   the settings is not applied.
-- No database change. The cluster's own queries switch the database before every statement.
-  This connection is on whatever database its last user left it on. Send `USE`, or put the
-  database in front of the table name.
+- No database change. This connection is on whatever database its last user left it on.
+  Send `USE`, or put the database in front of the table name. Since 5.0.0 the cluster's own
+  queries send `USE` only when a connection is on another database than the one they need.
 - No metric. Nothing you run on it shows in `mysql_dynamic_cluster.query.duration` or
   `mysql_dynamic_cluster.operation.duration`. The connection itself counts as `used` in
   `mysql_dynamic_cluster.connection.count` while you hold it.
@@ -338,10 +338,13 @@ of the pool: user variables, session settings, temporary tables, an open transac
 locks, the current database. The next user can be another `getConnection()` caller, or one of
 the cluster's own queries.
 
-The cluster's own queries start with a change-user command, which is how they switch the
-database, and a MySQL server resets the session when it gets that command. Do not rely on it.
-An open transaction keeps its locks until that command arrives, which can be much later on a
-quiet pool. And another `getConnection()` caller gets the connection with no reset at all.
+Since 5.0.0 a query or a transaction of the cluster that gets a connection after an app had
+it resets it first and selects its database again: one reset and one `USE`, once, bounded by
+`resetTimeout`. A reset that fails or runs out of time destroys the connection, and the query
+goes to the next node as one that was not sent. Do not rely on it. An open transaction keeps
+its locks until that reset arrives, which can be much later on a quiet pool. And another
+`getConnection()` caller gets the connection with no reset at all. Up to 4.x the cluster's
+own queries sent a change-user command before every statement instead.
 
 `connection.reset()` of mysql2 sends the reset command of the server. mysql2 states it needs
 MySQL 5.7.3 or later.
@@ -541,7 +544,7 @@ and of no other check. It does not change later. For the state of a node now, re
 
 | What ran out | `checkError` | Made by |
 | --- | --- | --- |
-| The timer of the check itself, `min(queryTimeout, timerCheckRange.end)`, 15 s with the defaults, or `healthCheck.timeout` for a node with a `healthCheck` block. It ends a check that waits for a free connection, for the change of database or for the answer to the status query. It also ends a check that waits for a new connection when that timer is shorter than 10 s. A check of a node with a `healthCheck` block waits for no free connection: it asks on a connection of its own, and drops that connection when this timer ends it. | `{}` | the package |
+| The timer of the check itself, `min(queryTimeout, timerCheckRange.end)`, 15 s with the defaults, or `healthCheck.timeout` for a node with a `healthCheck` block. It ends a check that waits for a free connection, for a reset of a dirty connection or for the answer to the status query. It also ends a check that waits for a new connection when that timer is shorter than 10 s. A check of a node with a `healthCheck` block waits for no free connection: it asks on a connection of its own, and drops that connection when this timer ends it. | `{}` | the package |
 | The connect timeout of mysql2, 10 s. A new connection got no greeting, or no answer to its login. It ends the check when the timer of the check is longer than 10 s, as with the defaults. | `{ code: 'ETIMEDOUT' }`, with no `errno` | mysql2 |
 | A connect timeout of the operating system. | `{ code: 'ETIMEDOUT', errno: -110 }`. The number depends on the platform. | the socket |
 | A timeout of the server, or of a proxy in between, that closes the connection while the check uses it. | `{ code: 'PROTOCOL_CONNECTION_LOST' }` | mysql2 |

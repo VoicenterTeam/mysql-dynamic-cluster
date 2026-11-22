@@ -41,11 +41,13 @@ the cluster is created.
 | A check that throws after its answer came | The node is already set to what the validators said | A failed check. A pass it held does not count, a no does |
 | `timerCheckRange` and `timerCheckMultiplier` | Used | Ignored. One `warn` per node when the app wrote one of them |
 
-What a check asks and what it does with the answer is the same in both: a
-change of user and one `SHOW GLOBAL STATUS`, the validators, the load
-factors, `checkError`, the `pool_check_failed` event and the metrics. Where
-it asks, the rule that moves `isValid` and the wait before the next check
-differ. `PoolStatus` keeps the block as
+What a check does with the answer is the same in both: one `SHOW GLOBAL
+STATUS`, the validators, the load factors, `checkError`, the
+`pool_check_failed` event and the metrics. What goes ahead of the status
+query differs: the check connection sends a change of user first, and the
+legacy check, which asks through the pool, sends none since 5.0.0. Where it
+asks, the rule that moves `isValid` and the wait before the next check
+differ too. `PoolStatus` keeps the block as
 `_healthCheck`. The constructor takes the timeout and `fall` from it,
 `startTimerCheck()` resets the runs for it, `checkStatus()` applies its rules
 and `nextCheckStatus()` waits its `interval`, or its `authRetryInterval`
@@ -185,7 +187,7 @@ leave the same way.
   the checks, and `disconnect()` logs out of it. It counts against
   `max_connections` of the server, next to the connections of the pool.
 - **Every check is still a login.** The check sends a change of user ahead
-  of its status query, as every query of the package does. A server that
+  of its status query, as every query of the package did up to 4.x. A server that
   refuses the account refuses every check, on the connection the node
   holds as on a new one. So the refusal list, `authRetryInterval`, the slow
   pace and `checkError` mean what they meant.
@@ -312,7 +314,7 @@ the last two those of the
   | Where the server refused | What mysql2 3.24.6 hands out |
   | --- | --- |
   | At the login of a new connection, when the node held no check connection | The error packet with `errno`, `code` and `sqlState`, and no `fatal` |
-  | At the change of user on the connection the node holds. Every query of the package sends one first, the check included | The same error with `fatal: true`. mysql2 marks every error of a change of user as fatal. The connection is dropped, so the next check logs in on a new one |
+  | At the change of user on the connection the node holds, which the check sends first. The queries of the app send none since 5.0.0 | The same error with `fatal: true`. mysql2 marks every error of a change of user as fatal. The connection is dropped, so the next check logs in on a new one |
   | As the answer to the status query. The check does not ask where an errno came from | The error packet, and no `fatal` |
 
 - **A failure the package made is never a refusal.** Its `checkError` is
@@ -549,7 +551,7 @@ The code alone does not decide the kind. The place does too:
 | Where the error came | `ECONNREFUSED` | `EHOSTUNREACH`, `ENETUNREACH` | `ETIMEDOUT` | A code of the lost kind |
 | --- | --- | --- | --- | --- |
 | In place of a connection, while mysql2 opened a new one for the call | Refused: the node goes down, and a check starts | No route: a check starts and decides | Not there in time: a check starts and decides | Lost: a check starts and decides |
-| On a connection the pool had handed to the call: at the change of user, under a query, at `COMMIT` or at `ROLLBACK` | Lost: a check starts and decides | Lost: a check starts and decides | Lost: a check starts and decides | Lost: a check starts and decides |
+| On a connection the pool had handed to the call: at its reset or its `USE`, under a query, at `COMMIT` or at `ROLLBACK` | Lost: a check starts and decides | Lost: a check starts and decides | Lost: a check starts and decides | Lost: a check starts and decides |
 
 So an `ETIMEDOUT` of a socket under a running query is a lost connection,
 and so is a new connection that the server resets during its login. A node
@@ -656,9 +658,13 @@ connection a query meets before that fails one attempt with
 `ECONNRESET`, as in 4.6.0 and as with `passive: false`. No node goes down
 for it: the first loss starts a check, which passes, and the losses after
 it in the same `interval` are kept for the check of the timer, which
-passes too. The reset comes on the change of user, before the statement
-went out, so `cluster.query()` sends the query to the next node, where it
-can meet one more of them. What an app behind such a path sets
+passes too. Since 5.0.0 the reset comes on the statement itself, since the
+pool sends no change of user ahead of it. The statement went out, so
+`cluster.query()` does not send the query to the next node: it may have run.
+Up to 4.x the reset came on the change of user, with the statement not sent,
+and the next node got the query. The probe of an idle connection before it
+is lent (#93) finds such a connection before the statement again. What an
+app behind such a path sets
 is in [A quiet app behind a path with an idle
 timeout](#a-quiet-app-behind-a-path-with-an-idle-timeout).
 
@@ -723,11 +729,12 @@ it on and counts it as use.
 - **Behind a path with a shorter idle timeout the defaults still fail.**
   The path forgets the connection before the first ping. The first query
   after the pause is rejected with `ECONNRESET`, on every node whose
-  pooled connection the path forgot. The reset comes on the change of
-  user, before the statement went out, so `cluster.query()` sends it to
-  the next node, where it can meet the same, and rejects when it failed
-  on all of them. No node goes down: the check that starts passes. Set
-  `idleCheckInterval` below the idle timeout of the path there.
+  pooled connection the path forgot. Since 5.0.0 the reset comes on the
+  statement, which went out, so `cluster.query()` rejects without trying
+  the next node: the statement may have run. Up to 4.x it came on the
+  change of user, and the next node got the query. No node goes down: the
+  check that starts passes. Set `idleCheckInterval` below the idle timeout
+  of the path there.
 - **A ping that fails closes its connection.** When the path forgot a
   connection before its ping, the path answers that ping with a reset. The
   connection is destroyed and leaves the pool, so the app does not draw
@@ -1104,13 +1111,13 @@ after any pass, and the next failed check is the first of `fall`.
 | A syntax or constraint error | The query is wrong on every node |
 | A name that does not resolve, `ENOTFOUND`. A resolver that does not answer, `EAI_AGAIN` | A name lookup is shared by every node the app addresses by name. A resolver that fails for a moment says nothing about one node, and the connections the pools hold keep working. Not counted at either place |
 | `EADDRNOTAVAIL`, `ECONNABORTED`, `EHOSTDOWN`, `ENETDOWN` | Not among the codes above. The set is closed: a code of the network that is not named there changes nothing |
-| A refused login: 1045 and the rest of the [refusal list](#a-login-or-account-refusal) | The node answered. mysql2 marks it `fatal` when it comes at the change of user that every query sends first, so `fatal` alone decides nothing. The next check gets the same answer and applies its own rule |
+| A refused login: 1045 and the rest of the [refusal list](#a-login-or-account-refusal) | The node answered. mysql2 marks it `fatal` when it comes at a change of user, which up to 4.x every query sent first, so `fatal` alone decides nothing. The next check gets the same answer and applies its own rule |
 | Too many connections, 1040. An account at its limit, 1226. A node that is not ready, 1047 | The node answered. The check and the validators decide. For 1040 that means the node stays up: the check passes on the connection it holds, and only a check that has to open a connection sees 1040. See below |
 | The query timeout of mysql2, `PROTOCOL_SEQUENCE_TIMEOUT` | The app stopped waiting. A slow query is not a dead node, and the error is not `fatal` |
 | `HANDSHAKE_NO_SSL_SUPPORT`, `HANDSHAKE_SSL_ERROR`, `AUTH_SWITCH_PLUGIN_ERROR`, `PROTOCOL_ERROR` | `fatal` in mysql2, but about the settings of the connection or one packet. A check that runs into the same error counts it toward `fall` |
 | `Can't add new command when connection is in closed state` | `fatal`, with no code. The connection was closed on this side |
 | `Pool is closed.`, `Queue limit reached.`, `No connections available.` | The pool of mysql2 said no, not the node |
-| `POOL_NOT_CONNECTED`, the timeout of the package around the change of database, an error passed to `failWaiting()` | The package or the app made it, whatever `code` and `fatal` it carries |
+| `POOL_NOT_CONNECTED`, the time limit of the package around a reset (`resetTimeout`), an error passed to `failWaiting()` | The package or the app made it, whatever `code` and `fatal` it carries |
 | The abort of a `getConnection()` | The app gave the call up, whatever the reason of the signal reads like. A connection that then cannot be opened still counts, as the attempt was made |
 | An error on a connection the app took with `getConnection()` | The app owns that connection. The package does not see what it runs into |
 
@@ -1525,7 +1532,7 @@ value is an empty object in these cases:
 - The check ran into its own timer. That error has no code.
 - The error was marked with `PoolStatus.ownError(error)`. `Pool` marks the
   errors it makes with a code of its own, `POOL_NOT_CONNECTED` and the
-  `PROTOCOL_SEQUENCE_TIMEOUT` of its timer around the change of database,
+  `PROTOCOL_SEQUENCE_TIMEOUT` of the time limit of a reset (`resetTimeout`),
   and the error the app passes to `failWaiting()`. The mark is kept in a
   `WeakSet`, so the error object is not changed and still has its code for
   every other caller.

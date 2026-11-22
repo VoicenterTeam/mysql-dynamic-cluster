@@ -43,6 +43,7 @@ Base configuration applied to every host in `hosts`.
 | `timerCheckMultiplier` | `number` | `1.3` |
 | `healthCheck` | object | not set: the node keeps the legacy check, see [below](#healthcheck) |
 | `queryTimeout` | `number` (ms) | `120000` |
+| `resetTimeout` | `number` (ms), 1 or more. How long the reset of a dirty connection may take. One that fails or takes longer ends with the connection destroyed with its socket. See [subsystems/pool.md](subsystems/pool.md#the-session-of-a-connection). Since 5.0.0 | `1000` |
 | `slowQueryTime` | `number` (s) | `1` |
 | `redisFactor` | `number` | `1` |
 | `flags` | `string` or `string[]` | not set: picked per node, see [below](#flags) |

@@ -258,7 +258,11 @@ have run on the one that failed, so one call never writes twice.
 and nothing else does. `Pool.query` fills `outcome.sent`: `false` from the
 start of the call, `true` once it hands the statement to the connection. It
 stays `false` when there is no mysql2 pool, `getConnection` failed or gave
-no connection, or the change of database failed, its own timeout included.
+no connection, or the session could not be got ready: a reset of a dirty
+connection or a `USE` of another database failed or timed out. See
+[pool.md](pool.md#the-session-of-a-connection). Since 5.0.0 the pool sends
+no change of user, so a pooled connection the path forgot fails under the
+statement itself, with `sent: true`, and the next node is not tried.
 The pool also writes `sent` on the error when the error can take it, but
 the loop reads the outcome: a frozen error, or one the app handed
 `failWaiting()` that many queries share, is decided the same way.
@@ -361,7 +365,7 @@ reason: no `nodeId`, `errors` or `sent`.
 | during the service-name lookup or the choice of nodes (steps 3 and 4) | rejects right after them: Redis is not read and no node is asked |
 | while no valid node is found (step 4) | rejects before stale data of Redis is read, or after the read, before it is served |
 | while the request waits for a connection | `Pool.getConnection(signal)` takes the request out of mysql2's queue. A connection whose login was still running goes back to the pool when it arrives |
-| during the change of database or the statement | the pool destroys the connection with its socket (`drop()` of [ServerFlags.ts](../../src/pool/ServerFlags.ts)) and never releases it: the statement may still run. mysql2 opens a new connection in its place for the next request |
+| during the reset of a dirty connection, the `USE` of another database or the statement | the pool destroys the connection with its socket (`drop()` of [ServerFlags.ts](../../src/pool/ServerFlags.ts)) and never releases it: the statement may still run. mysql2 opens a new connection in its place for the next request |
 | after a node failed, before the next one | `mayTryNextNode` says no, and the call rejects with the reason |
 | after the answer | nothing: no listener is left |
 

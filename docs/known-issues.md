@@ -74,6 +74,10 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   set or the code is `PROTOCOL_SEQUENCE_TIMEOUT`; plain SQL errors still
   `release()`. `changeUser` also gets its own timeout, since mysql2 ignores
   its timeout option and a query's timer only starts once `changeUser` ends.
+  Since 5.0.0 the query path sends no `changeUser` at all: a `USE` when the
+  database differs, and a reset bounded by `resetTimeout` only for a dirty
+  connection, see
+  [subsystems/pool.md](subsystems/pool.md#the-session-of-a-connection).
 - **Requires mysql2 >= 3.23.3** (package floor is `^3.24.4`). Older mysql2
   shares one config object across the pool and `changeUser` writes the
   database into it, so after a failed database override every replacement
