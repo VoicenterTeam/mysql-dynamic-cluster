@@ -373,6 +373,9 @@ waits on, often until the timeout of the statement (#94). While you hold the con
 cluster listens for that warning. It destroys the connection with its socket, and the
 command you have out on it fails with the warning of mysql2: an `Error` with the numbers
 `expected` and `received`, and `fatal: true`. Your `release()` after that does nothing.
+A `timeout` you hand mysql2 yourself on such a command is mysql2's timer, which stays armed
+when the connection is destroyed and keeps the process alive until it fires (#120): bound
+your commands on a lent connection with a timer of your own, unref'd, or with a signal.
 
 ### Who releases what after an abort
 
