@@ -146,13 +146,13 @@ Each suite in `tests/galera` runs a cluster with the package's default settings,
 
 jest runs the files side by side, and a suite that isolates a node would break one that counts the nodes. `describeRig` in `support.ts` takes a lock (a directory next to the env file) before the hooks of its block and gives it back after them, so the suites run one at a time whatever `--maxWorkers` says. A lock whose process is gone is taken over. `node-drops-out.test.ts` sets `isolate=0` and waits for the node to be Synced in its `afterAll`, also when a test failed, so the next suite gets three nodes.
 
-Measured on the shared CI machine before the 5.0.0 release, three runs in a row, each from a fresh `up` to `down`, 106 tests passed in each:
+Measured on the shared CI machine before the 5.0.0 release, three runs in a row, each from a fresh `up` to `down`, 107 tests passed in each:
 
 | Run | `up` | jest `tests/galera` | `down` |
 | --- | --- | --- | --- |
-| 1 | 50 s | 24 s | 3 s |
-| 2 | 55 s | 26 s | 3 s |
-| 3 | 54 s | 25 s | 2 s |
+| 1 | 51 s | 24 s | 2 s |
+| 2 | 59 s | 24 s | 3 s |
+| 3 | 49 s | 24 s | 2 s |
 
 Most of the jest time is `node-drops-out.test.ts` (about 12 s: 6 s until the node sees it is out, 5 s until it is Synced again) and the 3.5 s of `write_then_sleep()`.
 
