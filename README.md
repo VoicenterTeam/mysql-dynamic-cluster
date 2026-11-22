@@ -278,7 +278,7 @@ Settings to [configure library](#configure-cluster)
         </tr>
         <tr>
             <td>errorRetryCount</td>
-            <td>How much retry query in different servers if you have error</td>
+            <td>How many nodes one query may try. The next node is tried only when the statement cannot have run on the one before: it was never sent, or the node answered 1047 (not ready). Never after an error reply, a timeout, a connection lost after the statement was sent, or a refused login</td>
             <td>false</td>
             <td>number</td>
             <td>-</td>
@@ -1081,8 +1081,13 @@ Used in each [query](#query)
         </tr>
         <tr>
             <td>maxRetry</td>
-            <td>How much retry query in different servers if you have error</td>
+            <td>How many nodes this query may try, in place of <code>errorRetryCount</code>. The same rule picks when the next node is tried</td>
             <td>number</td>
+        </tr>
+        <tr>
+            <td>retryNotReady</td>
+            <td>Try the next node after a node answered 1047 (not ready). Default <code>true</code>. Set <code>false</code> for a procedure that commits part of its work before it can fail</td>
+            <td>boolean</td>
         </tr>
         <tr>
             <td>redis</td>

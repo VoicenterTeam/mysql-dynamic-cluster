@@ -145,6 +145,7 @@ Signature:
 - `maxRetry` defaults to `_errorRetryCount`.
 - `redisRefreshCache` defaults to `false`.
 - `escapeNamedValues` defaults to the `escapeNamedValues` setting, `false` unless set.
+- `retryNotReady` gets no default here. Left out it counts as `true`, see step 8.
 
 ### 2. Metrics
 
@@ -185,7 +186,7 @@ The first lines of the `try` block.
    empty. `getConnection()` uses the same code. Since 3.2.2 `query()` first serves cached Redis
    data for that SQL, even expired, when `redis` is on for the query and
    no `redisRefreshCache` was asked — the same fallback it already used
-   when every pool errors.
+   when the query fails on its nodes (step 9).
 
 ### 5. Retry clamp
 
@@ -194,7 +195,9 @@ The first lines of the `try` block.
 clamps the retry count to the active-pool count so the retry loop never
 overruns the array; if `maxRetry` is missing or non-positive it falls
 back to `_errorRetryCount`. Since 5.0.0 the count is at least 1, so a
-query always tries one node, also with `errorRetryCount: 0`.
+query always tries one node, also with `errorRetryCount: 0`. The count is
+how many nodes the call may try at most: step 8 stops sooner when the
+statement may have run.
 
 Service-id resolution and active-pool selection share a single
 `try`/`catch`. The lookup of a service name catches its own errors, so
@@ -238,9 +241,38 @@ Runs before any pool query when `queryOptions.redis && !queryOptions.redisRefres
 The `for` loop.
 
 For `i` from `0` to `retryCount - 1`, calls
-`this._queryRequest(sql, activePools[i], queryOptions)`. First success
-records the query with source `pool` and returns. Each failure is kept as
-`{ nodeId, error }` in `errors`, and the loop continues until exhausted.
+`this._queryRequest(sql, activePools[i], queryOptions, outcome)`, with a
+new empty `outcome` for each node. First success records the query with
+source `pool` and returns. Each failure is kept as `{ nodeId, error }` in
+`errors`. The loop goes on to the next pool only when the statement cannot
+have run on the one that failed, so one call never writes twice.
+
+`mayTryNextNode(error, outcome, queryOptions)` in
+[src/cluster/QueryRetry.ts](../../src/cluster/QueryRetry.ts) decides it,
+and nothing else does. `Pool.query` fills `outcome.sent`: `false` from the
+start of the call, `true` once it hands the statement to the connection. It
+stays `false` when there is no mysql2 pool, `getConnection` failed or gave
+no connection, or the change of database failed, its own timeout included.
+The pool also writes `sent` on the error when the error can take it, but
+the loop reads the outcome: a frozen error, or one the app handed
+`failWaiting()` that many queries share, is decided the same way.
+
+| The node failed with | Next node |
+| --- | --- |
+| errno 1045, 1698, 1044, 3118, 3955 or 1130, a refused login | no, although `sent` is `false` |
+| any other error with `sent: false` | yes |
+| errno 1047, not ready, with `sent: true` | yes, unless `retryNotReady: false` |
+| an error reply, a timeout, a connection lost after the statement went out | no |
+| anything from a pool that left `sent` unset | no, unless errno 1047 |
+
+A refused login is the same on every node: Galera replicates the accounts,
+and a lockout policy counts each new login. The list is not the one the
+health check keeps in `PoolStatus`, which also has errors that differ from
+node to node, such as 1049 and 1129. A statement refused with 1047 did not
+run, so the next node is safe, except for a procedure that commits part of
+its work before the 1047: `retryNotReady: false` is for that. No setting
+brings back the retry of 4.x, which tried the next node after any error.
+Since 5.0.0.
 
 The list of step 4 is made once per call, and each turn of the loop takes
 the next pool of it, so a retry never asks the pool that just failed. For a
@@ -257,8 +289,9 @@ meantime is still tried, as before.
 The end of `query`, after the loop.
 
 Each failed attempt is kept as `{ nodeId, error }`, in the order the
-nodes were tried. `nodeId` is also set on the error itself. When every
-pool has failed:
+nodes were tried. `nodeId` is also set on the error itself. When the loop
+ends without a result, because every node it tried failed or step 8
+stopped it:
 
 - If `redisData` is non-null (cache existed but was expired), log a
   warning, record the query with source `stale_cache`, and **return the
@@ -291,15 +324,19 @@ attempt is still logged with `Logger.error`. The single
 ### 10. `_queryRequest`
 
 `_queryRequest` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
-Wraps a single `pool.query(sql, queryOptions)` call. The pool records
-the attempt as `mysql_dynamic_cluster.operation.duration`. On success:
+Wraps a single `pool.query(sql, queryOptions, outcome)` call. The pool
+records the attempt as `mysql_dynamic_cluster.operation.duration`. On
+success:
 
 - If `queryOptions.serviceId` is truthy and `_clusterHashing.connected`,
   awaits `_clusterHashing.updateNodeForService(serviceId, pool.id)` to
   pin the service to the pool that just served it.
 
-On failure the error goes to the retry loop in `query` as it is.
-`updateNodeForService` catches its own errors.
+On failure the error goes to the retry loop in `query` as it is, and the
+outcome says whether the statement was sent. `updateNodeForService`
+catches its own errors. Anything it still throws is logged as a warning
+and the result is returned: the statement ran, so it must not go to the
+next node.
 
 ## Public API summary
 
