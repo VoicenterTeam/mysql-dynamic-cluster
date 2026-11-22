@@ -1,29 +1,19 @@
-import fs from 'fs';
 import { RowDataPacket } from 'mysql2';
 import { createPoolCluster } from '../../index';
+import { describeRig, logger, readEnv } from './support';
 
-// Smoke test of the three-node Galera rig (tests/rig/galera.sh). Skipped unless MDC_TEST_GALERA
-// is set. The rig writes the host, the ports and the login to the env file named by
-// MDC_RIG_ENV, /tmp/mdc-rig-state/rig.env when that is not set. Default package settings
-const describeRig = process.env.MDC_TEST_GALERA ? describe : describe.skip;
-
-const readEnv = (): Record<string, string> => {
-    const file = process.env.MDC_RIG_ENV || `${process.env.TMPDIR || '/tmp'}/mdc-rig-state/rig.env`;
-    const env: Record<string, string> = {};
-    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-        const at = line.indexOf('=');
-        if (at > 0) env[line.slice(0, at)] = line.slice(at + 1);
-    }
-    return env;
-};
-
+// Smoke test of the three-node Galera rig (tests/rig/galera.sh) as the app user. The package's
+// default settings, except cluster hashing, which is off: the app user may not create its
+// schema. Skipped unless MDC_TEST_GALERA is set
 describeRig('Galera rig', () => {
     let cluster: ReturnType<typeof createPoolCluster>;
+    const log = logger();
 
     beforeAll(async () => {
         const env = readEnv();
         cluster = createPoolCluster({
             clusterName: 'rig',
+            useClusterHashing: false,
             defaultPoolSettings: {
                 user: env.MDC_GALERA_USER,
                 password: env.MDC_GALERA_PASSWORD,
@@ -33,7 +23,8 @@ describeRig('Galera rig', () => {
                 host: env.MDC_GALERA_HOST,
                 port: Number(env['MDC_GALERA_PORT' + n]),
                 name: 'node' + n
-            }))
+            })),
+            logger: log
         });
         await cluster.connect();
         await cluster.ready;
@@ -48,6 +39,7 @@ describeRig('Galera rig', () => {
 
         expect(results.map(result => result.ok)).toEqual([true, true, true]);
         expect(cluster.nodes().map(node => node.isValid)).toEqual([true, true, true]);
+        expect(log.error).not.toHaveBeenCalled();
     });
 
     it('has every node answer a query, and the cluster size is 3', async () => {

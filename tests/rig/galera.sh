@@ -19,6 +19,8 @@ NET=$NAME-net
 NODES=(1 2 3)
 DB_USER=mdc
 DB_NAME=mdc
+# the first line of the env file up writes: down removes no other file
+ENV_HEAD='# written by tests/rig/galera.sh up, removed by its down'
 
 node_sql() { # node_sql <n> <sql>: the sql as root inside node n, the password not in argv
   MYSQL_PWD="$ROOT_PW" docker exec -e MYSQL_PWD "$NAME-$1" mysql -uroot -N -B -e "$2" 2> /dev/null
@@ -73,6 +75,10 @@ cmd_up() {
     echo "rig: $STATE exists and is not a rig state dir, not using it" >&2
     exit 1
   fi
+  if [ -e "$ENVFILE" ]; then
+    echo "rig: $ENVFILE exists and was not written by the rig, not using it" >&2
+    exit 1
+  fi
   mkdir -p "$STATE" || exit 1
   : > "$STATE/.mdc-rig"
   ROOT_PW=$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')
@@ -89,6 +95,7 @@ cmd_up() {
     wait_for "$n" "Primary and Synced with 3 nodes" node_ready "$n"
   done
   {
+    echo "$ENV_HEAD"
     echo "MDC_GALERA_HOST=127.0.0.1"
     for n in "${NODES[@]}"; do
       echo "MDC_GALERA_PORT$n=$(docker port "$NAME-$n" 3306/tcp | head -n1 | sed 's/.*://')"
@@ -105,16 +112,23 @@ cmd_up() {
 cmd_down() {
   local n
   for n in "${NODES[@]}"; do docker rm -f "$NAME-$n" > /dev/null 2>&1; done
-  for n in "${NODES[@]}"; do
-    [ -f "$STATE/node$n.pid" ] && kill "$(cat "$STATE/node$n.pid")" 2> /dev/null
-  done
+  # the pids of a state dir that up made, never of another dir
+  if [ -f "$STATE/.mdc-rig" ]; then
+    for n in "${NODES[@]}"; do
+      [ -f "$STATE/node$n.pid" ] && kill "$(cat "$STATE/node$n.pid")" 2> /dev/null
+    done
+  fi
   docker network rm "$NET" > /dev/null 2>&1
   if [ -f "$STATE/.mdc-rig" ]; then
     rm -rf "$STATE"
   elif [ -e "$STATE" ]; then
     echo "rig: $STATE is not a rig state dir (no .mdc-rig), left alone" >&2
   fi
-  [ "$ENVFILE" = "$STATE/rig.env" ] || rm -f "$ENVFILE"
+  if [ -f "$ENVFILE" ] && [ "$(head -n 1 "$ENVFILE")" = "$ENV_HEAD" ]; then
+    rm -f "$ENVFILE"
+  elif [ -e "$ENVFILE" ]; then
+    echo "rig: $ENVFILE was not written by the rig, left alone" >&2
+  fi
   return 0
 }
 

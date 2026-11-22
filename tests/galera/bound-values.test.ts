@@ -1,25 +1,13 @@
-import fs from 'fs';
 import { RowDataPacket } from 'mysql2';
 import { createPoolCluster } from '../../index';
+import { describeRig, logger, readEnv } from './support';
 
 // The contract test of #91 on the three-node Galera rig (tests/rig/galera.sh), MySQL 8.0.42.
 // Skipped unless MDC_TEST_GALERA is set. The second part loads the package from dist/, so run
 // `npm run build` first: the paths of the hashing SQL assets work from dist/ only
 // (docs/known-issues.md #7). It needs MDC_GALERA_ROOT_PASSWORD in the env file: only root may
 // create the hashing schema and its routines while binary logging is on
-const describeRig = process.env.MDC_TEST_GALERA ? describe : describe.skip;
-
-const readEnv = (): Record<string, string> => {
-    const file = process.env.MDC_RIG_ENV || `${process.env.TMPDIR || '/tmp'}/mdc-rig-state/rig.env`;
-    const env: Record<string, string> = {};
-    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-        const at = line.indexOf('=');
-        if (at > 0) env[line.slice(0, at)] = line.slice(at + 1);
-    }
-    return env;
-};
 const LONG = 600000;
-const logger = () => ({ debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() });
 
 // Strings with quotes and backslashes. Each must come back as one column holding exactly it
 const HOSTILE = [
