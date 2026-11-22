@@ -1,4 +1,5 @@
 import { IQueryOptions, IQueryOutcome } from "../types/PoolInterfaces";
+import { NOT_READY } from "../utils/Abort";
 
 // The errno of a login the server refused: access denied (1045, 1698), no access to the
 // database (1044), an account locked (3118, 3955), a host not allowed (1130). A Galera cluster
@@ -6,8 +7,6 @@ import { IQueryOptions, IQueryOutcome } from "../types/PoolInterfaces";
 // each new login. Not the list of the health check in PoolStatus, which also has errors that
 // differ from node to node
 const REFUSED_LOGIN: ReadonlySet<number> = new Set([1045, 1698, 1044, 3118, 3955, 1130]);
-// Galera refused the statement because the node is not ready, and it did not run
-const NOT_READY = 1047;
 // The pool refused to send values written into the text on a connection whose server has
 // NO_BACKSLASH_ESCAPES. Another node can have the same sql_mode: the app has to use execute
 const UNSAFE_SQL_MODE = 'MDC_UNSAFE_SQL_MODE';

@@ -1,4 +1,5 @@
 import { drop } from './ServerFlags';
+import { timeoutError } from '../utils/Abort';
 
 // The ping of the idle connections. Only a node with a healthCheck block has one
 export interface IIdlePing {
@@ -206,9 +207,7 @@ export class IdleConnectionReaper {
             };
             // the code is the one mysql2 has for a timeout, but this timer is the package's own
             const out: IPingOut = {
-                timer: setTimeout(() => ended(Object.assign(
-                    new Error("Ping timeout"), { code: 'PROTOCOL_SEQUENCE_TIMEOUT' }
-                )), ping.timeout)
+                timer: setTimeout(() => ended(timeoutError("Ping timeout")), ping.timeout)
             };
             // the answer of mysql2: seen alive, and told to the pool when it drew the connection
             const answered = (error?: any) => {

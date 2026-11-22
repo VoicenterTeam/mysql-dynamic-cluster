@@ -4,7 +4,7 @@ import { IAbortOutcome } from "../types/PoolInterfaces";
 import { PoolStatus } from "./PoolStatus";
 import { SessionState } from "./SessionState";
 import { IDrawn, IdleConnectionReaper } from "./IdleConnectionReaper";
-import { abortReason, isBroken, whenAborted } from "../utils/Abort";
+import { abortReason, isBroken, timeoutError, whenAborted } from "../utils/Abort";
 
 // What Borrow needs of the pool it takes connections from
 export interface IBorrowPool {
@@ -269,7 +269,8 @@ export class Borrow {
                 if (!outcome.aborted) this._pool.status.probeFailed(error);
                 reject(error);
             };
-            const timer = setTimeout(() => end(Borrow._probeTimeout()), this._probeTimeout);
+            // as for the ping of the reaper
+            const timer = setTimeout(() => end(timeoutError("Probe timeout")), this._probeTimeout);
             // the socket keeps the process alive while the ping runs. This timer alone does not
             timer.unref();
             const stopListening = whenAborted(signal, () => {
@@ -378,12 +379,6 @@ export class Borrow {
             received: warning.received,
             nodeId: this._pool.id
         });
-    }
-
-    // the error of a probe that got no answer in time
-    private static _probeTimeout(): Error {
-        // the code is the one mysql2 has for a timeout, as for the ping of the reaper
-        return Object.assign(new Error("Probe timeout"), { code: 'PROTOCOL_SEQUENCE_TIMEOUT' });
     }
 
     /**

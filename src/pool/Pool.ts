@@ -20,7 +20,7 @@ import { CheckConnection } from './CheckConnection';
 import { flagsForServer, IServerGreeting, IServerProbe, probeServer } from './ServerFlags';
 import { SessionState } from './SessionState';
 import { Borrow } from './Borrow';
-import { abortReason, isBroken, whenAborted } from '../utils/Abort';
+import { abortReason, isBroken, timeoutError, whenAborted } from '../utils/Abort';
 
 // What the cluster and the health check hand Pool.query() beside the options of the app. In
 // no type of the package's public interface
@@ -587,8 +587,7 @@ export class Pool {
         timeout: number, conn: mysql.PoolConnection, fail: (error: any, conn: any) => void
     ): NodeJS.Timeout {
         const timer = setTimeout(() => {
-            const error = PoolStatus.ownError(new Error("Query inactivity timeout"));
-            fail(Object.assign(error, { code: 'PROTOCOL_SEQUENCE_TIMEOUT' }), conn);
+            fail(PoolStatus.ownError(timeoutError("Query inactivity timeout")), conn);
         }, timeout);
         // the socket keeps the process alive while the statement runs. This timer alone does not
         timer.unref();

@@ -1,5 +1,9 @@
-// The abort of a call by the signal of the app, and what a failed call leaves of its
-// connection. Pool, Borrow and GaleraCluster share them
+// The abort of a call by the signal of the app, and what a failed call says and leaves of its
+// connection. Pool, Borrow, SessionState, the reaper, QueryRetry and GaleraCluster share them
+
+// The errno of a Galera node that is not ready, outside the primary component. The statement
+// did not run
+export const NOT_READY = 1047;
 
 /**
  * What a call is rejected with when its signal aborted: the reason of the signal as it is.
@@ -45,4 +49,13 @@ export function whenAborted(signal: AbortSignal | undefined, aborted: () => void
  */
 export function isBroken(error: any): boolean {
     return error?.fatal || error?.code === 'PROTOCOL_SEQUENCE_TIMEOUT';
+}
+
+/**
+ * The error of a timer of the package that ran out on a command: the code is the one mysql2
+ * has for a timeout, so isBroken() says the connection must not be used again
+ * @param message what ran out of time, such as "Probe timeout"
+ */
+export function timeoutError(message: string): Error {
+    return Object.assign(new Error(message), { code: 'PROTOCOL_SEQUENCE_TIMEOUT' });
 }

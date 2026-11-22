@@ -2,6 +2,7 @@ import mysql from "mysql2";
 import Logger from "../utils/Logger";
 import { PoolStatus } from "./PoolStatus";
 import { drop } from "./ServerFlags";
+import { NOT_READY, timeoutError } from "../utils/Abort";
 
 // What the pool knows of the session of one of its connections
 interface ISession {
@@ -36,8 +37,6 @@ const IN_TRANSACTION = 1;
 const AUTOCOMMIT = 2;
 const SESSION_STATE_CHANGED = 0x4000;
 const NO_BACKSLASH_ESCAPES = 512;
-// the errno of a Galera node that is not ready, outside the primary component
-const NOT_READY = 1047;
 
 /**
  * The session of the connections of one pool: which database each is on, and whether it is
@@ -293,9 +292,8 @@ export class SessionState {
             done(error);
         };
         const timer = setTimeout(() => {
-            // the code is the one mysql2 has for a timeout, so the connection counts as broken
-            const error = PoolStatus.ownError(new Error("Reset timeout"));
-            finish(Object.assign(error, { code: 'PROTOCOL_SEQUENCE_TIMEOUT' }));
+            // the connection counts as broken
+            finish(PoolStatus.ownError(timeoutError("Reset timeout")));
         }, this._resetTimeout);
         // the socket keeps the process alive while the reset runs. This timer alone does not
         timer.unref();
