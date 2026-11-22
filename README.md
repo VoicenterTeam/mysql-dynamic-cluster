@@ -1144,7 +1144,7 @@ Used in each [query](#query)
         </tr>
         <tr>
             <td>execute</td>
-            <td>Send the query with values bound by the server, as <a href="#execute">execute</a> does. The values must be an array. Redis is not used</td>
+            <td>Send the query with values bound by the server, as <a href="#execute">execute</a> does. The values must be an array, or none (<code>null</code> or <code>undefined</code>). Redis is not used</td>
             <td>boolean</td>
         </tr>
         <tr>

@@ -88,9 +88,14 @@ tests/
     settings.test.ts             # Merge of user settings + defaults via Settings (stale, dev API)
     utils.test.ts                # Pure-unit tests for Timer and Utils.clamp
     timer.test.ts                # Timer: one pending run, dispose, activate
-  galera/
-    rig.test.ts                  # Smoke test of the three-node Galera rig: connect, each node answers, wsrep_cluster_size is 3. Skipped unless MDC_TEST_GALERA is set
-    bound-values.test.ts         # Contract test of #91 on MySQL 8.0.42: hostile strings through execute() under the default mode, ANSI_QUOTES and NO_BACKSLASH_ESCAPES, query() refused under the last; cluster hashing (from dist/, as root) registers its nodes. Skipped unless MDC_TEST_GALERA is set
+  galera/                        # The Galera contract suite, see "The Galera rig". Skipped unless MDC_TEST_GALERA is set
+    support.ts                   # Shared by the suites: describeRig (skip, one suite at a time), the env file, root connections, until()
+    rig.test.ts                  # Smoke test of the three-node Galera rig: connect, each node answers, wsrep_cluster_size is 3, no error logged
+    bound-values.test.ts         # Contract test of #91 on MySQL 8.0.42: hostile strings through execute() under the default mode, ANSI_QUOTES and NO_BACKSLASH_ESCAPES, query() refused under the last; cluster hashing (from dist/, as root) registers its nodes
+    node-drops-out.test.ts       # #87, #90: a node isolated with gmcast.isolate=1 answers 1047, the call answers from another node; back and Synced, the node is used again
+    double-write.test.ts         # #87: write_then_fail() and write_then_sleep() (timeout 1000) reject and leave one row each
+    left-open-transaction.test.ts # #90, #93: a transaction left open by a query or by a getConnection() caller is gone for the next caller, its row lock free
+    dead-connection.test.ts      # #93: a pooled connection whose path went silent is replaced after 1 s idle, the write runs once on a new connection
   loads/
     load.test.ts                 # Manual load harness; ignored by jest config (stale)
 ```
@@ -108,8 +113,8 @@ bash tests/rig/galera.sh status   # one line per node
 ```
 
 - `up` returns when each node reports `wsrep_cluster_size = 3`, `wsrep_cluster_status = Primary` and `wsrep_local_state_comment = Synced`. After `MDC_RIG_TIMEOUT` seconds (default 240) it names the node that is not ready, prints the tail of its log and exits 1.
-- Each node is published on a random port of 127.0.0.1 only, on the user-defined network `mdc-rig-net`. The passwords are generated at every `up` and stay in the state dir (mode 700, under `${TMPDIR:-/tmp}`), which `down` removes. `down` and `up` leave a `MDC_RIG_STATE` directory alone unless it holds the marker file `.mdc-rig` that `up` writes.
-- The env file (`MDC_GALERA_HOST`, `MDC_GALERA_PORT1`..`3`, `MDC_GALERA_USER`, `MDC_GALERA_PASSWORD`, `MDC_GALERA_DATABASE`, and `MDC_GALERA_ROOT_PASSWORD` for a suite that must create a schema with stored routines: the app user owns only its database, and with binary logging on only root may create a function) is `${TMPDIR:-/tmp}/mdc-rig-state/rig.env`. The suites read it. Set `MDC_RIG_ENV` to move it, for `up` and the jest run alike.
+- Each node is published on a random port of 127.0.0.1 only, on the user-defined network `mdc-rig-net`. The passwords are generated at every `up` and stay in the state dir (mode 700, under `${TMPDIR:-/tmp}`), which `down` removes. `down` and `up` leave a `MDC_RIG_STATE` directory alone unless it holds the marker file `.mdc-rig` that `up` writes, and `down` kills the node processes only of a directory with that marker.
+- The env file (`MDC_GALERA_HOST`, `MDC_GALERA_PORT1`..`3`, `MDC_GALERA_USER`, `MDC_GALERA_PASSWORD`, `MDC_GALERA_DATABASE`, and `MDC_GALERA_ROOT_PASSWORD` for a suite that must create a schema with stored routines: the app user owns only its database, and with binary logging on only root may create a function) is `${TMPDIR:-/tmp}/mdc-rig-state/rig.env`. The suites read it. Set `MDC_RIG_ENV` to move it, for `up` and the jest run alike. Its first line says the rig wrote it: `down` removes only such a file, and `up` refuses to write over a file without that line.
 - Without `MDC_TEST_GALERA` the suites under `tests/galera` are skipped, so `npm test` needs no docker.
 - Other settings: `MDC_RIG_IMAGE`, `MDC_RIG_NAME` (prefix of the containers and the network, default `mdc-rig`), `MDC_RIG_STATE`.
 - The nodes use the package's default settings and no server settings beyond what Galera needs to form a cluster.
@@ -118,7 +123,38 @@ bash tests/rig/galera.sh status   # one line per node
 
 ```
 export MDC_RIG_DOCKER_RUN="bash $HOME/ci-box/tests/slot.sh docker run"
+npm run build
+bash tests/rig/galera.sh up
+MDC_TEST_GALERA=1 ~/ci-box/bin/lane-cpus npx jest --maxWorkers=6 tests/galera
+bash tests/rig/galera.sh down
 ```
+
+On that machine `up` takes about a minute, the suite under half a minute and `down` a few seconds, see the table at the end of this section.
+
+### The contract suite
+
+Each suite in `tests/galera` runs a cluster with the package's default settings, as the app user, with cluster hashing off (the app user may not create its schema; `bound-values.test.ts` runs its hashing part as root). None sets a timer or a limit, so they check the defaults: `probeIdle`, `probeTimeout`, `resetTimeout`, `errorRetryCount` and the legacy health check. Tables and routines are made as root on a connection of its own, and dropped at the end.
+
+| Suite | Scenario | What it proves |
+| --- | --- | --- |
+| `node-drops-out.test.ts` | `SET GLOBAL wsrep_provider_options = 'gmcast.isolate=1'` on the node the cluster asks first. The cluster asks again until the node sees it is out of the primary component, about 6 s later. Then `isolate=0`. | The first call after the drop gets 1047 from that node and answers from another node within the same call, in under 1 s (#87, #90: no change of user that waits for its timeout). Once the node is Synced again, the cluster's next check takes it back and `getConnection()` hands it out. The statement reads a table: a node out of the primary component still answers `SELECT 1` and `SELECT @@hostname`. |
+| `double-write.test.ts` | `write_then_fail()` inserts a row, then `SIGNAL`s. `write_then_sleep()` inserts a row, then sleeps 3 s, called with `timeout: 1000`. Three nodes valid. | Each call rejects (errno 1644, or `PROTOCOL_SEQUENCE_TIMEOUT` after 1 s), with `sent: true` and an empty `errors`, and leaves one row, counted with `wsrep_sync_wait = 1` after the sleep is over. 4.x wrote two rows each (#87). |
+| `left-open-transaction.test.ts` | One node. A `CALL` that leaves a transaction open with a row lock, and a `getConnection()` caller that does the same and calls `release()`. | The next caller on that connection gets reply headers without the in-transaction bit, and another session takes the row lock at once with `FOR UPDATE NOWAIT` and reads the value as it was: the reset rolled the transaction back (#90 for the query, #93 for the lent connection). |
+| `dead-connection.test.ts` | A TCP proxy in front of node 1. After a call through it, the proxy goes silent on the open flows, without a close on the client's side. 1.1 s later, an `INSERT` of `CONNECTION_ID()`. | The call resolves, the row is there once, and the connection id in it is higher than any id the node had before the cut: the idle connection failed its ping and the write ran on a new connection (#93). |
+| `bound-values.test.ts` | Hostile strings under the default mode, `ANSI_QUOTES` and `NO_BACKSLASH_ESCAPES`; cluster hashing as root. | See #91. |
+| `rig.test.ts` | Connect to the three nodes. | Smoke test of the rig: every node valid and answering, `wsrep_cluster_size` 3, nothing logged as an error. |
+
+jest runs the files side by side, and a suite that isolates a node would break one that counts the nodes. `describeRig` in `support.ts` takes a lock (a directory next to the env file) before the hooks of its block and gives it back after them, so the suites run one at a time whatever `--maxWorkers` says. A lock whose process is gone is taken over. `node-drops-out.test.ts` sets `isolate=0` and waits for the node to be Synced in its `afterAll`, also when a test failed, so the next suite gets three nodes.
+
+Measured on the shared CI machine before the 5.0.0 release, three runs in a row, each from a fresh `up` to `down`, 106 tests passed in each:
+
+| Run | `up` | jest `tests/galera` | `down` |
+| --- | --- | --- | --- |
+| 1 | 50 s | 24 s | 3 s |
+| 2 | 55 s | 26 s | 3 s |
+| 3 | 54 s | 25 s | 2 s |
+
+Most of the jest time is `node-drops-out.test.ts` (about 12 s: 6 s until the node sees it is out, 5 s until it is Synced again) and the 3.5 s of `write_then_sleep()`.
 
 ## Prerequisites for integration suites
 
