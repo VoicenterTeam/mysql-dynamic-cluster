@@ -1,10 +1,12 @@
 import { IdleConnectionReaper } from '../../src/pool/IdleConnectionReaper';
 
 // What the reaper forgets: a connection the age rule closed while its ping was out, and a
-// connection mysql2 took out of its free list by itself. The fakes of idle-ping.test.ts.
+// connection mysql2 took out of its free list by itself. The fakes of idle-ping.test.ts,
+// with the pool mysql2 keeps on a connection: an object while the connection is in a pool.
 // The clock is fake, and no socket opens
 const makeConn = () => {
     const connection = {
+        _pool: {} as object | null,
         destroy: jest.fn(), stream: { destroy: jest.fn() },
         ping: jest.fn(),
         // answer the ping that was sent last
