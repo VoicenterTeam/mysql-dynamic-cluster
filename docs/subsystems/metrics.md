@@ -327,8 +327,8 @@ to look.
 | `db.system.name` | `mysql` | operation, query, connection, wait, health check, node |
 | `db.namespace` | Database of the query. On the cluster metric only when the caller passed `database`. | operation, query |
 | `db.operation.name` | First SQL keyword, see below | operation, query |
-| `error.type` | mysql2 error `code` such as `ER_ACCESS_DENIED_ERROR` or `ECONNREFUSED`, or `_OTHER`. Set only on failure. | operation, query, health check |
-| `db.response.status_code` | `errno` of the error as a string, when it has one. On the health check only for an error of mysql2, the socket or the server. | operation, query, health check |
+| `error.type` | mysql2 error `code` such as `ER_ACCESS_DENIED_ERROR` or `ECONNREFUSED`, or `_OTHER`. Set only on failure. Since 4.1.1 a `code` that throws when it is read counts as none on the operation and query metrics, and the point is still written. | operation, query, health check |
+| `db.response.status_code` | `errno` of the error as a string, when it has one. On the health check only for an error of mysql2, the socket or the server. Since 4.1.1 an `errno` that throws when it is read counts as none. | operation, query, health check |
 | `server.address`, `server.port` | Host and port of the pool | operation, connection, wait, health check, node |
 | `db.client.connection.pool.name` | Pool `name` setting, `host:port` by default | operation, connection, wait, health check, node |
 | `db.client.connection.state` | `idle` or `used` | connection count |
