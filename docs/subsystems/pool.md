@@ -160,8 +160,11 @@ query's database and its SQL (`_metricOptions` in
 `serviceId`, `serviceName` is added too, defaulting to `String(serviceId)`
 when not provided. The options go to one `Metrics.recordOperation` call
 per attempt, with the error on failure, so `mysql_dynamic_cluster.operation.duration`
-can be broken down by pool, service and error type. See
-[metrics.md](./metrics.md).
+can be broken down by pool, service and error type. Since 4.1.0 the call
+also has the `step` the attempt ended in and the time it waited for a
+connection, from `timing` (see the next section). The step becomes an
+attribute, and the wait a record of `mysql_dynamic_cluster.connection.wait_time`.
+See [metrics.md](./metrics.md#the-step-and-the-wait-of-an-attempt).
 
 ### Execution sequence
 

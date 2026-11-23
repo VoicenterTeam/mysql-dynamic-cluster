@@ -66,13 +66,13 @@ The version is read from the package's own `package.json`.
 
 ## Metrics
 
-There are nine. The library records four duration histograms as queries and
+There are ten. The library records five duration histograms as queries and
 health checks run. The SDK reads the other five from the pools at each
 collection: three pool connection metrics and two node gauges.
 
 ### Duration metrics
 
-All four are histograms in seconds with the bucket boundaries the database
+All five are histograms in seconds with the bucket boundaries the database
 conventions recommend: `0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10`.
 A histogram carries its own count, so there are no separate counters. Totals
 and rates come from the count, errors from the `error.type` attribute.
@@ -80,17 +80,46 @@ and rates come from the count, errors from the `error.type` attribute.
 | Metric | One record per | Recorded in |
 |---|---|---|
 | `mysql_dynamic_cluster.operation.duration` | Query attempt in one pool. A transaction (`multiStatementQuery`) is one record. Health checks count too: the legacy check runs through `Pool.query`, and `Pool.checkQuery` records the attempt of a check on the check connection the same way. The ping of an idle pooled connection is no query attempt and no record. | [src/pool/Pool.ts](../../src/pool/Pool.ts) |
+| `mysql_dynamic_cluster.connection.wait_time` | Query attempt of `Pool.query`: the time it waited for a connection, see [The step and the wait of an attempt](#the-step-and-the-wait-of-an-attempt). | [src/pool/Pool.ts](../../src/pool/Pool.ts) |
 | `mysql_dynamic_cluster.query.duration` | `GaleraCluster.query` call, including the cache lookup and every retry. | [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts) |
 | `mysql_dynamic_cluster.cache.lookup.duration` | Redis cache lookup on the normal query path. | [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts) |
 | `mysql_dynamic_cluster.health_check.duration` | Finished health check of one node, see [Health-check metric](#health-check-metric). | [src/pool/PoolStatus.ts](../../src/pool/PoolStatus.ts) |
 
-All four names live in the package's own namespace. The per-attempt metric
+All five names live in the package's own namespace. The per-attempt metric
 has the shape of `db.client.operation.duration` from the
 [database client semantic conventions](https://opentelemetry.io/docs/specs/semconv/db/database-metrics/):
 seconds, the same buckets and the same attribute keys. It does not take that
 name on purpose. A wrapper or app that already records the convention metric
 for the same calls would otherwise show two series under one name, and a
-dashboard that sums by metric name would count MySQL time twice.
+dashboard that sums by metric name would count MySQL time twice. The wait has
+the shape of `db.client.connection.wait_time` from the same conventions, and
+keeps the package's own name for the same reason.
+
+### The step and the wait of an attempt
+
+Since 4.1.0 (#122). Each attempt of `Pool.query` tells where it ended and
+how long it waited for a connection. These are the values the `onTiming`
+option of a query gets, per attempt, see
+[cluster.md](./cluster.md#the-ontiming-option).
+
+- `mysql_dynamic_cluster.attempt.step` on
+  `mysql_dynamic_cluster.operation.duration` is the step the attempt ended
+  in: `queue`, `probe`, `prepare` or `statement`. A failed attempt has
+  it next to `error.type`, and a successful one has `statement`.
+- `mysql_dynamic_cluster.connection.wait_time` has one record per attempt:
+  the time in seconds it waited for a connection, in mysql2's queue or while
+  a new connection opened. An attempt that got an idle connection at once
+  records about `0`. It has the attributes that name the node, as the pool
+  connection metrics do. It has no step, no `error.type` and no database.
+
+Both cover every attempt of `Pool.query`: those of `query()` and
+`execute()`, and the status query of the legacy health check. They do not
+cover `Pool.checkQuery`, the check on the check connection of a node with a
+`healthCheck` block, or `multiStatementQuery()`. Their operation records
+have no step, and they record no wait. `getConnection()` records neither.
+
+`recordOperation` records both, from the fields `step` and `waitSeconds`
+of `IOperationMetricOptions`, see [Adding a new metric](#adding-a-new-metric).
 
 ### Health-check metric
 
@@ -295,22 +324,24 @@ to look.
 
 | Attribute | Value | On |
 |---|---|---|
-| `db.system.name` | `mysql` | operation, query, connection, health check, node |
+| `db.system.name` | `mysql` | operation, query, connection, wait, health check, node |
 | `db.namespace` | Database of the query. On the cluster metric only when the caller passed `database`. | operation, query |
 | `db.operation.name` | First SQL keyword, see below | operation, query |
 | `error.type` | mysql2 error `code` such as `ER_ACCESS_DENIED_ERROR` or `ECONNREFUSED`, or `_OTHER`. Set only on failure. | operation, query, health check |
 | `db.response.status_code` | `errno` of the error as a string, when it has one. On the health check only for an error of mysql2, the socket or the server. | operation, query, health check |
-| `server.address`, `server.port` | Host and port of the pool | operation, connection, health check, node |
-| `db.client.connection.pool.name` | Pool `name` setting, `host:port` by default | operation, connection, health check, node |
+| `server.address`, `server.port` | Host and port of the pool | operation, connection, wait, health check, node |
+| `db.client.connection.pool.name` | Pool `name` setting, `host:port` by default | operation, connection, wait, health check, node |
 | `db.client.connection.state` | `idle` or `used` | connection count |
-| `mysql_dynamic_cluster.cluster.name` | `clusterName` setting | all nine |
+| `mysql_dynamic_cluster.cluster.name` | `clusterName` setting | all ten |
+| `mysql_dynamic_cluster.attempt.step` | `queue`, `probe`, `prepare` or `statement`: where an attempt of `Pool.query` ended. Left out for the other attempts. | operation |
 | `mysql_dynamic_cluster.health_check.result` | `valid`, `invalid` or `error` | health check |
 | `mysql_dynamic_cluster.service.name` | `serviceName` of the query, or the `serviceId` as text. Left out for queries without a service. | operation, query |
 | `mysql_dynamic_cluster.result.source` | `pool`, `cache` or `stale_cache`. Left out when the query failed. | query |
 | `mysql_dynamic_cluster.cache.result` | `hit`, `expired` or `miss` | cache lookup |
 
-In the last column, connection stands for the three pool connection metrics
-and node for the two node gauges. They carry the attributes named for them
+In the last column, connection stands for the three pool connection metrics,
+wait for `mysql_dynamic_cluster.connection.wait_time` and node for the two
+node gauges. They carry the attributes named for them
 and no other. They leave out `db.namespace`, since a connection of the pool
 changes its database with every query. The health-check metric leaves it out
 as well, since a check is about the node.
@@ -347,6 +378,10 @@ Notes on cardinality and content:
 - `db.client.connection.pool.name` and `db.client.connection.state` come from
   the connection pool part of the conventions, which is still marked
   Development.
+- **The step splits the operation metric.** The new attribute splits each
+  existing `mysql_dynamic_cluster.operation.duration` series by step, into
+  at most four. Sums over the other attributes are unchanged.
+  `mysql_dynamic_cluster.connection.wait_time` adds one series per node.
 - The pool connection metrics add series per node only: two for the count,
   one for the waiting requests and one for the limit.
 - The node gauges add two series per node. The health-check metric adds,
@@ -396,7 +431,10 @@ Other changes:
    its own `_safely`, as the health-check histogram is, so a provider that
    cannot make it still gets the others.
 3. Call the method from the call site. Keep attribute values to a small fixed
-   set, never raw SQL, ids of rows or error messages.
+   set, never raw SQL, ids of rows or error messages. A value of the query
+   path goes through `recordOperation` instead, as a new field of
+   `IOperationMetricOptions`: about 20 test suites mock `Metrics` with a
+   fixed set of methods, and a new method would be missing there.
 4. Cover it in [tests/metrics/otel-metrics.test.ts](../../tests/metrics/otel-metrics.test.ts),
    which reads the metrics back through an in-memory exporter.
 

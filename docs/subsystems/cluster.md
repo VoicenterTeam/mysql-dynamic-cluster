@@ -154,8 +154,9 @@ Signature:
   [The `signal` option](#the-signal-option). The values of an `execute`
   call are checked right after it. Then a `:name` of an object of values
   inside quotes or backticks rejects with `MDC_QUOTED_PLACEHOLDER`.
-- `onTiming` gets no default. It is checked right after `timeout`, before
-  the values: see [The `onTiming` option](#the-ontiming-option).
+- `onTiming` gets no default. `null` counts as none, as `undefined` does.
+  It is checked right after `timeout`, before the values: see
+  [The `onTiming` option](#the-ontiming-option).
 
 ### 2. Metrics
 
@@ -515,12 +516,17 @@ The local `record` helper of step 2 calls it, and every way out of
 borrow sets its step as it goes and adds the wait of each request to
 mysql2, see [pool.md](pool.md#borrow-taking-and-giving-back-a-connection).
 The pool sets `statement` right before it sends. The `outcome` the retry
-rule reads is not changed.
+rule reads is not changed. The metrics carry the same values per attempt:
+the step as `mysql_dynamic_cluster.attempt.step` on
+`mysql_dynamic_cluster.operation.duration`, and the wait as
+`mysql_dynamic_cluster.connection.wait_time`, see
+[metrics.md](./metrics.md#the-step-and-the-wait-of-an-attempt).
 
 A throw in `onTiming` is caught and logged at `warn`. It never changes
 the result or the error of the call. The error and the reason of the signal
-stay as they are (#89): no property is added to them. A value that is not a
-function rejects with the `TypeError`
+stay as they are (#89): no property is added to them. `null` counts as no
+`onTiming`, as `undefined` does, and as `null` does for `signal`. Any
+other value that is not a function rejects with the `TypeError`
 `query: options.onTiming must be a function`, before any node, recorded as
 a failed query.
 
