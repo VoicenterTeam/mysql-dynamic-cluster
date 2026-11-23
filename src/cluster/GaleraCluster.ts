@@ -99,26 +99,26 @@ export class GaleraCluster {
         this._errorRetryCount = config.current.errorRetryCount
         this._useRedis = config.current.redis.enabled
         const poolIds: number[] = this._sortPoolIds(config.current.hosts);
+        // the hosts whose id the cluster gave, and those of them that wrote 0
+        const given: boolean[] = [];
+        const wroteZero: boolean[] = [];
 
-        config.current.hosts.forEach(poolSettings => {
+        config.current.hosts.forEach((poolSettings, index) => {
             if (!poolSettings.id) {
-                // id 0 counts as not set. The app that wrote 0 is told when
-                // the node got another id
-                const wroteZero = poolSettings.id === 0;
+                // id 0 counts as not set
+                wroteZero[index] = poolSettings.id === 0;
+                given[index] = true;
                 poolSettings.id = poolIds.length <= 0 ? 0 : poolIds[poolIds.length - 1] + 1;
                 poolIds.push(poolSettings.id);
-                if (wroteZero && poolSettings.id !== 0) {
-                    Logger.warn(`Host ${poolSettings.host}:${poolSettings.port} has id 0, which `
-                        + `counts as not set: the node got the id ${poolSettings.id}`);
-                }
             }
             // a host without `host` never gets here: the settings schema rejects it
             this._pools.push(
                 new Pool(poolSettings, this._clusterName)
             )
         })
-        // Ids that break a rule are kept as they are, with one warning per host (#71)
-        config.current.hosts.forEach(poolSettings => {
+        // One warning per host at most (#71). The app that wrote 0 is told when the node got
+        // another id. An id that breaks a rule is kept as it is, and said in the same line
+        config.current.hosts.forEach((poolSettings, index) => {
             const id = poolSettings.id;
             const broken: string[] = [];
             if (id < 0) broken.push('is negative');
@@ -130,9 +130,13 @@ export class GaleraCluster {
             if (this._useClusterHashing && id > 127) {
                 broken.push('is above 127, the highest id cluster hashing takes');
             }
-            if (broken.length) {
-                Logger.warn(`Host ${poolSettings.host}:${poolSettings.port} uses the id ${id}, `
-                    + `which ${broken.join(' and ')}`);
+            const host = `Host ${poolSettings.host}:${poolSettings.port}`;
+            const which = broken.length ? `, which ${broken.join(' and ')}` : '';
+            if (wroteZero[index] && id !== 0) {
+                Logger.warn(`${host} has id 0, which counts as not set: the node got the id ${id}`
+                    + which);
+            } else if (broken.length) {
+                Logger.warn(`${host} ${given[index] ? 'got' : 'uses'} the id ${id}${which}`);
             }
         })
 
