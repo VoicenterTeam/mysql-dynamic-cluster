@@ -14,11 +14,11 @@ const settings = {
 
 // the errors mysql2 gives for a wrong password and for a node that is down
 const accessDenied = () => Object.assign(
-    new Error("Access denied for user 'app'@'10.0.0.5' (using password: YES)"),
+    new Error("Access denied for user 'app'@'192.0.2.5' (using password: YES)"),
     { code: 'ER_ACCESS_DENIED_ERROR', errno: 1045, sqlState: '28000' }
 );
 const refused = () => Object.assign(
-    new Error('connect ECONNREFUSED 10.0.0.5:3306'),
+    new Error('connect ECONNREFUSED 192.0.2.5:3306'),
     { code: 'ECONNREFUSED', errno: -111, syscall: 'connect' }
 );
 
@@ -34,7 +34,7 @@ describe('pool_check_failed event', () => {
         jest.useFakeTimers();
         jest.clearAllMocks();
         listener = jest.fn();
-        pool = { id: 7, host: '10.0.0.5', query: jest.fn() };
+        pool = { id: 7, host: '192.0.2.5', query: jest.fn() };
         status = new PoolStatus(pool as any, settings, true);
     });
 
@@ -134,7 +134,7 @@ describe('pool_check_failed event', () => {
         const lines = (Logger.error as jest.Mock).mock.calls.map(call => String(call[0]));
         const guardLines = lines.filter(line => line.includes('pool_check_failed listener threw'));
         expect(guardLines).toHaveLength(1);
-        expect(guardLines[0]).toContain('10.0.0.5');
+        expect(guardLines[0]).toContain('192.0.2.5');
         expect(guardLines[0]).toContain('listener bug');
     });
 
@@ -196,6 +196,6 @@ describe('pool_check_failed event', () => {
 
         const logged = (Logger.error as jest.Mock).mock.calls;
         expect(logged).toHaveLength(1);
-        expect(logged[0][0]).toContain('connect ECONNREFUSED 10.0.0.5:3306');
+        expect(logged[0][0]).toContain('connect ECONNREFUSED 192.0.2.5:3306');
     });
 });

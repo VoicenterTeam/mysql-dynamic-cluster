@@ -32,7 +32,7 @@ describe('the health check loop of a pool', () => {
         jest.useFakeTimers();
         jest.clearAllMocks();
         listener = jest.fn();
-        pool = { id: 7, host: '10.0.0.5', query: jest.fn() };
+        pool = { id: 7, host: '192.0.2.5', query: jest.fn() };
         status = new PoolStatus(pool as any, settings, true);
     });
 
@@ -144,12 +144,22 @@ describe('the health check loop of a pool', () => {
             pool.query.mockResolvedValueOnce([]);
             await status.checkStatus();
             const before = state();
+            // The next check is due in 10000 ms, the longest wait, so the state alone
+            // cannot show a timer that was set again. Part of the wait goes by first
+            jest.advanceTimersByTime(4000);
 
             old.resolve([]);
             await oldCheck;
 
             expect(state()).toEqual(before);
             expect(jest.getTimerCount()).toBe(1);
+            // the next check comes at its old time, not 10000 ms after the late answer
+            pool.query.mockResolvedValue([]);
+            const asked = pool.query.mock.calls.length;
+            jest.advanceTimersByTime(5999);
+            const early = pool.query.mock.calls.length;
+            jest.advanceTimersByTime(1);
+            expect([early, pool.query.mock.calls.length]).toEqual([asked, asked + 1]);
         });
 
         it('a late failure is not counted and does not take the pool out', async () => {
