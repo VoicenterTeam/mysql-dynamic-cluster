@@ -55,9 +55,13 @@ default.
 
 ## Which tag
 
+- `--tag rc` for a release candidate, such as `5.0.1-rc.1`, of a line whose
+  stable version is on `next`. `npm i @next` keeps giving the stable version,
+  and a consumer tests the candidate by its exact version: a range such as
+  `^5.0.0` never installs a pre-release.
 - `--tag next` for a version that should not become what a plain
-  `npm install` gives: a pre-release such as `5.0.0-rc.1`, or a release of
-  a line the owner has not made the default yet.
+  `npm install` gives: a release of a line the owner has not made the default
+  yet, or a pre-release of a line that has no stable version on `next`.
 - `--tag latest` only for the newest version of the line the owner made the
   default. A fix release on an older line must not get it: with an explicit
   `--tag latest`, npm 11 no longer refuses a version lower than the highest

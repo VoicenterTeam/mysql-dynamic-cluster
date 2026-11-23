@@ -1,6 +1,6 @@
 # Changelog
 
-## 5.0.1 (unreleased)
+## 5.0.1-rc.1 (2026-11-23)
 
 ### Fixed
 
