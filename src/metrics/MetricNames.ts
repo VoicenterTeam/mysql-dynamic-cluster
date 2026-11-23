@@ -42,6 +42,11 @@ const MetricNames = {
         name: 'mysql_dynamic_cluster.connection.limit',
         description: 'Most connections a node may have open'
     },
+    // one record per query attempt of Pool.query: the time it waited for a connection
+    connectionWaitTime: {
+        name: 'mysql_dynamic_cluster.connection.wait_time',
+        description: 'Time a query attempt waited for a connection of a node'
+    },
     // one record per finished health check of a node
     healthCheckDuration: {
         name: 'mysql_dynamic_cluster.health_check.duration',
@@ -73,7 +78,8 @@ export const MetricAttributes = {
     serviceName: 'mysql_dynamic_cluster.service.name',
     resultSource: 'mysql_dynamic_cluster.result.source',
     cacheResult: 'mysql_dynamic_cluster.cache.result',
-    healthCheckResult: 'mysql_dynamic_cluster.health_check.result'
+    healthCheckResult: 'mysql_dynamic_cluster.health_check.result',
+    attemptStep: 'mysql_dynamic_cluster.attempt.step'
 }
 
 export default MetricNames;

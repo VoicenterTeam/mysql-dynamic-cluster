@@ -3,6 +3,7 @@
  */
 
 import { INodeCheckError } from "./NodeInterfaces";
+import { QueryStep } from "./PoolInterfaces";
 
 // Where the result of a cluster query came from
 export type QueryResultSource = 'pool' | 'cache' | 'stale_cache';
@@ -19,7 +20,12 @@ export interface IOperationMetricOptions {
     serviceName?: string,
     // sql of a single statement, used only to read the operation name (SELECT, CALL...)
     sql?: string,
-    error?: any
+    error?: any,
+    // where an attempt of Pool.query ended. Not set by the other callers
+    step?: QueryStep,
+    // how long an attempt of Pool.query waited for a connection, recorded apart. Not set by
+    // the other callers, which then record no wait
+    waitSeconds?: number
 }
 
 // One cluster query, after cache and retries

@@ -69,6 +69,8 @@ class Metrics {
     private _poolInstruments: IPoolInstruments;
     // not set when the provider could not make it
     private _healthCheckDuration: Histogram;
+    // not set when the provider could not make it
+    private _connectionWaitTime: Histogram;
     private _nodeInstruments: INodeInstruments;
     // pools of the connected clusters. A set, so a second connect() adds no pool twice
     private readonly _pools: Set<IPoolMetricSource> = new Set();
@@ -83,9 +85,11 @@ class Metrics {
     }
 
     /**
-     * Record one query attempt in a pool
+     * Record one query attempt in a pool, and the time it waited for a connection when the
+     * options have it. Both come through here: a new method would be missing where the tests
+     * of the query path mock this class
      * @param seconds how long the attempt took
-     * @param options pool, database, service and error of the attempt
+     * @param options pool, database, service, error, step and wait of the attempt
      */
     public recordOperation(seconds: number, options: IOperationMetricOptions) {
         this._safely(() => {
@@ -93,8 +97,18 @@ class Metrics {
             attributes[MetricAttributes.serverAddress] = options.host;
             attributes[MetricAttributes.serverPort] = options.port;
             attributes[MetricAttributes.poolName] = options.poolName;
+            if (options.step) attributes[MetricAttributes.attemptStep] = options.step;
 
             this._getInstruments().operationDuration.record(seconds, attributes);
+        });
+        if (options.waitSeconds === undefined) return;
+        // on its own: an operation that could not be recorded still gets its wait
+        this._safely(() => {
+            const attributes = this._nodeAttributes(options.poolName, options.host, options.port);
+            this._getInstruments();
+            if (this._connectionWaitTime) {
+                this._connectionWaitTime.record(options.waitSeconds, attributes);
+            }
         });
     }
 
@@ -326,6 +340,10 @@ class Metrics {
         this._healthCheckDuration = undefined;
         this._safely(() => {
             this._healthCheckDuration = histogram(MetricNames.healthCheckDuration);
+        });
+        this._connectionWaitTime = undefined;
+        this._safely(() => {
+            this._connectionWaitTime = histogram(MetricNames.connectionWaitTime);
         });
         this._safely(() => this._moveNodeInstruments(meter));
 

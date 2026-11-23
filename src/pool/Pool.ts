@@ -357,7 +357,10 @@ export class Pool {
                 settled = true;
                 stopListening();
                 queryTimer.end();
-                Metrics.recordOperation(queryTimer.get(), { ...poolMetricOption, error });
+                Metrics.recordOperation(queryTimer.get(), {
+                    ...poolMetricOption, error, step: timing.step,
+                    waitSeconds: timing.queuedMs / 1000
+                });
                 // Before the caller hears of it, so every call after this one sees the node
                 // as it is now. An error that came without a connection was told by the
                 // borrow. The check of a node with a healthCheck block is not here: it asks on
@@ -374,7 +377,8 @@ export class Pool {
                 outcome.aborted = true;
                 queryTimer.end();
                 Metrics.recordOperation(queryTimer.get(), {
-                    ...poolMetricOption, error: reason || {}
+                    ...poolMetricOption, error: reason || {}, step: timing.step,
+                    waitSeconds: timing.queuedMs / 1000
                 });
                 reject(reason);
             }
@@ -431,7 +435,9 @@ export class Pool {
                     this._borrow.giveBack(conn);
 
                     queryTimer.end();
-                    Metrics.recordOperation(queryTimer.get(), poolMetricOption);
+                    Metrics.recordOperation(queryTimer.get(), {
+                        ...poolMetricOption, step: timing.step, waitSeconds: timing.queuedMs / 1000
+                    });
                     if (queryTimer.get() >= this._slowQueryTime) {
                         Logger.warn(`Query in pool named ${this.name} takes ` +
                             `${queryTimer.get()} sec`);
