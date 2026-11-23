@@ -9,7 +9,9 @@ import { ClusterHashing } from '../../src/cluster/ClusterHashing';
 // is off (#61). No database: the schema steps of connect() are stubbed, the status check runs
 // for real
 const makeHashing = (query: jest.Mock, versionCheck = jest.fn().mockResolvedValue(true)) => {
-    const hashing: any = new ClusterHashing({ query, pools: [] } as any, 'c', { nextCheckTime: 5000, dbName: 'x' });
+    const hashing: any = new ClusterHashing(
+        { query, pools: [] } as any, 'c', { nextCheckTime: 5000, dbName: 'x' }
+    );
     hashing._isDatabaseVersionEquals = versionCheck;
     hashing._upgradeInPlace = jest.fn().mockResolvedValue(undefined);
     hashing._insertNodes = jest.fn().mockResolvedValue(undefined);
@@ -78,7 +80,7 @@ describe('two connect() calls of cluster hashing', () => {
     });
 
     describe('with a stop() while the first is held in its schema steps', () => {
-        // the first connect waits in its version check, the second one runs to its check
+        // the first connect waits in its version check, the second one waits for it
         const stoppedInSteps = async () => {
             const step = held();
             const versionCheck = jest.fn()
@@ -90,7 +92,8 @@ describe('two connect() calls of cluster hashing', () => {
             await settle();
             hashing.stop();
             const second = hashing.connect();
-            return { hashing, query, step, first, second };
+            await settle();
+            return { hashing, query, versionCheck, step, first, second };
         };
 
         it('the second call starts a run of its own', async () => {
@@ -102,43 +105,92 @@ describe('two connect() calls of cluster hashing', () => {
             hashing.stop();
         });
 
-        it('the first run, released after the second ended, checks nothing', async () => {
-            const { hashing, query, step, first, second } = await stoppedInSteps();
-            await second;
-            expect(query).toHaveBeenCalledTimes(1);
-            expect(hashing.connected).toBe(true);
+        it('the second run starts its steps only after the steps of the first ended',
+            async () => {
+                const { hashing, query, versionCheck, step, first, second } =
+                    await stoppedInSteps();
+                expect(versionCheck).toHaveBeenCalledTimes(1);
+                expect(query).not.toHaveBeenCalled();
 
+                step.release(true);
+                await first;
+                await second;
+                expect(versionCheck).toHaveBeenCalledTimes(2);
+                expect(hashing._insertNodes).toHaveBeenCalledTimes(2);
+                hashing.stop();
+            });
+
+        it('the first run, released, leaves the check to the second', async () => {
+            const { hashing, query, step, first, second } = await stoppedInSteps();
             step.release(true);
-            await first;
+            await Promise.all([first, second]);
+
             expect(query).toHaveBeenCalledTimes(1);
             expect(hashing.connected).toBe(true);
             expect(jest.getTimerCount()).toBe(1);
             hashing.stop();
         });
 
-        it('the first run, released before the second ended, leaves the check to the second',
-            async () => {
-                const { hashing, query, step, first, second } = await stoppedInSteps();
-                step.release(true);
-                await Promise.all([first, second]);
+        it('a run stopped before its steps began does none of them', async () => {
+            const { hashing, query, versionCheck, step, first, second } = await stoppedInSteps();
+            hashing.stop();
+            step.release(true);
+            await Promise.all([first, second]);
 
-                expect(query).toHaveBeenCalledTimes(1);
-                expect(hashing.connected).toBe(true);
-                expect(jest.getTimerCount()).toBe(1);
-                hashing.stop();
-            });
+            expect(versionCheck).toHaveBeenCalledTimes(1);
+            expect(hashing._insertNodes).toHaveBeenCalledTimes(1);
+            expect(query).not.toHaveBeenCalled();
+            expect(hashing.connected).toBe(false);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+    });
+});
 
-        it('the first run, released after a stop that ended the second, does not connect',
-            async () => {
-                const { hashing, step, first, second } = await stoppedInSteps();
-                await second;
-                hashing.stop();
-                step.release(true);
-                await first;
+// The statements of a run that stop() ended and those of the next run, in the order they went
+// out, with no hashing schema on the server: each run drops it and builds it again (#61)
+describe('the schema steps of a stopped run and of the next run', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
 
-                expect(hashing.connected).toBe(false);
-                expect(jest.getTimerCount()).toBe(0);
-            });
+    const statements = (sent: string[]) => {
+        const step = held();
+        const query = jest.fn(async (sql: string) => {
+            sent.push(sql.split(' ').slice(0, 2).join(' '));
+            return sql.includes('FN_GetServiceNodeMapping') ? mapping : [];
+        });
+        const pool = {
+            status: { isValid: true },
+            multiStatementQuery: jest.fn(async () => { sent.push('routines'); })
+        };
+        const hashing: any = new ClusterHashing(
+            { query, pools: [pool] } as any, 'c', { nextCheckTime: 5000, dbName: 'x' }
+        );
+        hashing._isDatabaseVersionEquals = jest.fn()
+            .mockReturnValueOnce(step.promise)
+            .mockResolvedValue(false);
+        hashing._readFilesInDir = jest.fn(() => ({
+            fileNames: ['SP_NodeInsert'], fileContents: ['...']
+        }));
+        hashing._insertNodes = jest.fn(async () => { sent.push('nodes'); });
+        return { hashing, step };
+    };
+    // the statements of one run that builds the schema, and its status check
+    const BUILD = ['DROP SCHEMA', 'CREATE SCHEMA', 'routines', 'routines', 'routines',
+        'INSERT INTO', 'nodes'];
+
+    it('never interleave: the next run starts after the stopped one ended its steps', async () => {
+        const sent: string[] = [];
+        const { hashing, step } = statements(sent);
+        const first = hashing.connect();
+        await settle();
+        hashing.stop();
+        const second = hashing.connect();
+        await settle();
+        step.release(false);
+        await Promise.all([first, second]);
+
+        expect(sent).toEqual([...BUILD, ...BUILD, 'SELECT FN_GetServiceNodeMapping()']);
+        hashing.stop();
     });
 });
 
