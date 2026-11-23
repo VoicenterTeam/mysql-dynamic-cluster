@@ -70,9 +70,9 @@ describe('the pool order of GaleraCluster.query', () => {
         expect(await order(pools, { connected: false })).toEqual([3, 1]);
     });
 
-    it('puts the node of the service first even when it is not valid', async () => {
+    it('leaves out the node of the service when it is not valid', async () => {
         const pools = [node(1, 30, false), node(2, 10), node(3, 20)];
-        expect(await order(pools, pinnedTo(1), 7)).toEqual([1, 2, 3]);
+        expect(await order(pools, pinnedTo(1), 7)).toEqual([2, 3]);
     });
 
     it('leaves the pools of the cluster in the order of the settings', async () => {
