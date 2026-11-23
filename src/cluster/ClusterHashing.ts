@@ -137,9 +137,12 @@ export class ClusterHashing {
                 sqlsDrop.push(`DROP ${name.startsWith('FN_') ? 'FUNCTION' : 'PROCEDURE'} IF EXISTS ${name};`);
             });
 
-            await this._cluster.pools[0].multiStatementQuery(sqlsDrop, { database: this._database });
-            await this._cluster.pools[0].multiStatementQuery(sqls, { database: this._database });
-            await this._cluster.pools[0].multiStatementQuery(sqlsMetadata, { database: this._database });
+            // hashing starts after the first pool that connected, which need not be pools[0]
+            const pool = this._cluster.pools.find(candidate => candidate.status.isValid);
+            if (!pool) throw new Error("No valid node to create the hashing database on");
+            await pool.multiStatementQuery(sqlsDrop, { database: this._database });
+            await pool.multiStatementQuery(sqls, { database: this._database });
+            await pool.multiStatementQuery(sqlsMetadata, { database: this._database });
 
             await this._cluster.query(
                 `INSERT INTO metadata (version) VALUES (${this._databaseVersion});`,
