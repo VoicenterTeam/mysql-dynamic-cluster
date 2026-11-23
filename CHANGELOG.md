@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A `?` inside a `"..."` string or a `#` comment no longer takes a value** (#121). `query()` writes array values into the text with mysql2's `format()`, which is sql-escaper's. mysql2 3.24 allows sql-escaper 1.5.x, which replaced such a `?` as well: every value after it moved one place, and the last `?` stayed in the SQL. The package now depends on `sql-escaper ^1.6.0`, so npm resolves a fixed copy for mysql2 too: in a consumer whose lockfile held 1.5.2 through mysql2, installing the package moved that copy to 1.9.1. An app that depends on a sql-escaper below 1.6 itself keeps that copy for mysql2. `docs/subsystems/cluster.md` and the README now say what values do in the text: `??` is an identifier, a plain object becomes `` `key` = value `` pairs, an object with `toSqlString()` is written raw, and only `execute()` keeps values out of the text.
+
 ## 4.0.0-rc.1 (2026-11-23)
 
 For an app that upgrades from 3.2.2. The table "Migrating from 3.x" in `docs/configuration.md` lists every setting that moved.

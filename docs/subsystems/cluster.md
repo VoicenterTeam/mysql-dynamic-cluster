@@ -233,6 +233,26 @@ wrote a value into the text.
   setting or query option to leave the value as text, as 3.2.2 did. A `mysql2.raw()` value, or
   any object with a `toSqlString` function, is still written as SQL.
 
+#### What values do in the SQL text
+
+`format()` and `escape()` are those of sql-escaper, which mysql2 exports. They do more than
+put a quoted value in place of each `?` (#121):
+
+- `??` is an identifier placeholder: `SELECT ?? , ?` with `['X', 'Y']` gives
+  ``SELECT `X` , 'Y'``.
+- A plain object among array values becomes `` `key` = value `` pairs: `UPDATE t SET ?` with
+  `[{ a: 1, b: 'x' }]` gives ``UPDATE t SET `a` = 1, `b` = 'x'``. A named value never does.
+- An object with a `toSqlString()` function is written as raw SQL, a named value too.
+- A `?` inside `'...'`, `"..."`, backticks or a comment (`#`, `-- `, `/* */`) is left alone,
+  since sql-escaper 1.6. 1.5.x also replaced one inside `"..."` or after `#`, so every value
+  after it moved one place. mysql2 3.24 allows 1.5.1, so the package depends on
+  `sql-escaper ^1.6.0` itself, and npm resolves a fixed copy for mysql2 too. An app that
+  depends on a sql-escaper below 1.6 itself keeps that copy for mysql2, and so for
+  `query()`: npm then nests the newer one under this package only.
+- Only `execute()` keeps the values out of the text.
+- Never pass an object from outside the app, such as a request body or parsed JSON, as a
+  value: it can turn into column assignments or raw SQL.
+
 Every escaped value relies on the server reading a backslash in a string
 as an escape. A connection whose server has `NO_BACKSLASH_ESCAPES` does
 not, so `Pool.query` refuses such a statement, see

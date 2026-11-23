@@ -25,6 +25,7 @@ tests/
     no-valid-pool-cache.test.ts  # GaleraCluster.query when no pool is valid: stale cache fallback
     named-values.test.ts         # object values: always escaped, an escapeNamedValues option ignored, the setting refused
     named-values-setting.test.ts # named values through createPoolCluster: escaped, the setting refused
+    values-in-text.test.ts       # array values in the text (#121): a ? in "...", a # comment and the other quotes left alone, ??, plain objects, toSqlString()
     execute.test.ts              # execute() and the execute option on loopback: prepare, bound values, NO_BACKSLASH_ESCAPES
     host-ids.test.ts             # Host ids: which id each host gets, with and without an id in the settings
     query-pool-order.test.ts     # The order query() tries its pools in: load score, the pool of the service first
