@@ -548,7 +548,8 @@ export class GaleraCluster {
                     Logger.debug(`Query in pool ${pool.name} was aborted`);
                 } else {
                     errors.push({ nodeId: pool.id, error: GaleraCluster._fromNode(e, pool.id) });
-                    Logger.error(`Query failed in pool ${pool.name}: ${e?.message}`);
+                    Logger.error(`Query failed in pool ${pool.name}: ` +
+                        GaleraCluster._failureText(e));
                 }
                 // a statement that may have run on this node must not run on another one, and
                 // no node gets it once the signal aborted
@@ -894,19 +895,22 @@ export class GaleraCluster {
      * through the lists of earlier queries, is left out. The errors keep no cycle and can
      * be turned into JSON. An error that has an `errors` of its own, such as the
      * AggregateError of a host name whose every address refused, keeps it. A frozen error,
-     * or one that is no object, gets no list
+     * one that is no object, or one whose errors cannot be read, gets no list
      * @param error the error of the node tried last
      * @param earlier the error of each node tried before it, in the order they were tried
      */
     private static _listEarlier(error: any, earlier: { nodeId: number, error: any }[]): void {
         if (!error || typeof error !== 'object') return;
-        if (Array.isArray(error.errors) && !GaleraCluster._lists.has(error.errors)) return;
-        const list = earlier.filter(entry => !GaleraCluster._leadsTo(entry.error, error));
         try {
+            // read in the try: a getter or a Proxy that throws here must not reject the call
+            const own = error.errors;
+            if (Array.isArray(own) && !GaleraCluster._lists.has(own)) return;
+            const list = earlier.filter(entry => !GaleraCluster._leadsTo(entry.error, error));
             error.errors = list;
             GaleraCluster._lists.add(list);
         } catch {
-            // a frozen error goes to the caller without the list
+            // a frozen error, or one whose errors cannot be read, goes to the caller without
+            // the list
         }
     }
 
@@ -918,9 +922,38 @@ export class GaleraCluster {
         if (from === target) return true;
         if (!from || typeof from !== 'object' || seen.has(from)) return false;
         seen.add(from);
-        const list = from.errors;
-        if (!Array.isArray(list) || !GaleraCluster._lists.has(list)) return false;
-        return list.some(entry => GaleraCluster._leadsTo(entry.error, target, seen));
+        try {
+            const list = from.errors;
+            if (!Array.isArray(list) || !GaleraCluster._lists.has(list)) return false;
+            return list.some(entry => GaleraCluster._leadsTo(entry.error, target, seen));
+        } catch {
+            // errors that cannot be read lead nowhere
+            return false;
+        }
+    }
+
+    /**
+     * The text of a failed attempt for its log line: the message, then the code and the errno
+     * when the error has them. An error without a message, such as the AggregateError of a
+     * host name whose every address refused, is named by its text. Nothing here may throw: a
+     * getter that throws, or a value that cannot be made text, is left out
+     * @param error what the node's call was rejected with
+     * @private
+     */
+    private static _failureText(error: any): string {
+        const text = (read: () => unknown): string => {
+            try {
+                return String(read() ?? '');
+            } catch {
+                return '';
+            }
+        };
+        const message = text(() => error?.message) || text(() => error);
+        const details = [['code', text(() => error?.code)], ['errno', text(() => error?.errno)]]
+            .filter(([, value]) => value !== '')
+            .map(([name, value]) => `${name} ${value}`)
+            .join(', ');
+        return [message, details && `(${details})`].filter(part => part).join(' ');
     }
 
     /**
