@@ -1,12 +1,6 @@
 # Changelog
 
-## Unreleased
-
-### Fixed
-
-- **A `?` inside a `"..."` string or a `#` comment no longer takes a value** (#121). `query()` wrote array values into the text with mysql2's `format()`, which is sql-escaper's. mysql2 3.24 allows sql-escaper 1.5.x, which replaced such a `?` as well: every value after it moved one place, and the last `?` stayed in the SQL. The package now depends on `sql-escaper ^1.6.0` and imports `format()` and `escape()` from it, called with mysql2's arguments: `query()` writes the text mysql2's `format()` writes with the same copy, and leaves such a `?` alone also when an app pins an older sql-escaper itself. npm usually resolves the fixed copy for mysql2 too: in a consumer whose lockfile held 1.5.2 through mysql2, installing the package moved that copy to the newest 1.x (1.9.1 when checked). An app that depends on a sql-escaper below 1.6 itself keeps that copy for mysql2, so mysql2's own `format()` and `escape()`, called by the app directly, still behave as 1.5.x there. `docs/subsystems/cluster.md` and the README now say what values do in the text: `??` is an identifier, a plain object after `SET` becomes `` `key` = value `` pairs, an object with `toSqlString()` is written raw, and only `execute()` keeps values out of the text.
-
-## 4.0.0-rc.1 (2026-11-23)
+## 4.0.0-rc.2 (2026-11-23)
 
 For an app that upgrades from 3.2.2. The table "Migrating from 3.x" in `docs/configuration.md` lists every setting that moved.
 
@@ -49,3 +43,5 @@ For an app that upgrades from 3.2.2. The table "Migrating from 3.x" in `docs/con
 - **The health checks run again after `disconnect()` and `connect()`** (#57). The check timer of a pool, and the one of cluster hashing, stayed off for good. A check still out from before the reconnect changes nothing when it ends. Two `connect()` calls without a `disconnect()` no longer run two check loops, and no longer leave a second idle timer running that kept the process from exiting (#82).
 - **The service name of a query is a bound value** (#46). The lookup of a service id put the `serviceName` option between quotes into the SQL text.
 - **The shipped declarations compile in more TypeScript setups** (#28, #36). `@types/ioredis` is a dependency now, not a devDependency, so an app with `skipLibCheck` off no longer fails with TS7016 inside `SettingsInterfaces.d.ts`. The mysql2 types come from the package root, not from `mysql2/typings/mysql`, which an app on `node16` or `bundler` resolution could not resolve.
+- **A `?` inside a `"..."` string or a `#` comment no longer takes a value** (#121). `query()` wrote array values into the text with mysql2's `format()`, which is sql-escaper's. mysql2 3.24 allows sql-escaper 1.5.x, which replaced such a `?` as well: every value after it moved one place, and the last `?` stayed in the SQL. The package now depends on `sql-escaper ^1.6.0` and imports `format()` and `escape()` from it, called with mysql2's arguments: `query()` writes the text mysql2's `format()` writes with the same copy, and leaves such a `?` alone also when an app pins an older sql-escaper itself. npm usually resolves the fixed copy for mysql2 too: in a consumer whose lockfile held 1.5.2 through mysql2, installing the package moved that copy to the newest 1.x (1.9.1 when checked). An app that depends on a sql-escaper below 1.6 itself keeps that copy for mysql2, so mysql2's own `format()` and `escape()`, called by the app directly, still behave as 1.5.x there. `docs/subsystems/cluster.md` and the README now say what values do in the text: `??` is an identifier, a plain object after `SET` becomes `` `key` = value `` pairs, an object with `toSqlString()` is written raw, and only `execute()` keeps values out of the text.
+
