@@ -65,8 +65,7 @@ default.
 - `--tag latest` only for the newest version of the line the owner made the
   default. A fix release on an older line must not get it: with an explicit
   `--tag latest`, npm 11 no longer refuses a version lower than the highest
-  published one, and `latest` would move back. Such a release gets a tag
-  named for its line, such as `--tag v3`.
+  published one, and `latest` would move back.
 
 Moving `latest` is the owner's decision each time.
 
