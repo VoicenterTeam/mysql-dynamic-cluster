@@ -46,12 +46,13 @@ tests/
     idle-ping-loopback.test.ts   # The ping of the idle pooled connections with the real mysql2 behind a TCP proxy on loopback: a path that forgets a flow after 1500 ms and a pause of 3 s of real time, a connection the path forgot before its ping, by a reset and by silence, the app drawing a connection whose ping is out, a node without the block, a cluster with the block on one host only, an `idleCheckInterval` Node runs every millisecond, disconnect with a ping that has no answer, disconnect and connect
     query.test.ts                # GaleraCluster.query() shapes: no values, scalar, array, named, timeout (stale)
     query-timer.test.ts          # The time limit of a command (#120), real mysql2 on loopback: no timer left after an abort or a lost connection (statement, execute, USE, DO 0, multiStatementQuery), the timeout error and outcome, a negative timeout refused
+    query-timing.test.ts         # onTiming (#122), real mysql2 on loopback: the step and the time queued of a call that waits for the one connection, is aborted queued, probing, preparing or running, a USE that times out on two nodes, probes that fail, stale Redis data; what onTiming throws or rejects with, an unhandled rejection checked in a clean Node process; null; the calls that ask no node
   configs/
     settings.test.ts             # Settings schema: defaults, strict validation, mixSettings, no env reading
     settings-guard.test.ts       # createPoolCluster with settings that are not an object
   metrics/
     no-side-effects.test.ts      # Requiring the package has no side effects
-    otel-metrics.test.ts         # OpenTelemetry metrics recorded by the cluster
+    otel-metrics.test.ts         # OpenTelemetry metrics recorded by the cluster, the step of an attempt and its wait for a connection included
     pool-metrics.test.ts         # Pool connection metrics read at collection: values, attributes, connect and disconnect
     health-metrics.test.ts       # Health-check metric and node gauges: every result, what records nothing, the gauge values
   pool/
@@ -83,7 +84,7 @@ tests/
     borrow.test.ts               # Borrow with the real mysql2 on loopback, counting the commands of the server: the probe after probeIdle and its timeout, the ping of the reaper, a failed probe, an abort during it, the health check that is never probed, resetAfterStatements, packets out of order, the reset at release() of getConnection()
   toolchain/
     compiler.test.ts             # The compiler parses the syntax zod 4 needs; every import resolves through exports maps
-    declarations.test.ts         # The built declarations export the node API types and type the healthCheck block, checked by compiling an app
+    declarations.test.ts         # The built declarations export the node API types and the types of onTiming, and type the healthCheck block, checked by compiling an app
   utils/
     logger.test.ts               # Logger: levels, console default, app-supplied logger
     logger-injection.test.ts     # A logger passed to createPoolCluster

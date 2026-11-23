@@ -202,7 +202,8 @@ The `Promise` callback chain is, in order:
    when the mode was unknown, so the guard reads a known mode. See
    [cluster.md](./cluster.md#values-in-the-text-under-no_backslash_escapes).
 4. The send step, the one step a bound statement does differently (the pool
-   sets `timing.step` to `statement` right before it):
+   sets `timing.step` to `statement` right before it, and back to the step
+   before when mysql2 throws at the send):
    `conn.query({ sql })` for text, `conn.execute({ sql, values })` with the
    option `execute`, both through `_session.send()`. mysql2 prepares a bound statement
    once per connection and keeps it until a reset, a `USE` of another
@@ -501,7 +502,8 @@ Borrow.ts, `{ signal?, target?, probe? }`, internal and in no public type;
 `probe` is `true` unless the caller says `false`. `timing` is the
 `IAttemptTiming` of a query, for its `onTiming` option: `take()` sets
 its `step` to `queue`, `probe` or `prepare` as it goes, and adds the
-wait of each request to mysql2 to its `queuedMs`. See
+wait of each request to mysql2 to its `queuedMs`, measured with the
+monotonic `performance.now()`. See
 [cluster.md](./cluster.md#the-ontiming-option):
 
 1. **One request to mysql2** (`_request`), which waits in its queue while

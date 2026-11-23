@@ -481,7 +481,8 @@ block passes no signal, and its connection gets no probe. `multiStatementQuery()
 
 Since 4.1.0 (#122). `onTiming` tells a caller where the time of a call
 went: waiting for a connection, or on the node. It gets one object,
-`IQueryTiming` of [src/types/PoolInterfaces.ts](../../src/types/PoolInterfaces.ts):
+`IQueryTiming` of [src/types/PoolInterfaces.ts](../../src/types/PoolInterfaces.ts).
+The package exports `IQueryTiming` and `QueryStep` as types:
 
 | Field | Value |
 | --- | --- |
@@ -494,11 +495,12 @@ went: waiting for a connection, or on the node. It gets one object,
 | `queue` | while it waited for a connection of the pool: in mysql2's queue, or while a new connection opened |
 | `probe` | during the ping of an idle connection |
 | `prepare` | during the reset, the `USE` or the `DO 0` before the statement, or with the `MDC_UNSAFE_SQL_MODE` refusal |
-| `statement` | after the statement was sent. A call that resolved has this step too |
+| `statement` | after the statement went to the connection. A call that resolved has this step too. When mysql2 throws at the send, before it wrote anything, the attempt keeps the step it had, `prepare` |
 
 The wait for a connection runs from the request to mysql2 until the
-connection came, the request failed or the signal aborted. The login of a
-new connection is part of it. After a failed probe the borrow asks mysql2
+connection came, the request failed or the signal aborted. The borrow
+measures it with `performance.now()`, a monotonic clock, so a change of
+the system time does not count. The login of a new connection is part of it. After a failed probe the borrow asks mysql2
 again, and that wait is added.
 
 `onTiming` is called once, when the call resolves, rejects or aborts. It
@@ -515,15 +517,21 @@ The local `record` helper of step 2 calls it, and every way out of
 `Pool.query` a new `IAttemptTiming` object through `IPoolCall`. The
 borrow sets its step as it goes and adds the wait of each request to
 mysql2, see [pool.md](pool.md#borrow-taking-and-giving-back-a-connection).
-The pool sets `statement` right before it sends. The `outcome` the retry
+The pool sets `statement` right before it sends, and sets the step back
+when mysql2 throws at the send. The `outcome` the retry
 rule reads is not changed. The metrics carry the same values per attempt:
 the step as `mysql_dynamic_cluster.attempt.step` on
 `mysql_dynamic_cluster.operation.duration`, and the wait as
 `mysql_dynamic_cluster.connection.wait_time`, see
 [metrics.md](./metrics.md#the-step-and-the-wait-of-an-attempt).
 
-A throw in `onTiming` is caught and logged at `warn`. It never changes
-the result or the error of the call. The error and the reason of the signal
+A throw in `onTiming` is caught and logged at `warn`, once. So is the
+rejection of a promise it returns, as an `async` function does: it is
+never left unhandled. A thrown value that cannot be made text, such as an
+object without a prototype, is logged as `a value that is not text`.
+Neither changes the result or the error of the call. `record('pool')`
+runs after the `try` of the attempt, so nothing it does turns an answer
+into a failure of the node. The error and the reason of the signal
 stay as they are (#89): no property is added to them. `null` counts as no
 `onTiming`, as `undefined` does, and as `null` does for `signal`. Any
 other value that is not a function rejects with the `TypeError`
