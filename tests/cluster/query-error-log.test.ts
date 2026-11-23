@@ -79,7 +79,10 @@ describe('the log line of a failed attempt', () => {
         ['the name of an AggregateError, whose message is empty', refused(),
             'Query failed in pool node1: AggregateError (code ECONNREFUSED)'],
         ['the text of a rejection that is no error', 'refused',
-            'Query failed in pool node1: refused']
+            'Query failed in pool node1: refused'],
+        ['the text of a rejection without a value', undefined,
+            'Query failed in pool node1: undefined'],
+        ['the text of a rejection with null', null, 'Query failed in pool node1: null']
     ])('has %s', async (_name, rejection, line) => {
         await rejectionOf(makeCluster([node(1, rejection)]));
 
