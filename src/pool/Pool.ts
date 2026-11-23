@@ -7,8 +7,8 @@ import Logger from "../utils/Logger";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
 import {
-    ClusterEvent, IAbortOutcome, IAttemptTiming, ICheckOutcome, IQueryOptions, IQueryOutcome,
-    QueryResult, QueryValues
+    IAbortOutcome, IAttemptTiming, ICheckOutcome, IQueryOptions, IQueryOutcome, QueryResult,
+    QueryValues
 } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
 import { IHealthCheck, IUserPoolSettings } from "../types/PoolSettingsInterfaces";
@@ -291,7 +291,10 @@ export class Pool {
      * @param args what the listeners get, the id of the pool last
      * @private
      */
-    private _emitToApp(event: ClusterEvent, ...args: unknown[]) {
+    private _emitToApp(
+        event: 'connection' | 'acquire' | 'release' | 'pool_connected' | 'pool_disconnected',
+        ...args: unknown[]
+    ) {
         try {
             Events.emit(event, ...args);
         } catch (thrown) {
