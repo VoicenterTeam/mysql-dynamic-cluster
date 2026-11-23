@@ -270,3 +270,38 @@ describe('a second connect() without disconnect()', () => {
         expect(await stateOf(second)).toEqual({ value: undefined });
     });
 });
+// A connect() that disconnect() came after, whose pool passes late (#61)
+describe('a pass of a connect() that disconnect() came after', () => {
+    const withHashing = (cluster: any) => Object.assign(cluster, {
+        _useClusterHashing: true,
+        _clusterHashing: { connect: jest.fn().mockResolvedValue(undefined), stop: jest.fn() }
+    });
+
+    it('leaves the cluster disconnected and starts no hashing', async () => {
+        const pools = [node(1)];
+        const cluster = withHashing(makeCluster(pools));
+        const connecting = cluster.connect();
+        await cluster.disconnect();
+        pools[0].connects[0].pass();
+
+        expect(await stateOf(connecting)).toEqual({ value: undefined });
+        expect(cluster.connected).toBe(false);
+        expect(cluster._clusterHashing.connect).not.toHaveBeenCalled();
+    });
+
+    it('does not count for the connect() after the disconnect()', async () => {
+        const pools = [node(1)];
+        const cluster = withHashing(makeCluster(pools));
+        cluster.connect();
+        await cluster.disconnect();
+        const second = cluster.connect();
+        pools[0].connects[0].pass();
+
+        expect(await stateOf(second)).toBe('pending');
+        expect(cluster.connected).toBe(false);
+        pools[0].connects[1].pass();
+        expect(await stateOf(second)).toEqual({ value: undefined });
+        expect(cluster.connected).toBe(true);
+        expect(cluster._clusterHashing.connect).toHaveBeenCalledTimes(1);
+    });
+});
