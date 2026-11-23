@@ -51,8 +51,19 @@ const turns = async () => {
 
 // Events has no way to remove a listener: each one hands its calls to the test's own
 let events: string[] = [];
-Events.on('pool_connected', () => events.push('connected'));
-Events.on('pool_disconnected', () => events.push('disconnected'));
+// the event whose listener throws, when one does
+let throwOn: string | undefined;
+const appBug = (event: string) => {
+    if (throwOn === event) throw new Error('a bug of the app in its ' + event + ' listener');
+};
+Events.on('pool_connected', () => {
+    events.push('connected');
+    appBug('pool_connected');
+});
+Events.on('pool_disconnected', () => {
+    events.push('disconnected');
+    appBug('pool_disconnected');
+});
 let onCheckFailed: () => void = () => undefined;
 Events.on('pool_check_failed', () => onCheckFailed());
 
@@ -60,6 +71,7 @@ beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
     events = [];
+    throwOn = undefined;
     onCheckFailed = () => undefined;
 });
 afterEach(() => jest.useRealTimers());
@@ -72,13 +84,14 @@ describe('a disconnect() during the check of a connect()', () => {
         pool.disconnect();
         const status = pending();
         pool.query.mockReturnValueOnce(status.promise);
-        const connecting = pool.connect().catch((): void => undefined);
+        const connecting = pool.connect();
         await turns();
 
         pool.disconnect();
         status.resolve([]);
-        await connecting;
 
+        // it still resolves: the node kept its validity, as before 4.1.1
+        await expect(connecting).resolves.toBeUndefined();
         expect(events).toEqual(['connected', 'disconnected', 'disconnected']);
     });
 
@@ -88,13 +101,13 @@ describe('a disconnect() during the check of a connect()', () => {
         pool.disconnect();
         const status = pending();
         pool.query.mockReturnValueOnce(status.promise);
-        const first = pool.connect().catch((): void => undefined);
+        const first = pool.connect();
         await turns();
 
         pool.disconnect();
         await pool.connect();
         status.resolve([]);
-        await first;
+        await expect(first).resolves.toBeUndefined();
 
         expect(events).toEqual(['connected', 'disconnected', 'disconnected', 'connected']);
         pool.disconnect();
@@ -106,6 +119,82 @@ describe('a disconnect() during the check of a connect()', () => {
 
         expect(events).toEqual(['connected']);
         pool.disconnect();
+    });
+});
+
+describe('a pool_connected or pool_disconnected listener that throws', () => {
+    const warnLines = (): any[][] => (Logger.warn as jest.Mock).mock.calls
+        .filter(([message]) => String(message).includes('listener'));
+
+    it('pool_connected: connect() of a valid node resolves, and the throw is logged', async () => {
+        const pool = makePool();
+        throwOn = 'pool_connected';
+
+        await expect(pool.connect()).resolves.toBeUndefined();
+
+        expect(warnLines()).toEqual([[
+            'Pool 192.0.2.5:3306: a listener of the pool_connected event threw',
+            { nodeId: 1, pool: '192.0.2.5:3306', error: 'a bug of the app in its pool_connected listener' }
+        ]]);
+        pool.disconnect();
+    });
+
+    it('pool_disconnected: disconnect() does not throw, and the throw is logged', async () => {
+        const pool = makePool();
+        await pool.connect();
+        throwOn = 'pool_disconnected';
+
+        expect(() => pool.disconnect()).not.toThrow();
+
+        expect([pool.status.active, jest.getTimerCount()]).toEqual([false, 0]);
+        expect(warnLines().map(([, meta]) => meta.error)).toEqual(
+            ['a bug of the app in its pool_disconnected listener']);
+    });
+});
+
+describe('Events.emit with a listener that throws', () => {
+    // No code that runs here emits hashing_created. Two listeners, in this order
+    let calls: unknown[][] = [];
+    let first: () => void;
+    let second: () => void;
+    Events.on('hashing_created', (...args: unknown[]) => {
+        calls.push(['first', ...args]);
+        first();
+    });
+    Events.on('hashing_created', (...args: unknown[]) => {
+        calls.push(['second', ...args]);
+        second();
+    });
+    beforeEach(() => {
+        calls = [];
+        first = second = () => undefined;
+    });
+    const warnLines = (): any[][] => (Logger.warn as jest.Mock).mock.calls
+        .filter(([message]) => String(message).includes('hashing_created'));
+
+    it('each listener gets the arguments in one array, as before', () => {
+        Events.emit('hashing_created', 1, 'two');
+
+        expect(calls).toEqual([['first', [1, 'two']], ['second', [1, 'two']]]);
+    });
+
+    it('the listener after it still runs, and the throw goes on to the code that emitted', () => {
+        first = () => { throw new Error('first broke'); };
+
+        expect(() => Events.emit('hashing_created', 1)).toThrow('first broke');
+
+        expect(calls).toEqual([['first', [1]], ['second', [1]]]);
+        expect(warnLines()).toEqual([]);
+    });
+
+    it('two that throw: the first goes on, the second is logged at warn', () => {
+        first = () => { throw new Error('first broke'); };
+        second = () => { throw new Error('second broke'); };
+
+        expect(() => Events.emit('hashing_created')).toThrow('first broke');
+
+        expect(warnLines()).toEqual([['A listener of the hashing_created event threw',
+            { event: 'hashing_created', error: 'second broke' }]]);
     });
 });
 

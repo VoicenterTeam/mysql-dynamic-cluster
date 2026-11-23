@@ -63,11 +63,12 @@ type Login =
     | 'holds';
 
 // A server whose answer to a login the test sets, and may change while it runs. It counts
-// the logins, can hang up on the ones it holds, and on the next change of user
+// the logins, can take or hang up on the ones it holds, can hang up on one connection, and
+// on the next change of user
 const listen = async (login: Login = 'accepts') => {
     const server: any = (mysql as any).createServer();
     const connections: any[] = [];
-    const held: any[] = [];
+    const held: { connection: any, done: (err: null) => void }[] = [];
     let hangUpOnChange = false;
     closers.push(() => {
         connections.forEach(connection => connection.stream.destroy());
@@ -85,7 +86,7 @@ const listen = async (login: Login = 'accepts') => {
             characterSet: 8,
             capabilityFlags: 0x00ffffff,
             authCallback: (_params: object, done: (err: null, mysqlError?: object) => void) => {
-                if (login === 'holds') return held.push(connection);
+                if (login === 'holds') return held.push({ connection, done });
                 done(null, login === 'refuses' ? refuse : undefined);
             }
         });
@@ -111,7 +112,10 @@ const listen = async (login: Login = 'accepts') => {
         become: (next: Login) => { login = next; },
         logins: () => connections.length,
         held: () => held.length,
-        hangUpHeld: () => held.splice(0).forEach(connection => connection.stream.destroy()),
+        hangUpHeld: () => held.splice(0).forEach(({ connection }) => connection.stream.destroy()),
+        takeHeld: () => held.splice(0).forEach(({ done }) => done(null)),
+        // the connections in the order they came, from 0
+        hangUp: (index: number) => connections[index].stream.destroy(),
         hangUpOnNextChange: () => { hangUpOnChange = true; }
     };
 };
@@ -216,6 +220,64 @@ describe('a check on a new connection, beside the one the node holds', () => {
                 'one it held, and that one failed. The old one is logged out of as well',
             { pool: '127.0.0.1:' + server.port, newConnection: 'failed',
                 code: 'ER_ACCESS_DENIED_ERROR', kept: false }
+        ]]);
+    });
+
+    // The old one broke while the new one logged in: it was dropped, not logged out of
+    it('that logs in after the old one broke: the line says the old one was closed already',
+        async () => {
+            const server = await listen();
+            const pool = makePool(server.port);
+            await pool.connect();
+            server.become('holds');
+            pool.status.realFailure(noRoute(), true);
+            await until(() => server.held() === 1, server.held);
+
+            server.hangUp(0);
+            await until(() => !pool._check._kept, () => 'the old one is still put aside');
+            server.takeHeld();
+            await until(() => debugLines('a new connection').length > 0, server.logins);
+
+            expect(debugLines('a new connection')).toEqual([[
+                'Pool 127.0.0.1:' + server.port + ': a check opened a new connection beside ' +
+                    'the one it held, and that one logged in. The old one was closed already',
+                { pool: '127.0.0.1:' + server.port, newConnection: 'logged_in' }
+            ]]);
+        });
+});
+
+describe('a check on a new connection, when the node holds no open one', () => {
+    // After a call of the app found no route, on a node whose check connection is gone: the
+    // check opens the only connection, as any check that finds none
+    const deciding = async (login: Login) => {
+        const server = await listen();
+        const pool = makePool(server.port);
+        await pool.connect();
+        pool.dropCheckConnection();
+        server.become(login);
+        pool.status.realFailure(noRoute(), true);
+        await until(() => debugLines('a new connection').length > 0, () => server.logins());
+        return { server, pool };
+    };
+
+    it('that logs in: one debug line', async () => {
+        const { server } = await deciding('accepts');
+
+        expect(debugLines('a new connection')).toEqual([[
+            'Pool 127.0.0.1:' + server.port + ': a check asked on a new connection, as the ' +
+                'node held no open one, and that one logged in',
+            { pool: '127.0.0.1:' + server.port, newConnection: 'logged_in' }
+        ]]);
+    });
+
+    it('that is refused: one debug line with the code', async () => {
+        const { server } = await deciding('refuses');
+
+        expect(debugLines('a new connection')).toEqual([[
+            'Pool 127.0.0.1:' + server.port + ': a check asked on a new connection, as the ' +
+                'node held no open one, and that one failed',
+            { pool: '127.0.0.1:' + server.port, newConnection: 'failed',
+                code: 'ER_ACCESS_DENIED_ERROR' }
         ]]);
     });
 });

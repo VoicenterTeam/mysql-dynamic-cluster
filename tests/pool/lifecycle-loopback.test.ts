@@ -1,21 +1,23 @@
 jest.mock('../../src/utils/Logger', () => ({
     __esModule: true,
-    default: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }
+    default: { init: jest.fn(), debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }
 }));
 jest.mock('../../src/metrics/Metrics', () => ({
     __esModule: true,
     default: {
+        init: jest.fn(), registerPools: jest.fn(), unregisterPools: jest.fn(),
         recordOperation: jest.fn(), recordQuery: jest.fn(), recordCacheLookup: jest.fn(),
         recordHealthCheck: jest.fn()
     }
 }));
 jest.mock('../../src/Redis/Redis', () => ({
     __esModule: true,
-    default: { set: jest.fn(), get: jest.fn() }
+    default: { set: jest.fn(), get: jest.fn(), disconnect: jest.fn() }
 }));
 
 import mysql from 'mysql2';
 import { AddressInfo } from 'net';
+import { createPoolCluster } from '../../index';
 import { Pool } from '../../src/pool/Pool';
 import { Settings } from '../../src/utils/Settings';
 import Events from '../../src/utils/Events';
@@ -128,11 +130,15 @@ const within = <T = any>(call: Promise<T>): Promise<T> => {
 };
 
 // Events has no way to remove a listener: each one hands its calls to the test's own
+const EVENTS = ['connection', 'acquire', 'release', 'pool_disconnected'];
 const listeners: { [event: string]: () => void } = {};
-['connection', 'acquire', 'release'].forEach(event => {
+EVENTS.forEach(event => {
     Events.on(event as any, () => listeners[event]?.());
 });
-afterEach(() => ['connection', 'acquire', 'release'].forEach(event => delete listeners[event]));
+afterEach(() => EVENTS.forEach(event => delete listeners[event]));
+// a second release listener, added after the one above
+let releasedAfter = 0;
+Events.on('release', () => { releasedAfter++; });
 const throwsOn = (event: string) => {
     listeners[event] = () => { throw new Error('a bug of the app in its ' + event + ' listener'); };
 };
@@ -163,10 +169,13 @@ describe('a listener of the app that throws inside an event of mysql2', () => {
         const pool = makePool(server.port);
         await pool.connect();
         throwsOn('release');
+        releasedAfter = 0;
 
         const rows = await within(pool.query('SHOW GLOBAL STATUS'));
 
         expect(rows).toHaveLength(STATUS.length);
+        // the listener added after the one that threw still hears the release
+        expect(releasedAfter).toBe(1);
         expect(pool.stats()).toEqual({ used: 0, idle: 1, pending: 0 });
         expect(warnLines().map(([, meta]) => meta.error)).toEqual(
             ['a bug of the app in its release listener']);
@@ -198,6 +207,45 @@ describe('a listener of the app that throws inside an event of mysql2', () => {
 
         expect(warnLines()).toHaveLength(1);
         expect(warnLines()[0][1].error).toBe('unreadable error');
+    });
+});
+
+describe('a pool_disconnected listener that throws, on a cluster of two nodes', () => {
+    it('cluster.disconnect() closes both nodes, and the throw is logged', async () => {
+        jest.clearAllMocks();
+        const [one, two] = [await listen(), await listen()];
+        const cluster: any = createPoolCluster({
+            clusterName: 'test',
+            hosts: [one.port, two.port].map((port, index) => ({
+                host: '127.0.0.1', port, id: index + 1
+            })),
+            defaultPoolSettings: {
+                user: 'u', password: 'p', database: 'd', flags: [],
+                timerCheckRange: { start: 600000, end: 600000 }
+            },
+            useClusterHashing: false
+        } as any);
+        try {
+            await cluster.connect();
+            await until(() => cluster.pools.every((pool: any) => pool.status.isValid),
+                () => cluster.pools.map((pool: any) => pool.status.isValid));
+            let thrown = false;
+            listeners.pool_disconnected = () => {
+                if (thrown) return;
+                thrown = true;
+                throw new Error('a bug of the app in its pool_disconnected listener');
+            };
+
+            await expect(cluster.disconnect()).resolves.toBeUndefined();
+
+            expect(cluster.pools.map((pool: any) => [
+                pool.status.active, pool._pool._closed, pool._reaper._timer === null
+            ])).toEqual([[false, true, true], [false, true, true]]);
+            expect(warnLines().map(([, meta]) => [meta.nodeId, meta.error])).toEqual(
+                [[1, 'a bug of the app in its pool_disconnected listener']]);
+        } finally {
+            cluster.pools.forEach((pool: any) => pool.disconnect());
+        }
     });
 });
 

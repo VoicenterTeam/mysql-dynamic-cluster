@@ -15,14 +15,19 @@ const makeConn = () => {
     return connection;
 };
 // A mysql2 pool with its free list: the length, and one entry at a time through get(), as
-// the queue of mysql2 has them. The test takes a connection out as mysql2 does when the
-// server closed it
+// the queue of mysql2 has them
 const freeList = (connections: object[]) => ({
     _freeConnections: {
         get length() { return connections.length; },
         get: (index: number) => connections[index]
     }
 });
+// what mysql2 does when the server closed an idle connection: it takes the connection out
+// of its free list and out of its pool, whose place on the connection it sets to null
+const closedByMysql2 = (conn: any, free: object[]) => {
+    free.splice(free.indexOf(conn), 1);
+    conn._pool = null;
+};
 const lost = () => Object.assign(new Error('read ECONNRESET'),
     { code: 'ECONNRESET', errno: -104, syscall: 'read', fatal: true });
 // the connections the reaper takes for idle
@@ -80,18 +85,18 @@ describe('a connection the age rule closes while its ping is out', () => {
 });
 
 describe('a connection mysql2 took out of its free list by itself, on a node without the ping', () => {
-    it('is forgotten at the next tick, also when the pool is at minConnections', () => {
+    // dropped as well: harmless for a connection mysql2 closed already
+    it('is forgotten and dropped at the next tick, also when the pool is at minConnections', () => {
         const reaper = new IdleConnectionReaper(1, 30_000, 10_000);
         const conns = [makeConn(), makeConn()];
         const free = [...conns];
         reaper.start(freeList(free) as any);
         conns.forEach(conn => reaper.onRelease(conn));
 
-        // the server closed both, and mysql2 took them out of its lists
-        free.splice(0);
+        conns.forEach(conn => closedByMysql2(conn, free));
         jest.advanceTimersByTime(10_000);
 
-        expect([known(reaper), destroys(conns)]).toEqual([0, [0, 0]]);
+        expect([known(reaper), destroys(conns)]).toEqual([0, [1, 1]]);
         reaper.stop();
     });
 
@@ -102,7 +107,7 @@ describe('a connection mysql2 took out of its free list by itself, on a node wit
         reaper.start(freeList(free) as any);
         [gone, kept].forEach(conn => reaper.onRelease(conn));
 
-        free.splice(0, 1);
+        closedByMysql2(gone, free);
         jest.advanceTimersByTime(10_000);
 
         expect(known(reaper)).toBe(1);
@@ -120,12 +125,50 @@ describe('a connection mysql2 took out of its free list by itself, on a node wit
         reaper.start(freeList(free) as any);
         reaper.onRelease(conn);
 
-        free.splice(0);
+        closedByMysql2(conn, free);
         jest.advanceTimersByTime(10_000);
         const pinged = pings([conn]);
         conn.answer(lost());
 
         expect([pinged, removed.mock.calls.length, known(reaper)]).toEqual([[1], 1, 0]);
+        reaper.stop();
+    });
+
+    // An idle connection of the mysql2 pool of an earlier start(), as after a second
+    // connect(), is in neither free list and still open. It is left to the age rule, as
+    // before 4.1.1, which closes it and keeps minConnections of the pool of this start()
+    it('one of another mysql2 pool is still open: the age rule closes it, as before', () => {
+        const reaper = new IdleConnectionReaper(1, 30_000, 10_000);
+        const [a1, a2] = [makeConn(), makeConn()];
+        reaper.start(freeList([a1, a2]) as any);
+        [a1, a2].forEach(conn => reaper.onRelease(conn));
+        const [b1, b2, b3] = [makeConn(), makeConn(), makeConn()];
+        reaper.start(freeList([b1, b2, b3]) as any);
+        [b1, b2, b3].forEach(conn => reaper.onRelease(conn));
+
+        jest.advanceTimersByTime(10_000);
+        const atFirstTick = [known(reaper), destroys([a1, a2])];
+        jest.advanceTimersByTime(30_000);
+
+        expect(atFirstTick).toEqual([5, [0, 0]]);
+        expect([destroys([a1, a2]), destroys([b1, b2, b3]), known(reaper)])
+            .toEqual([[1, 1], [0, 0, 0], 3]);
+        reaper.stop();
+    });
+
+    it('a free list whose get() throws: nothing is forgotten, and the age rule goes on', () => {
+        const reaper = new IdleConnectionReaper(0, 30_000, 10_000);
+        const conns = [makeConn(), makeConn()];
+        reaper.start({
+            _freeConnections: { length: 2, get: () => { throw new Error('unreadable'); } }
+        } as any);
+        conns.forEach(conn => reaper.onRelease(conn));
+
+        jest.advanceTimersByTime(10_000);
+        const atFirstTick = known(reaper);
+        jest.advanceTimersByTime(30_000);
+
+        expect([atFirstTick, destroys(conns), known(reaper)]).toEqual([2, [1, 1], 0]);
         reaper.stop();
     });
 
