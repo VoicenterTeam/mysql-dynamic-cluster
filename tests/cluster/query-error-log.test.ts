@@ -13,6 +13,7 @@ jest.mock('../../src/Redis/Redis', () => ({
 
 import { GaleraCluster } from '../../src/cluster/GaleraCluster';
 import Logger from '../../src/utils/Logger';
+import Metrics from '../../src/metrics/Metrics';
 
 // The log line of each failed attempt, and errors whose members cannot be read (#106).
 // Every node fails before its statement went out, so query() tries the next one
@@ -168,5 +169,36 @@ describe('an error whose errors cannot be read', () => {
         expect(rejection).toBe(last);
         expect(rejection.errors).toHaveLength(1);
         expect(rejection.errors[0].error).toBe(first);
+    });
+});
+
+// mayTryNextNode reads the code and the errno of the error to decide on the next node
+describe('an error whose code or errno cannot be read', () => {
+    it.each(['code', 'errno'])('rejects the call with that error when its %s throws',
+        async name => {
+            const error = throwing(name);
+            const rejection = await rejectionOf(makeCluster([node(1, error)]));
+
+            expect(rejection).toBe(error);
+            expect(rejection.nodeId).toBe(1);
+        });
+
+    it.each(['code', 'errno'])('is recorded as a failed query when its %s throws', async name => {
+        const error = throwing(name);
+        await rejectionOf(makeCluster([node(1, error)]));
+
+        const records = (Metrics.recordQuery as jest.Mock).mock.calls.map(call => call[1]);
+        expect(records).toHaveLength(1);
+        expect(records[0].error).toBe(error);
+    });
+
+    it('lets the next node take the statement, which was not sent', async () => {
+        const last = new Error('last');
+        const rejection = await rejectionOf(
+            makeCluster([node(1, throwing('errno')), node(2, last)])
+        );
+
+        expect(rejection).toBe(last);
+        expect(rejection.errors.map((entry: any) => entry.nodeId)).toEqual([1]);
     });
 });
