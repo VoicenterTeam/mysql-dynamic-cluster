@@ -70,9 +70,20 @@ wins the race:
 - Emits `'connected'` via the shared `Events` bus and resolves the outer
   promise.
 
-Subsequent resolutions short-circuit on the `if (this.connected) return`
-guard
-at the top of the `then` callback.
+Since 4.1.1 those steps are kept as `_clusterConnect`, the connect of the
+cluster. A later pass, of the same call or of another one, finds
+`this.connected` set and settles its call with `_clusterConnect`. Before,
+it returned at that guard without settling.
+
+Since 4.1.1 a second `connect()` without `disconnect()` keeps its own
+promise, connects every pool again and has its own `ready` and
+`firstReady`. It settles with the cluster: within one tick when the cluster
+is connected, when `_clusterConnect` is done while it runs, and when the
+call that still runs resolves (`_connecting`). A rejection of that call
+leaves the second one to its own pools, as before: the second connect of a
+pool can make the first one fail. Its own first failure still rejects it.
+Before 4.1.1 such a call could stay pending for good. `disconnect()`
+forgets both, so the next `connect()` waits for its own pools.
 
 Failure semantics: any `pool.connect()` rejection rejects the outer
 promise in the `catch` callback, with a string: the message of the error,
@@ -346,7 +357,9 @@ used more recently fails under the statement itself, with `sent: true`,
 and the next node is not tried.
 The pool also writes `sent` on the error when the error can take it, but
 the loop reads the outcome: a frozen error, or one the app handed
-`failWaiting()` that many queries share, is decided the same way.
+`failWaiting()` that many queries share, is decided the same way. So is an
+error whose `code` or `errno` throws when read: since 4.1.1 it counts as
+having none, and the call rejects with that error.
 
 **What a cut-off node costs a query.** The probes of one node run one
 after another, and the `timeout` of the query does not cover the borrow:
@@ -693,7 +706,7 @@ names the mode and `execute()`. Always: there is no setting.
 | --- | --- | --- |
 | `connected: boolean` | [`connected`](../../src/cluster/GaleraCluster.ts) | Flipped to `true` by the first successful pool connect; reset to `false` by `disconnect()`. |
 | `pools: Pool[]` (getter) | [`pools`](../../src/cluster/GaleraCluster.ts) | Tagged `@internal`. Used by `ClusterHashing`, `ServiceNames`, and the test harness; not meant for consumers. Apps use the node API below instead. |
-| `connect(): Promise<void>` | [`connect`](../../src/cluster/GaleraCluster.ts) | Resolves on the first pool that comes up; rejects on the first failure before any success. Resolves at once without hosts. |
+| `connect(): Promise<void>` | [`connect`](../../src/cluster/GaleraCluster.ts) | Resolves on the first pool that comes up; rejects on the first failure before any success. Resolves at once without hosts. A second call without `disconnect()` settles with the cluster. |
 | `disconnect(): Promise<void>` | [`disconnect`](../../src/cluster/GaleraCluster.ts) | Synchronous in practice — does not await pool disconnects. |
 | `on(event, callback)` | [`on`](../../src/cluster/GaleraCluster.ts) | Pass-through to the shared `Events` emitter. |
 | `query<T>(sql, values?, queryOptions?)` | [`query`](../../src/cluster/GaleraCluster.ts) | The full routing pipeline described above. |
