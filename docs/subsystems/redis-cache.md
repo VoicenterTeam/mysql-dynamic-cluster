@@ -142,7 +142,7 @@ queries cached barely at all.
 
 ## Read path
 
-[src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts), the cache read in `query`.
+[src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts), the `queryOptions.redis` read in `query`, which logs "Get result of query from redis".
 
 Before entering the pool retry loop, `GaleraCluster.query` performs:
 
@@ -169,13 +169,17 @@ back by the write path above.
 
 ## Stale-while-down fallback
 
-[src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts), the end of `query`.
+[src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts), the `if (redisData)` guard after the retry loop in `query`, which logs
+"The query failed. Use old data from Redis".
 
 When the retry loop ends without a result, `GaleraCluster.query`
 checks whether it has a stashed `redisData` from the earlier read
 attempt. If so, it logs a warning, records the cluster query with source
 `stale_cache`, and returns the **expired**
-cached `data` rather than throwing. The behaviour:
+cached `data` rather than throwing. `query` also serves cached data, even
+expired, before the loop starts, when no pool passes the validator. It logs
+"No valid pool. Use old data from Redis" and records the source
+`stale_cache` too. The behaviour below is that of the end-of-query fallback:
 
 - Runs when every node the loop tried failed, and also when the loop
   stopped early after a statement that may have run, see
@@ -188,8 +192,8 @@ cached `data` rather than throwing. The behaviour:
   read path and therefore the fallback) or check the cluster's emitted
   metrics.
 - Bypasses the throw at
-  [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts), the last `throw` of `query`,
-  entirely.
+  [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts), the final
+  `throw error` of `query`, entirely.
 
 ## Key prefix override
 
