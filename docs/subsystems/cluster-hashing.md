@@ -191,7 +191,7 @@ entry until process restart.
 
 `updateNodeForService(serviceId, nodeId)` is called from
 `GaleraCluster._queryRequest`
-([src/cluster/GaleraCluster.ts:268-270](../../src/cluster/GaleraCluster.ts#L268))
+([`_queryRequest`](../../src/cluster/GaleraCluster.ts))
 after a successful single-pool query, but only when both:
 
 - `queryOptions.serviceId` is truthy, **and**
@@ -206,7 +206,7 @@ caller never sees a failure from the hashing write.
 The fallback service id (`0` / `${clusterName}_mdc`) inserted by
 `GaleraCluster.query` when the caller supplies neither `serviceId`
 nor `serviceName`
-([src/cluster/GaleraCluster.ts:171-178](../../src/cluster/GaleraCluster.ts#L171))
+([`query`](../../src/cluster/GaleraCluster.ts))
 is falsy, so the `if (queryOptions?.serviceId ...)` guard in
 `_queryRequest` skips the write for unhashed traffic — only callers
 that explicitly opt in by passing a non-zero `serviceId` (or a
@@ -223,7 +223,7 @@ reads are pure memory.
 
 It is invoked exactly once per `query`, inside
 `GaleraCluster._getActivePools`
-([src/cluster/GaleraCluster.ts:325-327](../../src/cluster/GaleraCluster.ts#L325)):
+([`_getActivePools`](../../src/cluster/GaleraCluster.ts)):
 
 ```ts
 if (serviceId && this._clusterHashing.connected) {
@@ -262,7 +262,7 @@ load score is the worst in the cluster. If the pinned pool is invalid
 falls back to the pure load-sorted order; nothing forces the query to
 wait for the pinned node to come back. A pin is a *bias*, not a
 constraint. The retry loop in `query`
-([src/cluster/GaleraCluster.ts:217-233](../../src/cluster/GaleraCluster.ts#L217))
+([`query`](../../src/cluster/GaleraCluster.ts))
 walks the resulting array left-to-right. When the pinned pool fails
 before the statement went out, or answers 1047, the query moves on to
 the next-best candidate. After an error reply, a timeout or a lost

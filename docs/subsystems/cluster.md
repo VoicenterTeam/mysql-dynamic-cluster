@@ -10,8 +10,7 @@ settings have been validated and loaded into the `config` singleton; see
 this subsystem.
 
 Source: [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
-The references below name the function to look in. Line numbers are given
-only for the declarations above the constructor.
+The references below name the function or the field to look in.
 
 ## Construction
 
@@ -26,8 +25,8 @@ Fields populated from `config.current`, at the top of the constructor:
 - `_clusterName` ← `clusterName`.
 - `_errorRetryCount` ← `errorRetryCount`.
 - `_useRedis` ← `redis.enabled`.
-- `_nullServiceName` is a constant `"mdc"` initialized on the field
-  ([src/cluster/GaleraCluster.ts:48](../../src/cluster/GaleraCluster.ts#L48));
+- `_nullServiceName` is a constant `"mdc"`, set where the field is
+  declared in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts);
   the fallback service name becomes `${clusterName}_mdc`.
 
 Pool construction, in the constructor:
@@ -39,9 +38,9 @@ Pool construction, in the constructor:
    `id`, the next id is `0` when the sorted list is empty, otherwise
    `last + 1`, and the new id is pushed back into the list so subsequent
    gaps still increment from the highest assigned id.
-3. Only hosts with a truthy `host` value get a `Pool`; otherwise an
-   error is logged. Pools are constructed with `(poolSettings,
-   clusterName)`.
+3. Every host gets a `Pool`, constructed with `(poolSettings,
+   clusterName)`. A host without `host` never gets here: the settings
+   schema rejects it.
 
 After the pool array is built, the constructor instantiates
 `ServiceNames(this, config.current.serviceMetrics)` and
@@ -664,8 +663,8 @@ names the mode and `execute()`. Always: there is no setting.
 
 | Member | Source | Notes |
 | --- | --- | --- |
-| `connected: boolean` | [:27](../../src/cluster/GaleraCluster.ts#L27) | Flipped to `true` by the first successful pool connect; reset to `false` by `disconnect()`. |
-| `pools: Pool[]` (getter) | [:34](../../src/cluster/GaleraCluster.ts#L34) | Tagged `@internal` at [:32](../../src/cluster/GaleraCluster.ts#L32). Used by `ClusterHashing`, `ServiceNames`, and the test harness; not meant for consumers. Apps use the node API below instead. |
+| `connected: boolean` | [`connected`](../../src/cluster/GaleraCluster.ts) | Flipped to `true` by the first successful pool connect; reset to `false` by `disconnect()`. |
+| `pools: Pool[]` (getter) | [`pools`](../../src/cluster/GaleraCluster.ts) | Tagged `@internal`. Used by `ClusterHashing`, `ServiceNames`, and the test harness; not meant for consumers. Apps use the node API below instead. |
 | `connect(): Promise<void>` | [`connect`](../../src/cluster/GaleraCluster.ts) | Resolves on the first pool that comes up; rejects on the first failure before any success. |
 | `disconnect(): Promise<void>` | [`disconnect`](../../src/cluster/GaleraCluster.ts) | Synchronous in practice — does not await pool disconnects. |
 | `on(event, callback)` | [`on`](../../src/cluster/GaleraCluster.ts) | Pass-through to the shared `Events` emitter. |
