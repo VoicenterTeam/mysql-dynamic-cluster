@@ -143,6 +143,8 @@ export class GaleraCluster {
         if (!this._resolveReady) this._newReady();
         const resolveReady = this._resolveReady;
         this._resolveReady = undefined;
+        // the `ready` of this call: a later call makes a new one
+        const ready = this._ready;
         // the same for `firstReady`
         if (!this._resolveFirstReady) this._newFirstReady();
         const resolveFirstReady = this._resolveFirstReady;
@@ -150,6 +152,9 @@ export class GaleraCluster {
 
         return new Promise((resolve, reject) => {
             Logger.debug("Connecting all pools");
+            // no node to wait for: a query then fails with MDC_NO_NODE_AVAILABLE, as with no
+            // valid node
+            if (!this._pools.length) resolve();
             // the results that are in, each at the place of its node
             const settled: INodeReadyResult[] = [];
             const results = this._pools.map((pool, index) => {
@@ -167,8 +172,16 @@ export class GaleraCluster {
 
                     resolve();
                 }).catch(err => {
-                    Logger.error(err.message);
-                    reject(err.message);
+                    // the message when there is one. Nothing here may throw: a pool may reject
+                    // with undefined, null or an object whose message cannot be read
+                    let reason: string;
+                    try {
+                        reason = err?.message ? String(err.message) : String(err);
+                    } catch {
+                        reason = 'unreadable error';
+                    }
+                    Logger.error(reason);
+                    reject(reason);
                 });
                 const result = GaleraCluster._readyResult(pool, connecting, outcome);
                 result.then(ended => {
@@ -183,6 +196,12 @@ export class GaleraCluster {
             all.then(resolveReady);
             // no pool passed: every result, at the moment of `ready`. After a pass it does nothing
             all.then(everyResult => resolveFirstReady(GaleraCluster._ownResults(everyResult)));
+            // No node passed: the pools of a connect() that failed report no metrics. Kept
+            // when the cluster is connected, or when a later connect() call, which has a
+            // `ready` of its own, runs
+            all.then(() => {
+                if (!this.connected && this._ready === ready) Metrics.unregisterPools(this._pools);
+            });
         })
     }
 
