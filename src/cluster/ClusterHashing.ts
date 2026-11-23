@@ -20,6 +20,9 @@ export class ClusterHashing {
     private _checkRun: number = 0;
     // the connect() that runs, which a second call shares until it ends or stop() is called
     private _connecting?: Promise<void>;
+    // the schema steps that run, also those of a run that stop() ended: the next run waits for
+    // them, so the statements of two runs never interleave
+    private _steps?: Promise<void>;
 
     // Next time for hashing check
     private readonly _nextCheckTime: number;
@@ -49,7 +52,7 @@ export class ClusterHashing {
      */
     public connect(): Promise<void> {
         if (!this._connecting) {
-            const connecting = this._connect();
+            const connecting = this._connect(this._checkRun);
             this._connecting = connecting;
             const ended = () => {
                 if (this._connecting === connecting) this._connecting = undefined;
@@ -61,13 +64,21 @@ export class ClusterHashing {
 
     /**
      * The run of connect()
+     * @param run the value of _checkRun when connect() was called: a stop() ends the run
      * @private
      */
-    private async _connect() {
-        const run = this._checkRun;
-        // a stop() before this turned the check timer off for good otherwise
-        this._timer.activate();
+    private async _connect(run: number) {
+        const previous = this._steps;
+        let stepsEnded: () => void;
+        const steps = new Promise<void>(resolve => { stepsEnded = resolve; });
+        this._steps = steps;
         try {
+            // the steps of a run that stop() ended may still go on
+            if (previous) await previous;
+            // stopped while it waited: the next run does the steps
+            if (run !== this._checkRun) return;
+            // a stop() before this turned the check timer off for good otherwise
+            this._timer.activate();
             if (!await this._isDatabaseVersionEquals()) {
                 await this._cluster.query(
                     `DROP SCHEMA IF EXISTS ${this._database};`,
@@ -84,12 +95,13 @@ export class ClusterHashing {
             Logger.info(`Database ${this._database} created for hashing`);
 
             await this._insertNodes();
-            // stopped while the steps ran: this run is over, the check belongs to the next one
-            if (run !== this._checkRun) return;
-            await this._checkHashing();
-        } catch (err) {
-            throw err;
+        } finally {
+            stepsEnded();
+            if (this._steps === steps) this._steps = undefined;
         }
+        // stopped while the steps ran: this run is over, the check belongs to the next one
+        if (run !== this._checkRun) return;
+        await this._checkHashing();
     }
 
     /**
