@@ -111,6 +111,24 @@ export class GaleraCluster {
                 new Pool(poolSettings, this._clusterName)
             )
         })
+        // Ids that break a rule are kept as they are, with one warning per host (#71)
+        config.current.hosts.forEach(poolSettings => {
+            const id = poolSettings.id;
+            const broken: string[] = [];
+            if (id < 0) broken.push('is negative');
+            if (!Number.isInteger(id)) broken.push('is not an integer');
+            if (config.current.hosts.some(other => other !== poolSettings && other.id === id)) {
+                broken.push('is the id of another host too');
+            }
+            // the hashing database keeps the id of a node in a signed TINYINT
+            if (this._useClusterHashing && id > 127) {
+                broken.push('is above 127, the highest id cluster hashing takes');
+            }
+            if (broken.length) {
+                Logger.warn(`Host ${poolSettings.host}:${poolSettings.port} uses the id ${id}, `
+                    + `which ${broken.join(' and ')}`);
+            }
+        })
 
         this._serviceNames = new ServiceNames(this, config.current.serviceMetrics);
         const hashingSettings = config.current.clusterHashing;
