@@ -58,7 +58,8 @@ export interface IQueryOptions {
     signal?: AbortSignal,
     // Called once when a call that asked a node settles, before its promise does: where its
     // last attempt ended and how long it waited for connections. Not called for a Redis hit or
-    // a call refused before any node. A throw in it is logged and changes nothing
+    // a call refused before any node. A throw in it, and the rejection of a promise it returns,
+    // is logged and changes nothing
     onTiming?: (timing: IQueryTiming) => void
 }
 
@@ -71,10 +72,11 @@ export type QueryStep = 'queue' | 'probe' | 'prepare' | 'statement';
 export interface IQueryTiming {
     // the step the last attempt ended in, also 'statement' for a call that resolved
     step: QueryStep,
-    // time in ms the call waited for a connection, summed over every node it tried
+    // time the call waited for a connection, summed over every node it tried. In milliseconds,
+    // with a fraction: it comes from a monotonic clock
     queuedMs: number,
     // the node of the last attempt
-    nodeId?: number
+    nodeId: number
 }
 
 // How far one Pool.query() call got. The caller hands in an empty object and the pool fills

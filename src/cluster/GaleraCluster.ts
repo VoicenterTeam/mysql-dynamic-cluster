@@ -660,7 +660,8 @@ export class GaleraCluster {
             text = 'a value that is not text';
         }
         // the logger catches what the logger of the app throws
-        Logger.warn("onTiming of a query threw, the call keeps its result: " + text, { nodeId });
+        Logger.warn("onTiming of a query threw or rejected, the call keeps its result: " + text,
+            { nodeId });
     }
 
     /**

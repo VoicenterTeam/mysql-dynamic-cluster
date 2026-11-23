@@ -1,4 +1,5 @@
 import mysql, { PoolConnection } from "mysql2";
+import { performance } from "perf_hooks";
 import Logger from "../utils/Logger";
 import { IAbortOutcome, IAttemptTiming } from "../types/PoolInterfaces";
 import { PoolStatus } from "./PoolStatus";
