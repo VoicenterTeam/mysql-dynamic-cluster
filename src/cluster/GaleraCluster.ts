@@ -1030,7 +1030,9 @@ export class GaleraCluster {
                 return '';
             }
         };
-        const message = text(() => error?.message) || text(() => error);
+        // undefined and null are named too, so the line does not end at the colon
+        const message = text(() => error?.message)
+            || (error === undefined || error === null ? String(error) : text(() => error));
         const details = [['code', text(() => error?.code)], ['errno', text(() => error?.errno)]]
             .filter(([, value]) => value !== '')
             .map(([name, value]) => `${name} ${value}`)
