@@ -1,6 +1,8 @@
 # Changelog
 
-## 5.0.1-rc.1 (2026-11-23)
+## 5.0.1 (2026-11-23)
+
+The same code as 5.0.1-rc.1, which vc-dal tested on a 3-node Galera rig.
 
 ### Fixed
 
