@@ -9,7 +9,7 @@
 | `connected` | [src/cluster/GaleraCluster.ts](../src/cluster/GaleraCluster.ts) | none | Once, when the first pool in `GaleraCluster.connect()` finishes its initial validation. Subsequent pool successes do not re-emit because of the `this.connected` guard. |
 | `hashing_created` | [src/cluster/GaleraCluster.ts](../src/cluster/GaleraCluster.ts) | none | After `ClusterHashing.connect()` resolves, if the cluster was constructed with `useClusterHashing: true`. Fires immediately after `connected`. |
 | `disconnected` | [src/cluster/GaleraCluster.ts](../src/cluster/GaleraCluster.ts) | none | At the end of `GaleraCluster.disconnect()`, after all pools have been instructed to close and the hashing helper / Redis client are stopped. |
-| `pool_connected` | [src/pool/Pool.ts](../src/pool/Pool.ts) | `poolId: number` | Per pool, when its initial `checkStatus()` reports `isValid`. Emitted once per pool per connect cycle. |
+| `pool_connected` | [src/pool/Pool.ts](../src/pool/Pool.ts) | `poolId: number` | Per pool, when its initial `checkStatus()` reports `isValid`. Emitted once per pool per connect cycle. Since 4.1.1 not at all when a `disconnect()` or a later `connect()` came during that check. |
 | `pool_disconnected` | [src/pool/Pool.ts](../src/pool/Pool.ts) | `poolId: number` | Per pool, inside `Pool.disconnect()` after `mysql2.Pool.end()` is invoked and the status timer is stopped. |
 | `connection` | [src/pool/Pool.ts](../src/pool/Pool.ts) | `connection, poolId` | Re-emit of the underlying `mysql2.Pool` `"connection"` event: a new physical MySQL connection has just been opened by the pool. |
 | `acquire` | [src/pool/Pool.ts](../src/pool/Pool.ts) | `connection, poolId` | Re-emit of `mysql2.Pool` `"acquire"`: an existing connection has been handed out for a query. |
@@ -23,10 +23,8 @@ The `poolId` is the numeric `id` assigned to a pool at construction time (auto-i
 The shared emitter wraps emit arguments into an array before forwarding them:
 
 ```ts
-// src/utils/Events.ts
-emit(event: ClusterEvent, ...args: any[]) {
-    eventEmitter.emit(event, args);   // note: `args`, not `...args`
-}
+// src/utils/Events.ts, each listener in its own try since 4.1.1
+listener.call(eventEmitter, args);   // note: `args`, not `...args`
 ```
 
 See [src/utils/Events.ts](../src/utils/Events.ts). Because the rest-spread is collapsed into a single `args` array on the way out, every listener receives **one** positional argument: an array of whatever was passed to `Events.emit`.
@@ -151,9 +149,8 @@ What to know:
   node up, unless it is the `fall`th failed check in a row. See
   [health-and-scoring.md](./subsystems/health-and-scoring.md#passive-health).
 - A listener that throws does not stop the health checks. The next check is set before the
-  listeners run, and the thrown error is logged. Other listeners of the same event that were
-  added after the one that threw do not run for that check. The other events have no such
-  guard.
+  listeners run, and the thrown error is logged. Since 4.1.1 the listeners added after the
+  one that threw still run, see [Notes for subscribers](#notes-for-subscribers).
 - An `async` listener that rejects is not caught. Node treats it as an unhandled rejection of
   the app, which ends the process by default. Catch inside an async listener.
 - A check that is still running when the pool is disconnected reports nothing. No
@@ -166,4 +163,5 @@ What to know:
 - `connected` is one-shot per process-cluster lifecycle (guarded by `this.connected`). If you `disconnect()` and `connect()` again, it will fire again because the flag is reset in `disconnect()`.
 - `hashing_created` only fires when `useClusterHashing` is enabled; see [configuration.md](./configuration.md) for that flag.
 - `connection`, `acquire`, `release` are high-frequency events tied to query throughput. Avoid heavy work in their handlers.
+- A listener that throws keeps no other listener from the event, since 4.1.1: each one runs in its own `try`. The first throw goes on to the code that emitted the event once all listeners ran, as a throw did before, and each later one is logged at `warn`. For `connection`, `acquire`, `release`, `pool_connected` and `pool_disconnected` the pool catches that first throw and logs it at `warn` with `nodeId`, `pool` and `error`, so it reaches neither mysql2 nor `connect()` and `disconnect()`. For `pool_check_failed` the check logs it, see above. A throw from a listener of `connected`, `disconnected` or `hashing_created` still reaches `GaleraCluster`, as before.
 - `connection`, `acquire` and `release` come from the mysql2 pool. A health check of the legacy check takes a connection of that pool, so each check emits `acquire` and `release`. A node with a `healthCheck` block is checked on a connection of its own, which is no connection of the pool: its checks emit none of the three. Neither does the ping of an idle pooled connection of such a node.

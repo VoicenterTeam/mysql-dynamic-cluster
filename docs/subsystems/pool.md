@@ -84,7 +84,9 @@ calls on each pool. The steps:
    overtook during the check emits no `'pool_connected'` and logs no
    `Pool is connected`, so the event never comes after a
    `'pool_disconnected'`. It still resolves or throws by `isValid`, as
-   before.
+   before. A `'pool_connected'` listener that throws is logged at `warn`
+   and no longer rejects the `connect()` of a valid node, since 4.1.1, see
+   [`_connectEvents()`](#_connectevents).
 
 The `'pool_connected'` event is documented in
 [../events.md](../events.md).
@@ -106,12 +108,18 @@ reuse and dropped on every destroy.)
 - `acquire` — log and emit `Events.emit('acquire', connection,
   this.id)`.
 
-Since 4.1.1 `_emitToApp()` emits each of them in a `try`. The listeners
-of the app run inside a handler of mysql2. A throw there lost the
+Since 4.1.1 `_emitToApp()` emits each of them in a `try`, and
+`'pool_connected'` and `'pool_disconnected'` as well. The listeners of a
+connection run inside a handler of mysql2. A throw there lost the
 connection of an `acquire`, kept the check on a new connection from
 passing after a `connection`, and left a `query()` pending after a
-`release`. Now the throw is logged at `warn` with `nodeId`, `pool` and
-`error`, the message of what was thrown, and mysql2 goes on.
+`release`. A throw of a `'pool_connected'` listener rejected the
+`connect()` of a valid node. One of a `'pool_disconnected'` listener cut
+`GaleraCluster.disconnect()` short, so the nodes after it stayed active
+with their mysql2 pools open. Now the throw is logged at `warn` with
+`nodeId`, `pool` and `error`, the message of what was thrown, and goes
+no further. The listeners after it still run, see
+[../events.md](../events.md#notes-for-subscribers).
 
 See [../events.md](../events.md) for the payload shapes consumers
 actually receive (note the `Events.emit` args-wrap quirk documented
@@ -135,7 +143,8 @@ Synchronous. Steps:
    after them stops the timers of
    [the idle connections](#the-idle-connections-of-the-pool), and closes a
    connection whose ping is still out.
-3. Emit `'pool_disconnected'` with the pool id.
+3. Emit `'pool_disconnected'` with the pool id. A listener that throws is
+   logged at `warn` since 4.1.1, and `disconnect()` does not throw.
 
 `pool.end` is callback-style and not awaited; the method returns before
 the mysql2 pool has actually flushed in-flight connections. Callers
@@ -675,7 +684,12 @@ away from the app. The rules of the check are in
   [A check after a call that could open no connection](health-and-scoring.md#a-check-after-a-call-that-could-open-no-connection).
   Since 4.1.1 one `debug` line tells how the new one ended, with the
   meta `pool` and `newConnection`: `logged_in`, or `failed` with `code`
-  and `kept`, whether the old one stays.
+  and `kept`, whether the old one stays. The line says so as well when the
+  old one was closed already: it broke while the new one logged in, or the
+  timeout of the check came first. When the node holds no open connection
+  the query goes out as with one argument, on the connection that is
+  logging in or on one it opens, and one `debug` line tells how that one
+  ended, with `pool`, `newConnection` and, for `failed`, `code`.
 - **Kept or dropped as the pool does it.** A `fatal` error drops the
   connection, which every error of a change of user is. An error packet
   under the status query keeps it.
@@ -750,12 +764,18 @@ or one that was still out at a later tick, gave the line of a failed ping
 for a connection the age rule had closed.
 
 On a node without the block the age rule first forgets every connection
-that is no longer in the free list of mysql2, since 4.1.1: one mysql2
-closed by itself, as after the server closed it. Before, the reaper kept
-such a connection for ever, since the age rule stops at `minConnections`.
-It reads the list with its `get()`, as mysql2 3 has it, and leaves a list
-without one alone. A node with the block forgets such a connection at its
-next ping, see below.
+mysql2 took out of its pool by itself, since 4.1.1: one mysql2 closed, as
+after the server closed it. Before, the reaper kept such a connection for
+ever, since the age rule stops at `minConnections`. Such a connection is
+not in the free list of mysql2, and mysql2 has set its `_pool` to `null`.
+The reaper drops it as well, which does nothing to a connection that is
+closed already. An idle connection of another mysql2 pool, as after a
+second `connect()` without a `disconnect()`, is not in the free list
+either. It is still open, so the reaper leaves it to the age rule, as
+before 4.1.1. The reaper reads the free list with its `get()`, as mysql2
+3 has it. A list without one, or whose `get()` throws, is not read so,
+and the age rule goes on. A node with the block forgets a closed
+connection at its next ping, see below.
 
 **The ping, for a node with a `healthCheck` block.** Not in earlier
 releases. Every idle connection the age rule kept gets one `COM_PING`. The
@@ -1001,7 +1021,7 @@ the waiting requests reject with it as before.
 | `stats()` | `() => { used, idle, pending }` | [`stats`](../../src/pool/Pool.ts) |
 | `checkError` | getter returning `INodeCheckError \| undefined` | [`checkError`](../../src/pool/Pool.ts) |
 | `holdsCheckConnection` | getter returning `boolean` | [`holdsCheckConnection`](../../src/pool/Pool.ts) |
-| `holdsOpenCheckConnection` | getter returning `boolean` | [`holdsOpenCheckConnection`](../../src/pool/Pool.ts) |
+| `holdsOpenCheckConnection` | getter returning `boolean`, `@internal`: only `PoolStatus` reads it | [`holdsOpenCheckConnection`](../../src/pool/Pool.ts) |
 | `checkQuery<T>(sql, keeps?, asked?)` | `(sql: string, keeps?: (error: any) => boolean, asked?: { drop?: () => void }) => Promise<T>` | [`checkQuery`](../../src/pool/Pool.ts) |
 | `dropCheckConnection()` | `() => void` | [`dropCheckConnection`](../../src/pool/Pool.ts) |
 
