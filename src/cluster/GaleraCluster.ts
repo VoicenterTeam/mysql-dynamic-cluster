@@ -174,21 +174,12 @@ export class GaleraCluster {
         // what an earlier call left: the connect of the cluster, or the call that still runs
         const clusterConnect = this._clusterConnect;
         const earlier = this._connecting;
-        // the text a call rejects with: the message when there is one. Nothing here may throw:
-        // a pool may reject with undefined, null or an object whose message cannot be read
-        const reasonOf = (err: any): string => {
-            try {
-                return err?.message ? String(err.message) : String(err);
-            } catch {
-                return 'unreadable error';
-            }
-        };
 
         const call = new Promise<void>((resolve, reject) => {
             Logger.debug("Connecting all pools");
             // settles this call with the connect of the cluster that another call started
             const withCluster = (connect: Promise<void>) => connect.then(
-                () => resolve(), err => reject(reasonOf(err))
+                () => resolve(), err => reject(GaleraCluster._reasonText(err))
             );
             // A later call keeps its own promise and settles with the cluster (#61): at once
             // when it is connected, when the connect of the cluster is done while that runs,
@@ -222,7 +213,7 @@ export class GaleraCluster {
 
                     resolve();
                 }).catch(err => {
-                    const reason = reasonOf(err);
+                    const reason = GaleraCluster._reasonText(err);
                     Logger.error(reason);
                     reject(reason);
                 });
@@ -292,7 +283,8 @@ export class GaleraCluster {
             reason => ({
                 nodeId,
                 ok: false,
-                error: GaleraCluster._isError(reason) ? reason : new Error(String(reason)),
+                error: GaleraCluster._isError(reason)
+                    ? reason : new Error(GaleraCluster._reasonText(reason)),
                 ...GaleraCluster._failedCheckError(pool, outcome)
             })
         );
@@ -341,6 +333,20 @@ export class GaleraCluster {
         checkError: INodeInfo['checkError']
     ): Pick<INodeInfo, 'checkError'> {
         return checkError ? { checkError } : {};
+    }
+
+    /**
+     * The text of what a pool connect rejected with: the message when there is one, else the
+     * value as text. Nothing here may throw: a pool may reject with undefined, null, an object
+     * without a prototype or one whose message cannot be read
+     * @private
+     */
+    private static _reasonText(err: any): string {
+        try {
+            return err?.message ? String(err.message) : String(err);
+        } catch {
+            return 'unreadable error';
+        }
     }
 
     /**
