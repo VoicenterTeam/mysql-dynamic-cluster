@@ -236,6 +236,22 @@ describe('the declarations of the built package', () => {
         expect(errors[0]).toMatch(new RegExp('^2339 .*' + field));
     });
 
+    // the timing of a query (#122): the two types, and onTiming typed with them
+    it('export the types of onTiming', () => {
+        const timed = app + `
+import type { IQueryTiming, QueryStep } from './index';
+
+export const timingTypes: [
+    Same<QueryStep, 'queue' | 'probe' | 'prepare' | 'statement'>,
+    Same<IQueryTiming, { step: QueryStep; queuedMs: number; nodeId?: number }>
+] = [true, true];
+export const told = cluster.query('SELECT 1', undefined, {
+    onTiming: (timing: IQueryTiming) => console.log(timing.step, timing.queuedMs)
+});
+`;
+        expect(compileApp(declarations, timed)).toEqual([]);
+    });
+
     // the control: an app that asks for a type the package does not export does not compile
     it('do not export a type that does not exist', () => {
         const errors = compileApp(

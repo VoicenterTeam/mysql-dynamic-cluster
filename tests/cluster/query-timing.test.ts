@@ -1,5 +1,7 @@
 import mysql from 'mysql2';
 import { AddressInfo } from 'net';
+import { spawnSync } from 'child_process';
+import path from 'path';
 import { createPoolCluster } from '../../index';
 import Redis from '../../src/Redis/Redis';
 
@@ -62,6 +64,8 @@ const prepareOk = () => {
     };
 };
 
+type Waited = 'statement' | 'ping' | 'use';
+
 interface INode {
     port: number,
     // keep the answer to every statement of the app from now on, until answer()
@@ -74,8 +78,8 @@ interface INode {
     slowLogins: (ms: number) => void,
     // answer no ping and no status query of a health check from now on
     cutOff: () => void,
-    // resolves when the node got the next statement of the app
-    nextStatement: () => Promise<void>,
+    // resolves when the node got the next statement of the app, ping or USE
+    next: (what: Waited) => Promise<void>,
     // what the node got: logins and statements of the app
     seen: () => { logins: number, statements: number }
 }
@@ -84,7 +88,8 @@ const listen = async (connections: number): Promise<INode> => {
     const server: any = (mysql as any).createServer();
     const open: any[] = [];
     const held: (() => void)[] = [];
-    const waiting: (() => void)[] = [];
+    const waiting: Record<Waited, (() => void)[]> = { statement: [], ping: [], use: [] };
+    const got = (what: Waited) => waiting[what].splice(0).forEach(resolve => resolve());
     const modes = { holding: false, ignoreUse: false, loginDelay: 0, cutOff: false };
     const seen = { logins: 0, statements: 0 };
     closers.push(() => {
@@ -118,11 +123,12 @@ const listen = async (connections: number): Promise<INode> => {
             ok(connection);
         });
         connection.on('ping', () => {
+            got('ping');
             if (!modes.cutOff) ok(connection);
         });
         const statement = () => {
             seen.statements++;
-            waiting.splice(0).forEach(resolve => resolve());
+            got('statement');
             if (modes.holding) return held.push(() => ok(connection, 1));
             ok(connection, 1);
         };
@@ -138,6 +144,7 @@ const listen = async (connections: number): Promise<INode> => {
                 const columns = [column('Variable_name'), column('Value')];
                 return connection.writeTextResult(status(connections), columns);
             }
+            if (sql.startsWith('USE ')) got('use');
             if (sql.startsWith('USE ') && modes.ignoreUse) return;
             if (sql !== APP_SQL) return ok(connection);
             statement();
@@ -155,7 +162,7 @@ const listen = async (connections: number): Promise<INode> => {
         ignoreUse: () => { modes.ignoreUse = true; },
         slowLogins: (ms: number) => { modes.loginDelay = ms; },
         cutOff: () => { modes.cutOff = true; },
-        nextStatement: () => new Promise<void>(resolve => waiting.push(resolve)),
+        next: (what: Waited) => new Promise<void>(resolve => waiting[what].push(resolve)),
         seen: () => ({ ...seen })
     };
 };
@@ -228,7 +235,7 @@ describe('a call that waits for the one connection of its node', () => {
         const node = await listen(1);
         const { cluster } = await connect([node]);
         node.holdStatements();
-        const sent = node.nextStatement();
+        const sent = node.next('statement');
         const first = cluster.query(APP_SQL, undefined, { redis: false });
         await sent;
         return { node, cluster, first };
@@ -238,14 +245,14 @@ describe('a call that waits for the one connection of its node', () => {
         const { node, cluster, first } = await taken();
         const controller = new AbortController();
         const reason = reasonOf();
-        const started = Date.now();
+        const started = performance.now();
         const pending = timed(query(cluster), { signal: controller.signal });
         await pause(200);
-        const untilAbort = Date.now() - started;
+        const untilAbort = performance.now() - started;
 
         controller.abort(reason);
         const { error, timings, order } = await pending;
-        const elapsed = Date.now() - started;
+        const elapsed = performance.now() - started;
 
         // the reason as it is: nothing is written on it
         expect(error).toBe(reason);
@@ -260,14 +267,14 @@ describe('a call that waits for the one connection of its node', () => {
 
     it('the connection frees in time: step statement, queuedMs about the hold', async () => {
         const { node, cluster, first } = await taken();
-        const started = Date.now();
+        const started = performance.now();
         const pending = timed(query(cluster));
         await pause(200);
-        const held = Date.now() - started;
+        const held = performance.now() - started;
 
         node.answer();
         const { result, timings, order } = await pending;
-        const elapsed = Date.now() - started;
+        const elapsed = performance.now() - started;
 
         expect(result.affectedRows).toBe(1);
         expect((await first).affectedRows).toBe(1);
@@ -287,7 +294,8 @@ describe('a call that ends after its connection came', () => {
         node.holdStatements();
         const controller = new AbortController();
         const reason = reasonOf();
-        const sent = node.nextStatement();
+        const sent = node.next('statement');
+        const started = performance.now();
         const pending = timed(query(cluster), { signal: controller.signal });
         await sent;
         // the time of the statement is not time queued
@@ -295,11 +303,13 @@ describe('a call that ends after its connection came', () => {
 
         controller.abort(reason);
         const { error, timings, order } = await pending;
+        const elapsed = performance.now() - started;
 
         expect(error).toBe(reason);
         expect(order).toEqual(['timing', 'settled']);
         expect(timings).toEqual(timing('statement', 1));
-        expect(timings[0].queuedMs).toBeLessThan(50);
+        // most of the call was the statement: a generous bound, not a measure of the handover
+        expect(timings[0].queuedMs).toBeLessThan(elapsed / 2);
     });
 
     it('execute(): step statement', async () => {
@@ -327,11 +337,11 @@ describe('a call that ends after its connection came', () => {
             [n1, n2].forEach(node => node.slowLogins(LOGIN));
             n1.ignoreUse();
             if (step === 'prepare') n2.ignoreUse();
-            const started = Date.now();
+            const started = performance.now();
 
             const { result, error, timings } =
                 await timed(query(cluster), { database: OTHER, timeout: TIMEOUT });
-            const elapsed = Date.now() - started;
+            const elapsed = performance.now() - started;
 
             expect(error?.code).toBe(code);
             if (error) {
@@ -367,6 +377,64 @@ describe('a call that ends after its connection came', () => {
         expect(timings).toEqual(timing('probe', 1));
         expect(node.seen().statements).toBe(1);
     });
+
+    it('every connection it draws fails its probe, connectionLimit + 1 of them: step probe',
+        async () => {
+            const node = await listen(1);
+            const settings = { probeTimeout: 200, idleCheckInterval: LONG };
+            const { cluster } = await connect([node], settings);
+            // every connection counts as idle, a new one too, so the borrow probes each one
+            jest.spyOn(cluster.pools[0]._reaper, 'drawn').mockReturnValue({ aliveAt: 0 });
+            node.cutOff();
+            const logins = node.seen().logins;
+
+            const { error, timings } = await timed(query(cluster));
+
+            expect(error.message).toBe('Probe timeout');
+            expect(timings).toEqual(timing('probe', 1));
+            // connectionLimit 1: two tries, each on a new connection, and the node stays valid
+            expect(node.seen().logins - logins).toBe(2);
+            expect(cluster.nodes()[0].isValid).toBe(true);
+        });
+});
+
+describe('an abort before the statement', () => {
+    it('during the probe of an idle connection: step probe', async () => {
+        const node = await listen(1);
+        const { cluster } = await connect([node], { probeIdle: 200, idleCheckInterval: LONG });
+        expect((await cluster.query(APP_SQL, undefined, { redis: false })).affectedRows).toBe(1);
+        // the connection is idle past probeIdle, then the node answers no ping
+        await pause(300);
+        node.cutOff();
+        const controller = new AbortController();
+        const reason = reasonOf();
+        const pinged = node.next('ping');
+        const pending = timed(query(cluster), { signal: controller.signal });
+        await pinged;
+
+        controller.abort(reason);
+        const { error, timings } = await pending;
+
+        expect(error).toBe(reason);
+        expect(timings).toEqual(timing('probe', 1));
+    });
+
+    it('during the USE of another database: step prepare', async () => {
+        const node = await listen(1);
+        const { cluster } = await connect([node]);
+        node.ignoreUse();
+        const controller = new AbortController();
+        const reason = reasonOf();
+        const used = node.next('use');
+        const pending = timed(query(cluster), { signal: controller.signal, database: OTHER });
+        await used;
+
+        controller.abort(reason);
+        const { error, timings } = await pending;
+
+        expect(error).toBe(reason);
+        expect(timings).toEqual(timing('prepare', 1));
+    });
 });
 
 describe('a call served stale data of Redis after its node failed', () => {
@@ -396,7 +464,7 @@ describe('onTiming itself', () => {
         node.holdStatements();
         const controller = new AbortController();
         const reason = reasonOf();
-        const sent = node.nextStatement();
+        const sent = node.next('statement');
         const pending = cluster.query(APP_SQL, undefined, {
             redis: false, onTiming, signal: controller.signal
         }).catch((e: unknown) => e);
@@ -410,6 +478,120 @@ describe('onTiming itself', () => {
             String(message).includes('onTiming'));
         expect(warned).toHaveLength(2);
         expect(warned[0][0]).toContain('bad callback');
+    });
+
+    const THREW = 'onTiming of a query threw, the call keeps its result: ';
+    const warnings = (logger: { warn: jest.Mock }) => logger.warn.mock.calls
+        .map(([message]: unknown[]) => String(message))
+        .filter((message: string) => message.includes('onTiming'));
+    // A value that cannot be made text, thrown by onTiming, with each way a call ends
+    const values: [string, () => unknown, string][] = [
+        ['a Symbol', () => Symbol('x'), 'Symbol(x)'],
+        ['an object without a prototype', () => Object.create(null), 'a value that is not text']
+    ];
+    const REASON = reasonOf();
+    type End = (node: INode, cluster: any, onTiming: () => void) => Promise<unknown>;
+    const ends: [string, End, (ended: any) => void][] = [
+        ['resolves', (_node, cluster, onTiming) =>
+            cluster.query(APP_SQL, undefined, { redis: false, onTiming }),
+        ended => expect(ended.affectedRows).toBe(1)],
+        ['fails on its node', (node, cluster, onTiming) => {
+            node.ignoreUse();
+            const options = { redis: false, onTiming, database: OTHER, timeout: 200 };
+            return cluster.query(APP_SQL, undefined, options).catch((e: unknown) => e);
+        }, ended => expect([ended.code, ended.nodeId]).toEqual(['PROTOCOL_SEQUENCE_TIMEOUT', 1])],
+        ['is aborted', async (node, cluster, onTiming) => {
+            node.holdStatements();
+            const controller = new AbortController();
+            const sent = node.next('statement');
+            const options = { redis: false, onTiming, signal: controller.signal };
+            const pending = cluster.query(APP_SQL, undefined, options).catch((e: unknown) => e);
+            await sent;
+            controller.abort(REASON);
+            return pending;
+        }, ended => expect(ended).toBe(REASON)]
+    ];
+    it.each(values.flatMap(([name, value, text]) =>
+        ends.map(([how, end, check]) => [name, how, value, text, end, check] as const)
+    ))('throwing %s, a call that %s ends as it would, with one warning',
+        async (_name, _how, value, text, end, check) => {
+            const node = await listen(1);
+            const { cluster, logger } = await connect([node]);
+            const onTiming = jest.fn(() => { throw value(); });
+
+            check(await end(node, cluster, onTiming));
+
+            expect(onTiming).toHaveBeenCalledTimes(1);
+            expect(warnings(logger)).toEqual([THREW + text]);
+        });
+
+    it('an async one that rejects: the call resolves, one warning', async () => {
+        const node = await listen(1);
+        const { cluster, logger } = await connect([node]);
+        const onTiming = jest.fn(async () => { throw new Error('async boom'); });
+
+        const result = await cluster.query(APP_SQL, undefined, { redis: false, onTiming });
+        // the rejection is handled on a later turn
+        await pause(50);
+
+        expect(result.affectedRows).toBe(1);
+        expect(onTiming).toHaveBeenCalledTimes(1);
+        expect(warnings(logger)).toEqual([THREW + 'async boom']);
+    });
+
+    // Jest takes an unhandled rejection over, and a listener of the test never hears it. A
+    // clean Node process does, with a listener of its own: there it never fires
+    it('an async one that rejects leaves no unhandled rejection, in a clean Node process', () => {
+        const script = `
+            const ts = require('typescript');
+            const fs = require('fs');
+            require.extensions['.ts'] = (module, filename) => {
+                const out = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+                    compilerOptions: {
+                        module: ts.ModuleKind.CommonJS, esModuleInterop: true,
+                        target: ts.ScriptTarget.ES2015
+                    },
+                    fileName: filename
+                });
+                module._compile(out.outputText, filename);
+            };
+            const unhandled = [];
+            process.on('unhandledRejection', reason => unhandled.push(String(reason.message)));
+            const warned = [];
+            const quiet = () => undefined;
+            const cluster = require('./index.ts').createPoolCluster({
+                clusterName: 'test',
+                hosts: [{ host: '127.0.0.1', id: 1 }],
+                defaultPoolSettings: { user: 'u', password: 'p', database: 'd' },
+                useClusterHashing: false,
+                logger: { debug: quiet, info: quiet, error: quiet,
+                    warn: message => warned.push(String(message)) }
+            });
+            // a valid node that answers at once, with no socket
+            const pool = cluster.pools[0];
+            pool.status._isValid = true;
+            pool.query = async (sql, options, outcome, call) => {
+                outcome.sent = true;
+                call.timing.step = 'statement';
+                call.timing.queuedMs = 0;
+                return { affectedRows: 1 };
+            };
+            const onTiming = async () => { throw new Error('async boom'); };
+            cluster.query('SELECT 1', undefined, { redis: false, onTiming }).then(result => {
+                setTimeout(() => {
+                    const timing = warned.filter(message => message.includes('onTiming'));
+                    console.log(JSON.stringify([result.affectedRows, timing.length, unhandled]));
+                    process.exit(0);
+                }, 50);
+            });
+        `;
+        const res = spawnSync(process.execPath, ['-e', script], {
+            cwd: path.resolve(__dirname, '../..'), encoding: 'utf8', timeout: 30000
+        });
+
+        expect(res.stderr).toBe('');
+        expect(res.stdout).toBe('[1,1,[]]\n');
+        expect(res.status).toBe(0);
     });
 
     it.each([
@@ -432,7 +614,6 @@ describe('onTiming itself', () => {
     });
 });
 
-type Start = (cluster: any, options: object) => Promise<any>;
 describe('onTiming: null', () => {
     it('counts as no onTiming, as signal: null counts as no signal', async () => {
         const node = await listen(1);
@@ -444,8 +625,10 @@ describe('onTiming: null', () => {
     });
 });
 
+type Start = (cluster: any, options: object) => Promise<any>;
 describe('a call that asks no node gets no onTiming', () => {
     const fresh = JSON.stringify({ data: 'fresh', expired: Date.now() + LONG });
+    const stale = JSON.stringify({ data: 'stale', expired: 0 });
     it.each<[string, Start, string]>([
         ['a Redis hit', (cluster, options) => {
             jest.spyOn(Redis, 'get').mockResolvedValue(fresh);
@@ -460,7 +643,12 @@ describe('a call that asks no node gets no onTiming', () => {
         ['values execute() cannot bind', (cluster, options) =>
             cluster.execute(APP_SQL, [undefined], options), 'TypeError'],
         ['a :name inside quotes', (cluster, options) =>
-            cluster.query("UPDATE t SET a = ':a'", { a: 1 }, options), 'MDC_QUOTED_PLACEHOLDER']
+            cluster.query("UPDATE t SET a = ':a'", { a: 1 }, options), 'MDC_QUOTED_PLACEHOLDER'],
+        ['no valid node, then stale data of Redis', (cluster, options) => {
+            cluster.pools[0].status._isValid = false;
+            jest.spyOn(Redis, 'get').mockResolvedValue(stale);
+            return query(cluster)({ ...options, redis: true });
+        }, 'stale']
     ])('%s', async (_name, start, ends) => {
         const node = await listen(1);
         const { cluster } = await connect([node]);

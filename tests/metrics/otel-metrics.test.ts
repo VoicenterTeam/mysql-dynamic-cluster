@@ -214,6 +214,11 @@ describe('OpenTelemetry metrics', () => {
             const pool = makePool(makeConn());
             (pool as any)._pool = { getConnection: jest.fn((cb: Cb) => cb(accessDenied)) };
             return pool.query('SELECT 1');
+        }],
+        // mysql2 threw before it wrote anything: the statement never reached the connection
+        ['a send mysql2 refused', 'prepare', () => {
+            const conn = { ...makeConn(), execute: jest.fn(() => { throw new TypeError('refused'); }) };
+            return makePool(conn).query('SELECT ?', { execute: true }, {}, { values: [1] });
         }]
     ])('records the step %s ended in as %s', async (_name, step, attempt) => {
         await attempt().catch(() => undefined);
