@@ -11,12 +11,13 @@ jest.mock('../../src/Redis/Redis', () => ({
     default: { set: jest.fn(), get: jest.fn() }
 }));
 
+import mysql from 'mysql2';
 import { GaleraCluster } from '../../src/cluster/GaleraCluster';
 
-// What query() writes into the SQL text with array values (#121): mysql2's format(), from
-// sql-escaper. sql-escaper 1.5.x also replaced a `?` inside a "..." string and inside a #
-// comment, so every value after it moved by one place. The package requires 1.6 or later.
-// The pool records the text it gets: the text the node gets
+// What query() writes into the SQL text with array values (#121): the format() of sql-escaper,
+// which mysql2 exports too. sql-escaper 1.5.x also replaced a `?` inside a "..." string and
+// inside a # comment, so every value after it moved by one place. The package depends on 1.6 or
+// later and calls it itself. The pool records the text it gets: the text the node gets
 const makeCluster = () => {
     const poolQuery = jest.fn().mockResolvedValue([]);
     const cluster: GaleraCluster = Object.assign(Object.create(GaleraCluster.prototype), {
@@ -58,15 +59,79 @@ describe('array values: what else the text gets', () => {
         expect(await sent('SELECT ?? , ?', ['X', 'Y'])).toBe("SELECT `X` , 'Y'");
     });
 
-    it('a plain object becomes `key` = value pairs', async () => {
+    it('a plain object becomes `key` = value pairs after SET, a string elsewhere', async () => {
         const { sent } = makeCluster();
         expect(await sent('UPDATE t SET ?', [{ a: 1, b: 'x' }]))
             .toBe("UPDATE t SET `a` = 1, `b` = 'x'");
+        expect(await sent('SELECT ?', [{ a: 1 }])).toBe("SELECT '[object Object]'");
     });
 
     it('an object with toSqlString() is written raw, a named value too', async () => {
         const { sent } = makeCluster();
         expect(await sent('SELECT ?', [raw('NOW()')])).toBe('SELECT NOW()');
         expect(await sent('SELECT :n', { n: raw('NOW()') })).toBe('SELECT NOW()');
+    });
+});
+
+// query() calls sql-escaper itself, not through mysql2, with the arguments mysql2's format() and
+// escape() get: the text is the one mysql2 writes, here where both resolve the same copy
+describe('the text is the one of mysql2', () => {
+    const formatSQL = (sql: string, values: any): string =>
+        (GaleraCluster.prototype as any)._formatSQL(sql, values);
+    // the text, or the message of what was thrown
+    const outcome = (write: () => string) => {
+        try {
+            return { text: write() };
+        } catch (thrown) {
+            return { thrown: (thrown as Error).message };
+        }
+    };
+    const VALUES: [string, any][] = [
+        ['a string with quotes', `it's "q"`],
+        ['a string with backslashes', 'a\\b\\'],
+        ['a string with NUL and control characters', 'a\0b\n\r\t\x1a\b'],
+        ['a number', 42],
+        ['a negative fraction', -1.5],
+        ['NaN', NaN],
+        ['Infinity', Infinity],
+        ['-Infinity', -Infinity],
+        ['a bigint', BigInt('12345678901234567890')],
+        ['null', null],
+        ['undefined', undefined],
+        ['true', true],
+        ['false', false],
+        ['a Date', new Date(Date.UTC(2026, 0, 2, 3, 4, 5, 6))],
+        ['an invalid Date', new Date(NaN)],
+        ['a Buffer', Buffer.from([0, 1, 0x27, 0x5c, 255])],
+        ['an array', [1, 'a', null]],
+        ['a nested array', [[1, 'a'], [2, null]]],
+        ['a plain object', { a: 1, b: "x'y", c: null }],
+        ['an object with toSqlString()', { toSqlString: () => 'NOW()' }]
+    ];
+
+    it.each(VALUES)('array values: %s', (_name, value) => {
+        // after SET a plain object becomes `key` = value pairs, elsewhere a string
+        for (const sql of ['SELECT ? AS v, ? AS w', 'UPDATE t SET ? WHERE w = ?']) {
+            expect(outcome(() => formatSQL(sql, [value, 'w'])))
+                .toEqual(outcome(() => mysql.format(sql, [value, 'w'])));
+        }
+    });
+
+    it.each(VALUES)('a named value, escape(value, true): %s', (_name, value) => {
+        expect(outcome(() => formatSQL('SELECT :n AS v', { n: value })))
+            .toEqual(outcome(() => 'SELECT ' + mysql.escape(value, true) + ' AS v'));
+    });
+
+    it.each([
+        ['a name', 'SELECT ?? FROM ??', ['col', 't']],
+        ['a qualified name', 'SELECT ?? FROM ??', ['t.col', 'db.t']],
+        ['a backtick in a name', 'SELECT ?? FROM t', ['a`b']],
+        ['a list of names', 'SELECT ?? FROM t', [['a', 'b']]]
+    ])('?? identifiers: %s', (_name, sql, values) => {
+        expect(formatSQL(sql, values)).toBe(mysql.format(sql, values));
+    });
+
+    it('a string as the values', () => {
+        expect(formatSQL('SELECT ?', "it's")).toBe(mysql.format('SELECT ?', "it's"));
     });
 });

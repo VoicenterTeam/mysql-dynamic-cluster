@@ -8,7 +8,10 @@ import {
 } from '../types/PoolInterfaces'
 import Logger from "../utils/Logger";
 
-import { format as MySQLFormat, escape as MySQLEscape, PoolConnection } from 'mysql2';
+import { PoolConnection } from 'mysql2';
+// The format() and escape() mysql2 exports are these. Taken from the package's own dependency,
+// 1.6 or later, whatever copy mysql2 resolves (#121)
+import { escape as escapeValue, format as formatValues } from 'sql-escaper';
 import { Pool } from "../pool/Pool";
 import { abortReason } from "../utils/Abort";
 import { ClusterHashing } from "./ClusterHashing";
@@ -591,7 +594,8 @@ export class GaleraCluster {
     }
 
     /**
-     * Mix together values and sql string. Every value is escaped, those of an object too
+     * Mix together values and sql string. Every value is escaped, those of an object too.
+     * sql-escaper's format() and escape() with the arguments of mysql2's, see the import
      * @param sql MySQL query
      * @param values values to mix with sql
      * @private
@@ -599,15 +603,15 @@ export class GaleraCluster {
     private _formatSQL(sql: string, values: QueryValues): string {
         if (values) {
             if (Array.isArray(values)) {
-                return MySQLFormat(sql, values);
+                return formatValues(sql, values);
             } else if (typeof values === 'string') {
-                return MySQLFormat(sql, values);
+                return formatValues(sql, values);
             } else {
                 // one pass over the sql: a value that holds :name itself is not replaced again
                 return sql.replace(/:(\w+)/g, (txt, key) => {
                     if (!Object.prototype.hasOwnProperty.call(values, key)) return txt;
                     // true: a plain object becomes a quoted string, not `key` = value pairs
-                    return MySQLEscape(values[key], true);
+                    return escapeValue(values[key], true);
                 })
             }
         }
