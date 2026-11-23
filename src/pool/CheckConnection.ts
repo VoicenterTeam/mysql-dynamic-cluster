@@ -1,5 +1,6 @@
 import mysql from "mysql2";
 import { drop, logOut } from "./ServerFlags";
+import Logger from "../utils/Logger";
 
 /**
  * The connection the health check of a node with a healthCheck block asks on: one per
@@ -24,14 +25,17 @@ export class CheckConnection {
     }
     private readonly _options: object;
     private readonly _database: string;
+    private readonly _name: string;
 
     /**
      * @param options what mysql2 opens the connection with: those of the pool of the node
      * @param database the database of the node, for the change of user ahead of a query
+     * @param name the name of the pool of the node, for the log
      */
-    constructor(options: object, database: string) {
+    constructor(options: object, database: string, name: string) {
         this._options = options;
         this._database = database;
+        this._name = name;
     }
 
     /**
@@ -40,6 +44,13 @@ export class CheckConnection {
      */
     public get held(): boolean {
         return !!this._held;
+    }
+
+    /**
+     * Whether the connection that is held logged in. One that is still logging in is not
+     */
+    public get open(): boolean {
+        return !!this._held?.open;
     }
 
     /**
@@ -96,14 +107,23 @@ export class CheckConnection {
             this._drop(opened);
             this._settle(false);
         };
+        const pool = "Pool " + this._name + ": a check opened a new connection beside the " +
+            "one it held, and that one ";
         try {
             await opened.ready;
         } catch (error) {
+            const old = this._kept;
             this._settle(keeps(error));
+            const kept = !!old && this._held === old;
+            Logger.debug(pool + "failed. The old one " +
+                (kept ? "stays" : "is logged out of as well"),
+                { pool: this._name, newConnection: 'failed', code: error?.code, kept });
             throw error;
         }
         // the new one is the connection that is held now
         this._settle(false);
+        Logger.debug(pool + "logged in. The old one is logged out of",
+            { pool: this._name, newConnection: 'logged_in' });
         return this.query<T>(sql, asked);
     }
 

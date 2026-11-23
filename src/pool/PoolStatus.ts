@@ -393,8 +393,10 @@ export class PoolStatus {
         const run = this._checkRun;
         const onNew = this._decides === 'unreachable' || this._decides === 'timeout';
         // Read before the query, which opens a connection when none is held. A new one is
-        // opened by this check itself, and is not opened a second time
-        const held = !onNew && this._pool.holdsCheckConnection;
+        // opened by this check itself, and is not opened a second time. So is one that
+        // still logs in, which another check opened: only a connection that logged in
+        // before can be one the path forgot
+        const held = !onNew && this._pool.holdsOpenCheckConnection;
         try {
             const keeps = onNew ? PoolStatus._noRoute : undefined;
             return await this._pool.checkQuery<GlobalStatusResult[]>(sql, keeps, asked);

@@ -168,7 +168,8 @@ export class Pool {
         // query that is still out on it is told where to ask instead
         const replaced = this._check;
         this._check = this._checksApart
-            ? new CheckConnection({ ...this._connectionOptions(), ...flagsOption }, this._database)
+            ? new CheckConnection(
+                { ...this._connectionOptions(), ...flagsOption }, this._database, this.name)
             : undefined;
         replaced?.close(this._check);
 
@@ -765,6 +766,14 @@ export class Pool {
      */
     public get holdsCheckConnection(): boolean {
         return !!this._check?.held;
+    }
+
+    /**
+     * Whether the check connection the node holds right now logged in. One that is still
+     * logging in is not open. False for a node without a healthCheck block
+     */
+    public get holdsOpenCheckConnection(): boolean {
+        return !!this._check?.open;
     }
 
     /**
