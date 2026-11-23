@@ -223,32 +223,40 @@ only. `valuesInText` is `sql !== originalSql`: whether the formatting
 wrote a value into the text.
 `_formatSQL`:
 
-- Array `values` → `mysql2`'s `format(sql, values)` (positional `?`).
+- Array `values` → sql-escaper's `format(sql, values)` (positional `?`).
 - String `values` → same `format()` call.
 - Object `values` → regex `:paramName` substitution: `sql.replace(/:(\w+)/g, ...)`
   swaps in the value when the object has the key as its own property,
   otherwise leaves the placeholder verbatim. The value goes through
-  `mysql2.escape(value, true)`, so a plain object becomes the string
+  sql-escaper's `escape(value, true)`, so a plain object becomes the string
   `'[object Object]'`, not SQL. Always: there is no `escapeNamedValues`
-  setting or query option to leave the value as text, as 3.2.2 did. A `mysql2.raw()` value, or
+  setting or query option to leave the value as text, as 3.2.2 did. A
+  `mysql2.raw()` value, or
   any object with a `toSqlString` function, is still written as SQL.
 
 #### What values do in the SQL text
 
-`format()` and `escape()` are those of sql-escaper, which mysql2 exports. They do more than
-put a quoted value in place of each `?` (#121):
+`_formatSQL` imports `format()` and `escape()` from sql-escaper, a dependency of the
+package, and calls them with the arguments mysql2's calls get. mysql2 exports these same two
+functions, so with the same copy the text is the one `mysql2.format()` and `mysql2.escape()`
+write; `tests/cluster/values-in-text.test.ts` compares them over a matrix of values. They do
+more than put a quoted value in place of each `?` (#121):
 
 - `??` is an identifier placeholder: `SELECT ?? , ?` with `['X', 'Y']` gives
   ``SELECT `X` , 'Y'``.
-- A plain object among array values becomes `` `key` = value `` pairs: `UPDATE t SET ?` with
-  `[{ a: 1, b: 'x' }]` gives ``UPDATE t SET `a` = 1, `b` = 'x'``. A named value never does.
+- A plain object among array values, in place of an assignment after `SET`, becomes
+  `` `key` = value `` pairs: `UPDATE t SET ?` with `[{ a: 1, b: 'x' }]` gives
+  ``UPDATE t SET `a` = 1, `b` = 'x'``. Anywhere else, `SELECT ?` for one, it becomes the
+  string `'[object Object]'`, and a named value always does.
 - An object with a `toSqlString()` function is written as raw SQL, a named value too.
 - A `?` inside `'...'`, `"..."`, backticks or a comment (`#`, `-- `, `/* */`) is left alone,
   since sql-escaper 1.6. 1.5.x also replaced one inside `"..."` or after `#`, so every value
   after it moved one place. mysql2 3.24 allows 1.5.1, so the package depends on
-  `sql-escaper ^1.6.0` itself, and npm resolves a fixed copy for mysql2 too. An app that
-  depends on a sql-escaper below 1.6 itself keeps that copy for mysql2, and so for
-  `query()`: npm then nests the newer one under this package only.
+  `sql-escaper ^1.6.0` and calls it itself: `query()` leaves such a `?` alone whatever copy
+  mysql2 gets. npm usually resolves the fixed copy for mysql2 too. An app that depends on a
+  sql-escaper below 1.6 itself keeps that copy for mysql2 (npm then nests the newer one under
+  this package), so `mysql2.format()` and `mysql2.escape()` called by the app directly still
+  behave as 1.5.x there.
 - Only `execute()` keeps the values out of the text.
 - Never pass an object from outside the app, such as a request body or parsed JSON, as a
   value: it can turn into column assignments or raw SQL.
