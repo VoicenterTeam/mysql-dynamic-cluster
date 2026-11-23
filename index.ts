@@ -5,6 +5,7 @@ import {
     IClusterConnection, IGetConnectionOptions, INodeCheckError, INodeInfo, INodePoolStats,
     INodeReadyResult
 } from './src/types/NodeInterfaces';
+import { IQueryTiming, QueryStep } from './src/types/PoolInterfaces';
 import Logger from "./src/utils/Logger";
 import { Settings } from "./src/utils/Settings";
 import Redis from "./src/Redis/Redis";
@@ -57,3 +58,4 @@ export {
     INodeReadyResult,
     INodeCheckError
 };
+export type { IQueryTiming, QueryStep };

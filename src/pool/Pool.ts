@@ -424,6 +424,7 @@ export class Pool {
 
                 Logger.debug(`Query in pool by host ${this.host}`);
                 // from here on the statement can run on the server, whatever comes back
+                const before = timing.step;
                 timing.step = 'statement';
                 outcome.sent = true;
                 const onReply = (error: mysql.QueryError | null, result: T) => {
@@ -468,8 +469,9 @@ export class Pool {
                     }
                 } catch (thrown) {
                     // mysql2 refused the call before it wrote anything, such as values
-                    // with undefined in them
+                    // with undefined in them: the statement never reached the connection
                     outcome.sent = false;
+                    timing.step = before;
                     fail(thrown, conn);
                 }
             }, error => {

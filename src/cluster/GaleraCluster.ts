@@ -31,6 +31,9 @@ import {
 } from "../types/NodeInterfaces";
 import { types } from "util";
 
+// each attempt of the node loop of a query, with what its pool filled in
+type Attempts = { nodeId: number, timing: IAttemptTiming }[];
+
 export class GaleraCluster {
     public connected: boolean = false;
 
@@ -364,7 +367,7 @@ export class GaleraCluster {
         const originalSql = sql;
         // each attempt of the node loop, as its pool filled it. Empty for a call that asked
         // no node
-        const attempts: { nodeId: number, timing: IAttemptTiming }[] = [];
+        const attempts: Attempts = [];
         // one metric record per cluster query, whatever way it ends. So onTiming is called
         // here too: once, before the call settles
         const record = (source?: QueryResultSource, error?: any) => {
@@ -532,13 +535,12 @@ export class GaleraCluster {
             // and in this one where the attempt ended and how long it waited for a connection
             const timing: IAttemptTiming = {};
             attempts.push({ nodeId: pool.id, timing });
+            let res: T;
             try {
                 Logger.debug("Query use host: " + pool.host);
-                const res = await this._queryRequest(
+                res = await this._queryRequest(
                     sql, pool, queryOptions, outcome, { values, valuesInText, timing }
                 ) as T;
-                record('pool');
-                return res;
             } catch (e) {
                 if (outcome.aborted) {
                     // the reason of the signal is the app's: no node id goes on it
@@ -554,7 +556,11 @@ export class GaleraCluster {
                 if (i + 1 < retryCount) {
                     Logger.debug("Retrying query...");
                 }
+                continue;
             }
+            // outside the try: what the bookkeeping throws is no failure of the node
+            record('pool');
+            return res;
         }
 
         // the signal aborted in a node, or before the next one was asked: no stale data
@@ -609,28 +615,52 @@ export class GaleraCluster {
 
     /**
      * Call the onTiming of a query that asked a node: the step of the last attempt, its node,
-     * and the time every attempt waited for a connection. What onTiming throws is logged and
-     * changes nothing of the call
+     * and the time every attempt waited for a connection. It never throws: what onTiming
+     * throws, and the rejection of a promise it returns, is logged once and changes nothing
+     * of the call
      * @param onTiming the option of the query, or nothing
      * @param attempts the attempts of the node loop, in the order they were made
      * @private
      */
-    private static _tellTiming(
-        onTiming: IQueryOptions['onTiming'], attempts: { nodeId: number, timing: IAttemptTiming }[]
-    ): void {
+    private static _tellTiming(onTiming: IQueryOptions['onTiming'], attempts: Attempts): void {
         if (!onTiming) return;
         const last = attempts[attempts.length - 1];
-        const timing: IQueryTiming = {
-            step: last.timing.step ?? 'queue',
-            queuedMs: attempts.reduce((sum, attempt) => sum + (attempt.timing.queuedMs ?? 0), 0),
-            nodeId: last.nodeId
+        let warned = false;
+        const failed = (thrown: unknown) => {
+            if (warned) return;
+            warned = true;
+            GaleraCluster._timingFailed(thrown, last.nodeId);
         };
         try {
-            onTiming(timing);
+            const queuedMs = attempts.reduce(
+                (sum, attempt) => sum + (attempt.timing.queuedMs ?? 0), 0
+            );
+            const step = last.timing.step ?? 'queue';
+            const timing: IQueryTiming = { step, queuedMs, nodeId: last.nodeId };
+            const returned: any = onTiming(timing);
+            // an async onTiming: its rejection is logged, never left unhandled
+            if (typeof returned?.then === 'function') returned.then(undefined, failed);
         } catch (thrown) {
-            Logger.warn("onTiming of a query threw, the call keeps its result: " +
-                (thrown?.message || thrown), { nodeId: last.nodeId });
+            failed(thrown);
         }
+    }
+
+    /**
+     * Log what onTiming threw, as text. A value that cannot be made text, such as a Symbol
+     * or an object without a prototype, is named so: nothing here may throw
+     * @param thrown what onTiming threw, or what the promise it returned rejected with
+     * @param nodeId the node of the last attempt
+     * @private
+     */
+    private static _timingFailed(thrown: unknown, nodeId: number): void {
+        let text: string;
+        try {
+            text = String((thrown as any)?.message || thrown);
+        } catch {
+            text = 'a value that is not text';
+        }
+        // the logger catches what the logger of the app throws
+        Logger.warn("onTiming of a query threw, the call keeps its result: " + text, { nodeId });
     }
 
     /**

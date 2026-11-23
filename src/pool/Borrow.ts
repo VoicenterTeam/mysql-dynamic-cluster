@@ -95,13 +95,14 @@ export class Borrow {
         const most = this._pool.connectionLimit ? this._pool.connectionLimit + 1 : Infinity;
         for (let tries = 1; ; tries++) {
             timing.step = 'queue';
-            const asked = Date.now();
+            // a monotonic clock: a change of the time of the system does not count
+            const asked = performance.now();
             let connection: PoolConnection;
             try {
                 connection = await this._request(signal, outcome);
             } finally {
                 // until the connection came, the request failed or the signal aborted
-                timing.queuedMs = (timing.queuedMs ?? 0) + Date.now() - asked;
+                timing.queuedMs = (timing.queuedMs ?? 0) + performance.now() - asked;
             }
             const drawn = this._reaper.drawn(connection);
             // a ping of the reaper that is still out is waited for, within probeTimeout, also
