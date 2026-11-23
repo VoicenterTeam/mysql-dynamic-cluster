@@ -209,7 +209,8 @@ The first lines of the `try` block.
    here with the pinned pool id. `getConnection()` picks its node through the
    same helper, with the caller's `exclude` and without steps 1 and 4.
 4. If the pinned pool exists in `_pools`, find it and `unshift` it to
-   the front so the pinned pool is tried first, also when it is not valid.
+   the front so the pinned pool is tried first. Since 4.1.1 only a valid
+   pinned pool goes first: an invalid one is left out of the list.
 5. Throw an `Error` with the code `MDC_NO_NODE_AVAILABLE` and the message
    `"There is no pool that satisfies the parameters"` if the final list is
    empty. `getConnection()` uses the same code. Since 3.2.2 `query()` first serves cached Redis
