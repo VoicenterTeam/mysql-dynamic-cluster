@@ -183,3 +183,137 @@ describe('the pool metrics of a connect()', () => {
         expect(Metrics.unregisterPools).not.toHaveBeenCalled();
     });
 });
+
+// A second connect() without disconnect() keeps its own promise and its own ready and
+// firstReady, and it settles (#61)
+describe('a second connect() without disconnect()', () => {
+    const passed = (id: number) => ({ nodeId: id, ok: true });
+
+    it('settles within one tick when the cluster is connected', async () => {
+        const pools = [node(1)];
+        const cluster = makeCluster(pools);
+        const first = cluster.connect();
+        pools[0].connects[0].pass();
+        await first;
+
+        const second = cluster.connect();
+        await new Promise(resolve => setImmediate(resolve));
+        expect(await stateOf(second)).toEqual({ value: undefined });
+        expect(second).not.toBe(first);
+    });
+
+    it('still connects every pool, and its ready holds the results of its own call', async () => {
+        const pools = [node(1)];
+        const cluster = makeCluster(pools);
+        const first = cluster.connect();
+        pools[0].connects[0].pass();
+        await first;
+        const firstReady = cluster.ready;
+
+        cluster.connect().catch(() => undefined);
+        expect(pools[0].connect).toHaveBeenCalledTimes(2);
+        expect(cluster.ready).not.toBe(firstReady);
+        expect(await stateOf(cluster.ready)).toBe('pending');
+        pools[0].connects[1].fail(down(1));
+        expect((await cluster.ready)[0].ok).toBe(false);
+        expect(await firstReady).toStrictEqual([passed(1)]);
+    });
+
+    it('started while the first runs, resolves when the first resolves', async () => {
+        const pools = [node(1)];
+        const cluster = makeCluster(pools);
+        const first = cluster.connect();
+        const second = cluster.connect();
+        pools[0].connects[0].pass();
+
+        expect(await stateOf(first)).toEqual({ value: undefined });
+        expect(await stateOf(second)).toEqual({ value: undefined });
+        // its own ready waits for its own pools
+        expect(await stateOf(cluster.ready)).toBe('pending');
+        pools[0].connects[1].pass();
+        expect(await cluster.ready).toStrictEqual([passed(1)]);
+    });
+
+    // the first can fail because the second connect of its pool replaced its attempt
+    it('started while the first runs, goes on with its own pools when the first rejects',
+        async () => {
+            const pools = [node(1)];
+            const cluster = makeCluster(pools);
+            const first = cluster.connect();
+            const second = cluster.connect();
+            pools[0].connects[0].fail(down(1));
+
+            expect(await stateOf(first)).toEqual({ error: 'pool in host host1 is not valid' });
+            expect(await stateOf(second)).toBe('pending');
+            pools[0].connects[1].pass();
+            expect(await stateOf(second)).toEqual({ value: undefined });
+        });
+
+    it('started while the hashing of the first runs, resolves when that is done', async () => {
+        const pools = [node(1)];
+        const cluster = makeCluster(pools);
+        let hashingDone: () => void;
+        Object.assign(cluster, {
+            _useClusterHashing: true,
+            _clusterHashing: {
+                connect: jest.fn(() => new Promise<void>(resolve => { hashingDone = resolve; })),
+                stop: jest.fn()
+            }
+        });
+        const first = cluster.connect();
+        pools[0].connects[0].pass();
+        await settle();
+        const second = cluster.connect();
+
+        expect(await stateOf(second)).toBe('pending');
+        hashingDone();
+        expect(await stateOf(first)).toEqual({ value: undefined });
+        expect(await stateOf(second)).toEqual({ value: undefined });
+        expect(cluster._clusterHashing.connect).toHaveBeenCalledTimes(1);
+    });
+
+    // the first rejected, and its other pool connected the cluster after the second began
+    it('resolves when its own pool passes after another call connected the cluster',
+        async () => {
+            const pools = [node(1), node(2)];
+            const cluster = makeCluster(pools);
+            const first = cluster.connect();
+            pools[0].connects[0].fail(down(1));
+            expect(await stateOf(first)).toEqual({ error: 'pool in host host1 is not valid' });
+
+            const second = cluster.connect();
+            pools[1].connects[0].pass();
+            await settle();
+            expect(cluster.connected).toBe(true);
+            pools[0].connects[1].pass();
+
+            expect(await stateOf(second)).toEqual({ value: undefined });
+        });
+
+    it('after a connect() that failed is a new attempt, not the old rejection', async () => {
+        const pools = [node(1)];
+        const cluster = makeCluster(pools);
+        const first = cluster.connect();
+        pools[0].connects[0].fail(down(1));
+        expect(await stateOf(first)).toEqual({ error: 'pool in host host1 is not valid' });
+
+        const second = cluster.connect();
+        expect(await stateOf(second)).toBe('pending');
+        pools[0].connects[1].pass();
+        expect(await stateOf(second)).toEqual({ value: undefined });
+    });
+
+    it('after disconnect() waits for its own pools', async () => {
+        const pools = [node(1)];
+        const cluster = makeCluster(pools);
+        const first = cluster.connect();
+        pools[0].connects[0].pass();
+        await first;
+        await cluster.disconnect();
+
+        const second = cluster.connect();
+        expect(await stateOf(second)).toBe('pending');
+        pools[0].connects[1].pass();
+        expect(await stateOf(second)).toEqual({ value: undefined });
+    });
+});
