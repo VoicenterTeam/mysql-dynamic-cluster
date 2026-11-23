@@ -55,6 +55,12 @@ export class GaleraCluster {
     private readonly _clusterName: string;
     private readonly _nullServiceName: string = "mdc"
 
+    // the connect of the cluster that the first pool to pass started: the hashing, the event
+    // and the log line. A later connect() call settles with it
+    private _clusterConnect?: Promise<void>;
+    // the connect() call that still runs, whose resolve a later call settles with too
+    private _connecting?: Promise<void>;
+
     // the promise behind `ready`, and its resolver until a connect() call takes it
     private _ready: Promise<INodeReadyResult[]>;
     private _resolveReady?: (results: INodeReadyResult[]) => void;
@@ -167,9 +173,31 @@ export class GaleraCluster {
         if (!this._resolveFirstReady) this._newFirstReady();
         const resolveFirstReady = this._resolveFirstReady;
         this._resolveFirstReady = undefined;
+        // what an earlier call left: the connect of the cluster, or the call that still runs
+        const clusterConnect = this._clusterConnect;
+        const earlier = this._connecting;
+        // the text a call rejects with: the message when there is one. Nothing here may throw:
+        // a pool may reject with undefined, null or an object whose message cannot be read
+        const reasonOf = (err: any): string => {
+            try {
+                return err?.message ? String(err.message) : String(err);
+            } catch {
+                return 'unreadable error';
+            }
+        };
 
-        return new Promise((resolve, reject) => {
+        const call = new Promise<void>((resolve, reject) => {
             Logger.debug("Connecting all pools");
+            // settles this call with the connect of the cluster that another call started
+            const withCluster = (connect: Promise<void>) => connect.then(
+                () => resolve(), err => reject(reasonOf(err))
+            );
+            // A later call keeps its own promise and settles with the cluster (#61): at once
+            // when it is connected, when the connect of the cluster is done while that runs,
+            // and when the call that still runs resolves. A rejection of that call leaves this
+            // one to its own pools, as before
+            if (clusterConnect) withCluster(clusterConnect);
+            else earlier?.then(() => resolve(), () => undefined);
             // no node to wait for: a query then fails with MDC_NO_NODE_AVAILABLE, as with no
             // valid node
             if (!this._pools.length) resolve();
@@ -180,24 +208,23 @@ export class GaleraCluster {
                 const outcome: CheckOutcome = {};
                 const connecting = pool.connect(outcome);
                 connecting.then(async () => {
-                    if (this.connected) return;
+                    // another call connected the cluster: this one settles with that connect
+                    if (this.connected) {
+                        return withCluster(this._clusterConnect ?? Promise.resolve());
+                    }
 
                     this.connected = true;
-                    if (this._useClusterHashing) await this._enableHashing();
+                    this._clusterConnect = (async () => {
+                        if (this._useClusterHashing) await this._enableHashing();
 
-                    Events.emit('connected');
-                    Logger.info('Cluster connected');
+                        Events.emit('connected');
+                        Logger.info('Cluster connected');
+                    })();
+                    await this._clusterConnect;
 
                     resolve();
                 }).catch(err => {
-                    // the message when there is one. Nothing here may throw: a pool may reject
-                    // with undefined, null or an object whose message cannot be read
-                    let reason: string;
-                    try {
-                        reason = err?.message ? String(err.message) : String(err);
-                    } catch {
-                        reason = 'unreadable error';
-                    }
+                    const reason = reasonOf(err);
                     Logger.error(reason);
                     reject(reason);
                 });
@@ -220,7 +247,13 @@ export class GaleraCluster {
             all.then(() => {
                 if (!this.connected && this._ready === ready) Metrics.unregisterPools(this._pools);
             });
-        })
+        });
+        this._connecting = call;
+        const ended = () => {
+            if (this._connecting === call) this._connecting = undefined;
+        };
+        call.then(ended, ended);
+        return call;
     }
 
     /**
@@ -345,6 +378,8 @@ export class GaleraCluster {
     public async disconnect() {
         Logger.debug("disconnecting all pools");
         this.connected = false;
+        this._clusterConnect = undefined;
+        this._connecting = undefined;
         Metrics.unregisterPools(this._pools);
         this._clusterHashing?.stop();
         Redis.disconnect();
