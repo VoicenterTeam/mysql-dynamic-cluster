@@ -361,11 +361,16 @@ export class GaleraCluster {
     }
 
     /**
-     * An Error, also one that was made in another realm such as a vm context
+     * An Error, also one that was made in another realm such as a vm context. Never throws: a
+     * revoked Proxy, or one whose getPrototypeOf trap throws, is no Error
      * @private
      */
     private static _isError(value: unknown): value is Error {
-        return value instanceof Error || types.isNativeError(value);
+        try {
+            return value instanceof Error || types.isNativeError(value);
+        } catch {
+            return false;
+        }
     }
 
     /**
