@@ -1,6 +1,8 @@
 # Changelog
 
-## 4.0.0-rc.2 (2026-11-23)
+## 4.0.0 (2026-11-23)
+
+The same code as 4.0.0-rc.2, which vc-dal tested on its unit and MySQL contract suites and a three-node Galera rig.
 
 For an app that upgrades from 3.2.2. The table "Migrating from 3.x" in `docs/configuration.md` lists every setting that moved.
 
