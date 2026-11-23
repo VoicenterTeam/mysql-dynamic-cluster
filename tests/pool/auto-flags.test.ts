@@ -251,10 +251,10 @@ describe('a pool that is still asking its server', () => {
         await settled;
     });
 
-    it('rejects a cluster query for a service pinned to that node', async () => {
+    it('is left out of a cluster query for a service pinned to that node', async () => {
         const pool = poolFor();
         const settled = expect(pool.connect()).rejects.toThrow('was closed or connected again while connecting');
-        // the cluster puts the node of a pinned service first without looking at its status
+        // the cluster puts the node of a pinned service first only when it is valid (#43)
         const cluster: GaleraCluster = Object.assign(Object.create(GaleraCluster.prototype), {
             _pools: [pool],
             _useRedis: false,
@@ -269,7 +269,7 @@ describe('a pool that is still asking its server', () => {
         });
 
         await expect(cluster.query('SELECT 1', null, { serviceId: 7, redis: false }))
-            .rejects.toThrow('is not connected yet');
+            .rejects.toMatchObject({ code: 'MDC_NO_NODE_AVAILABLE' });
 
         pool.disconnect();
         await settled;
