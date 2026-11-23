@@ -394,7 +394,9 @@ export class GaleraCluster {
             record(undefined, error);
             throw error;
         }
-        if (queryOptions.onTiming !== undefined && typeof queryOptions.onTiming !== 'function') {
+        // null stands for no onTiming, as undefined does
+        const onTiming = queryOptions.onTiming ?? undefined;
+        if (onTiming !== undefined && typeof onTiming !== 'function') {
             const error = new TypeError("query: options.onTiming must be a function");
             record(undefined, error);
             throw error;
