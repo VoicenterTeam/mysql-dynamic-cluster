@@ -1,20 +1,17 @@
 # Node API
 
-Added in 4.5.0. [`firstReady`](#firstready) and [`checkError`](#checkerror) were added in
-4.6.0.
-
 `cluster.query()` picks a node, runs one statement and gives the connection back. Some apps
 need more than that. They hold a connection over several statements, choose the node
-themselves, or want to know which nodes are up. Before 4.5.0 such an app had to reach into
+themselves, or want to know which nodes are up. Before this API such an app had to reach into
 `cluster.pools`, which is internal and can change in any release. These six members of
 `GaleraCluster` are the supported way.
 
 | Member | What it does |
 | --- | --- |
 | [`nodes()`](#nodes) | Lists the nodes with their id, validity, load score and the error of their last health check. |
-| [`getConnection(options?)`](#getconnectionoptions) | Takes one connection of the best node, probed when it was idle. Since 5.0.0 the cluster resets it at `release()`. |
+| [`getConnection(options?)`](#getconnectionoptions) | Takes one connection of the best node, probed when it was idle. The cluster resets it at `release()`. |
 | [`ready`](#ready) | Tells when every node finished its first connect, and how. |
-| [`firstReady`](#firstready) | Tells when the first node passed its first connect. Added in 4.6.0. |
+| [`firstReady`](#firstready) | Tells when the first node passed its first connect. |
 | [`getPoolStats()`](#getpoolstats) | Counts used, idle and waiting connections per node. |
 | [`failWaiting(nodeId, error)`](#failwaitingnodeid-error) | Fails the requests that wait for a connection of one node. |
 
@@ -60,7 +57,7 @@ One entry per host of the settings, in the order of the settings. It works befor
   was disconnected.
 - `loadScore` is the load the last health check computed. Lower is better. It is `100000`
   before the first check. See [health-and-scoring.md](./subsystems/health-and-scoring.md).
-- `checkError` is there when the last health check did not get its answer. Added in 4.6.0.
+- `checkError` is there when the last health check did not get its answer.
   See [`checkError`](#checkerror).
 
 Every call returns new plain objects. They are a snapshot. They do not change later, and
@@ -144,9 +141,6 @@ async function connectionWithin(cluster, ms) {
 
 ### Give up the wait with a signal
 
-The `signal` option is not in 4.6.0 or earlier. Those versions ignore it with no error, and
-the call waits as if no signal was passed.
-
 Pass the `signal` of an `AbortController` and call `abort()` when you no longer want the
 connection:
 
@@ -174,7 +168,7 @@ aborts:
 | Before the call | The promise rejects with the reason. No node is asked and nothing is queued. This comes before the search for a node, so it is the answer also when no node is valid. |
 | While the request waits in the queue of the node | The promise rejects with the reason at that moment. The request is taken out of the queue, so `getPoolStats()` shows one `pending` less right away. |
 | While a new connection for the call logs in | The promise rejects with the reason at that moment. The login goes on. When the connection arrives the package releases it to the pool, where it is `idle` for the next caller. If the login fails instead, nobody is told. |
-| While the connection answers its [probe](#the-probe-on-the-way-out) | The promise rejects with the reason at that moment. The connection is destroyed: its ping may still be out. Since 5.0.0 |
+| While the connection answers its [probe](#the-probe-on-the-way-out) | The promise rejects with the reason at that moment. The connection is destroyed: its ping may still be out. |
 | After the promise resolved | Nothing. You have the connection and you release it. |
 | After the promise rejected | Nothing. The first rejection stays. |
 
@@ -252,7 +246,7 @@ releases the connection at once and the next waiter gets it. No connection is lo
 | Rejection | When |
 | --- | --- |
 | `Error` with `code: 'MDC_NO_NODE_AVAILABLE'` | No node is left: none is valid, or every valid node is in `exclude`. This is also the answer before `connect()`. |
-| The error of mysql2, with `nodeId` added | The node gave no connection. It is the same object mysql2 made, so `code`, `errno` and `fatal` are as mysql2 set them. Examples: a refused login, a node that went down after its last check, `Pool is closed.` after `disconnect()`. Since 5.0.0 also the error of the last [probe](#the-probe-on-the-way-out) when `connectionLimit + 1` connections in a row failed theirs, `Probe timeout` with `code: 'PROTOCOL_SEQUENCE_TIMEOUT'` for one that got no answer. |
+| The error of mysql2, with `nodeId` added | The node gave no connection. It is the same object mysql2 made, so `code`, `errno` and `fatal` are as mysql2 set them. Examples: a refused login, a node that went down after its last check, `Pool is closed.` after `disconnect()`. Also the error of the last [probe](#the-probe-on-the-way-out) when `connectionLimit + 1` connections in a row failed theirs, `Probe timeout` with `code: 'PROTOCOL_SEQUENCE_TIMEOUT'` for one that got no answer. |
 | The error passed to `failWaiting()`, with `nodeId` added | The request waited and `failWaiting()` failed it. |
 | The reason of the `signal`, as it is, with no `nodeId` | The signal was aborted before the call, or it aborted while the call waited. See [The reason](#the-reason). |
 | `TypeError` | `exclude` is given and is not an array of numbers. No node is asked. |
@@ -279,10 +273,9 @@ connection after it handed it to you. See
 
 ### What the cluster does with the connection
 
-Since 5.0.0 the connection goes through the same steps as one of the cluster's own queries
+The connection goes through the same steps as one of the cluster's own queries
 (#93): a probe on the way out, and a reset when it comes back. There is no option to skip
-either. Up to 4.x the cluster did nothing to it, and the app had to reset it before its
-release.
+either.
 
 - A probe when it was idle, see [The probe on the way out](#the-probe-on-the-way-out).
 - A reset at `release()`, see [The reset at release()](#the-reset-at-release).
@@ -290,7 +283,7 @@ release.
 - No timeout. A statement you send has the timeout you give it, or none. `queryTimeout` of
   the settings is not applied.
 - No database change. This connection is on whatever database its last user left it on.
-  Send `USE`, or put the database in front of the table name. Since 5.0.0 the cluster's own
+  Send `USE`, or put the database in front of the table name. The cluster's own
   queries send `USE` only when a connection is on another database than the one they need.
 - No metric. Nothing you run on it shows in `mysql_dynamic_cluster.query.duration` or
   `mysql_dynamic_cluster.operation.duration`. The connection itself counts as `used` in
@@ -430,7 +423,7 @@ const down = results.filter(result => !result.ok);
   every node failed and `connect()` itself rejected.
 - `error` is what the connect of the pool failed with, mostly
   `pool in host <host> is not valid`. The reason behind it, such as a wrong password, is in
-  `checkError` since 4.6.0. See [`checkError`](#checkerror). The whole error object comes
+  `checkError`. See [`checkError`](#checkerror). The whole error object comes
   with the `pool_check_failed` event. See [events.md](./events.md#a-failed-health-check).
 - It is pending until `connect()` is called. The promise you read before the first
   `connect()` is the one that call resolves.
@@ -443,7 +436,6 @@ const down = results.filter(result => !result.ok);
 
 ## `firstReady`
 
-Added in 4.6.0.
 
 ```ts
 readonly firstReady: Promise<INodeReadyResult[]>
@@ -492,7 +484,6 @@ a failed node is the same `Error` object in both.
 
 ## `checkError`
 
-Added in 4.6.0.
 
 ```ts
 interface INodeCheckError { code?: string; errno?: number; sqlState?: string }
@@ -506,7 +497,7 @@ login looks like this:
 { code: 'ER_ACCESS_DENIED_ERROR', errno: 1045, sqlState: '28000' }
 ```
 
-Before 4.6.0 that error only went to the log and to the `pool_check_failed` event.
+That error goes to the log and to the `pool_check_failed` event, and also to `checkError`.
 
 ### What it holds
 
@@ -590,7 +581,7 @@ and of no other check. It does not change later. For the state of a node now, re
 
 `PROTOCOL_SEQUENCE_TIMEOUT` is the code of a query that ran out of its `timeout`. The
 status query of the legacy check has that limit, by the timer of the pool (the `timeout`
-option of mysql2 up to 5.0.0), the one of a node with a `healthCheck` block has none. A
+option of mysql2, which earlier releases passed), the one of a node with a `healthCheck` block has none. A
 check that times out still does not report the code: the timer of the check has the same
 length and is set first, so it ends the check first, with `{}`. A check would report
 `PROTOCOL_SEQUENCE_TIMEOUT` only if the pool handed it that error before the check's own

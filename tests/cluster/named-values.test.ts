@@ -88,7 +88,7 @@ describe('named query values, always escaped', () => {
         expect(await sent('SELECT :a, :b', { a: ':b', b: 'secret' })).toBe("SELECT ':b', 'secret'");
     });
 
-    it('ignores the escapeNamedValues query option of 4.x', async () => {
+    it('ignores an escapeNamedValues query option', async () => {
         const { sent } = makeCluster();
         expect(await sent(SQL, { n: QUOTE }, { escapeNamedValues: false })).toBe(ESCAPED);
     });
@@ -115,7 +115,7 @@ describe('named query values, always escaped', () => {
         expect(Redis.get).toHaveBeenCalledWith("SELECT * FROM t WHERE name = 'a\\'b'");
     });
 
-    it('the escapeNamedValues setting of 4.x is refused', () => {
+    it('refuses an escapeNamedValues setting', () => {
         expect(() => parseSettings({ escapeNamedValues: true }))
             .toThrow('Unrecognized key: "escapeNamedValues"');
     });

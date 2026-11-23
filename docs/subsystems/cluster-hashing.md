@@ -62,7 +62,7 @@ Since 3.2.2 it:
   binary logging on);
 - recreates `SP_NodeInsert` if its `_Port` parameter is not unsigned.
 
-Since 5.0.0 the three `information_schema` checks go through
+Since 4.0.0 the three `information_schema` checks go through
 `cluster.execute()`, with the schema name bound by the server.
 
 Each step is checked first, only widens or recreates with the same
@@ -149,7 +149,7 @@ nodes / 127 services). The asset paths are resolved against
 
 Iterates `cluster.pools` and calls
 `SP_NodeInsert(pool.id, pool.name, pool.host, pool.port)` for each,
-through `cluster.execute()` since 5.0.0: the values are bound by the
+through `cluster.execute()` since 4.0.0: the values are bound by the
 server, so a node with `NO_BACKSLASH_ESCAPES` takes them too.
 The procedure is idempotent — the `(ip, port)` unique constraint on
 `node` means re-running this on an already-populated helper schema is
@@ -198,7 +198,7 @@ after a successful single-pool query, but only when both:
 - `_clusterHashing.connected` is true.
 
 The method runs `CALL SP_NodeServiceUpdate(?, ?)` against the helper
-database, through `cluster.execute()` since 5.0.0, then writes the same `(serviceId, nodeId)` pair into
+database, through `cluster.execute()` since 4.0.0, then writes the same `(serviceId, nodeId)` pair into
 `_serviceNodeMap` so subsequent reads observe the update without
 waiting for the next refresh tick. Errors are caught and logged; the
 caller never sees a failure from the hashing write.
@@ -249,7 +249,7 @@ The pinning logic threads through three steps of active-pool selection:
    ```
    `_validPools` keeps the pools that are valid and whose id is not in
    that list, so the pinned pool is out of the candidate set. Before
-   4.5.0 the same filter was inline in `_getActivePools`.
+   4.0.0 the same filter was inline in `_getActivePools`.
 2. **Sort by load score.** `_validPools` also sorts the remaining
    candidates ascending by `pool.status.loadScore`.
 3. **Prepend the pin.** Back in `_getActivePools`, if the pinned pool id
@@ -289,7 +289,7 @@ Disposes the refresh timer and sets `connected = false`. After `stop`,
 `GaleraCluster` call sites by the `_clusterHashing.connected` guard,
 so they become no-ops. The `_serviceNodeMap` is **not** cleared —
 calling `connect` again turns the timer back on and resumes populating
-it. Up to 4.4.0 a second `connect` left hashing off. A status check that
+it. Before 4.0.0 a second `connect` left hashing off. A status check that
 is still running at `stop` does not mark hashing as connected when it
 ends, and logs nothing, also when `connect` ran again before it ended.
 

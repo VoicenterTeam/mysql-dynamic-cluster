@@ -325,7 +325,7 @@ Notes on cardinality and content:
   `;` that stands outside quotes, and for transactions. The text is scanned
   once, with no regular expression.
 - **The cluster metric carries the code of the node tried last.** Since
-  5.0.0 a failed `query()` rejects with the mysql2 error itself, so
+  4.0.0 a failed `query()` rejects with the mysql2 error itself, so
   `error.type` is its code and `db.response.status_code` its errno.
   `MDC_NO_NODE_AVAILABLE` when no node was valid. The per-attempt
   `mysql_dynamic_cluster.operation.duration` carries the code of each

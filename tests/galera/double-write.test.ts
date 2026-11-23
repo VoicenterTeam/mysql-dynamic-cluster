@@ -95,7 +95,7 @@ describeRig('a call that fails after its write, on Galera', () => {
             expect(error.sent).toBe(true);
             // no node was tried before this one
             expect(error.errors).toEqual([]);
-            // a second node would have made it 2 s, as #87 measured on 4.6.0
+            // a second node would have made it 2 s, as #87 measured before 4.0.0
             expect(took).toBeLessThan(1900);
             // the server goes on with the procedure. Counted once its sleep is over
             await new Promise(resolve => setTimeout(resolve, Math.max(0, started + 3500 -

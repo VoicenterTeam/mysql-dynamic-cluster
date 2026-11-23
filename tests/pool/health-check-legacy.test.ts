@@ -9,7 +9,7 @@ import { createPoolCluster } from '../../index';
 import config from '../../src/configs';
 import { Pool } from '../../src/pool/Pool';
 
-// The health check as 4.6.0 runs it for an app that sets no healthCheck block. The redesign
+// The legacy health check, the one of 3.2.2 with the fix of #57, for an app that sets no healthCheck block. The redesign
 // of the health check (issue #76) has to leave all of it as it is. Every number here is
 // worked out by hand from the settings, never read from the code under test.
 // The cluster is the one an app gets from createPoolCluster. Only mysql2 is replaced, and
@@ -335,7 +335,7 @@ describe('legacy health check: when a node goes down and comes back', () => {
         expect(valid()).toBe(wanted);
     });
 
-    // A QUIRK OF 4.6.0, PINNED AS IT IS AND NOT A WISH. A check that is answered and
+    // A QUIRK OF THE LEGACY CHECK, PINNED AS IT IS AND NOT A WISH. A check that is answered and
     // accepted by the validators, and then throws while the load score is worked out, is a
     // failed check that leaves the node valid, also a node that was out. It is the one way
     // to see the count of failed checks right after a validator said no: that count is 0
@@ -601,9 +601,9 @@ describe('legacy health check: the log', () => {
         expect(warnings()).toEqual([]);
     });
 
-    // The one debug line an answered check logs about the node, word for word as 4.6.0
-    // logs it: one argument, so no meta
-    it('the debug line of an answered check is the one of 4.6.0, with no meta', async () => {
+    // The one debug line an answered check logs about the node, word for word as 3.2.2 logs it:
+    // one argument, so no meta
+    it('the debug line of an answered check is the one of earlier releases, with no meta', async () => {
         logger.debug.mockClear();
         const node = fakeNode([PASS, NO]);
         cluster = createPoolCluster({ ...settingsOf(DEFAULTS), logs: { level: 'debug' } });
@@ -637,7 +637,7 @@ describe('legacy health check: the settings', () => {
         expect(config.current.hosts.map(host => 'healthCheck' in host)).toEqual([false, false]);
     });
 
-    // Not in 4.6.0 or earlier, whose strict schema refused the key. The schema takes a
+    // Not before 4.0.0, which ignored the key. The schema takes a
     // healthCheck block, and a node that has one leaves the legacy check. What it does
     // then is pinned in health-check.test.ts
     it.each<[string, object]>([

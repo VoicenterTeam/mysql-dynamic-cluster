@@ -29,7 +29,7 @@ the cluster is created.
 
 | | Legacy check | Check with a `healthCheck` block |
 | --- | --- | --- |
-| Which node | A node whose settings hold no `healthCheck` block. That is every node of an app that does not set the block | A node whose settings hold the block, from `defaultPoolSettings` or from its host. An empty block is enough. Not in 4.6.0 or earlier |
+| Which node | A node whose settings hold no `healthCheck` block. That is every node of an app that does not set the block | A node whose settings hold the block, from `defaultPoolSettings` or from its host. An empty block is enough. Not in earlier releases |
 | Wait before the next check | Longer after an answered check, shorter after a failed one, inside `timerCheckRange`. See [Adaptive timer](#adaptive-timer) | `healthCheck.interval` after every check, but `healthCheck.authRetryInterval` after a check the server refused the login of, and after the checks that follow it without an answer |
 | Where the check asks | Through the pool, like a query of the app. A pool at its limit makes it wait for a free connection | On one connection of its own, next to the pool. It never waits in the queue of the pool. See [The check connection](#the-check-connection) |
 | Timeout of one check | `min(queryTimeout, timerCheckRange.end)`, the wait for a connection of the pool included | `healthCheck.timeout`: opening the check connection when the node holds none, the change of user and the status query |
@@ -45,7 +45,7 @@ What a check does with the answer is the same in both: one `SHOW GLOBAL
 STATUS`, the validators, the load factors, `checkError`, the
 `pool_check_failed` event and the metrics. What goes ahead of the status
 query differs: the check connection sends a change of user first, and the
-legacy check, which asks through the pool, sends none since 5.0.0. Where it
+legacy check, which asks through the pool, sends none since 4.0.0. Where it
 asks, the rule that moves `isValid` and the wait before the next check
 differ too. `PoolStatus` keeps the block as
 `_healthCheck`. The constructor takes the timeout and `fall` from it,
@@ -169,7 +169,7 @@ More on these rules:
 
 ### The check connection
 
-Added in 4.7.0. The check of a node with a `healthCheck` block asks
+Added in 4.0.0. The check of a node with a `healthCheck` block asks
 on one connection of its own, next to the pool of the app. The legacy check
 asks through the pool, like a query of the app.
 
@@ -187,7 +187,7 @@ leave the same way.
   the checks, and `disconnect()` logs out of it. It counts against
   `max_connections` of the server, next to the connections of the pool.
 - **Every check is still a login.** The check sends a change of user ahead
-  of its status query, as every query of the package did up to 4.x. A server that
+  of its status query, as every query of the package did before 4.0.0. A server that
   refuses the account refuses every check, on the connection the node
   holds as on a new one. So the refusal list, `authRetryInterval`, the slow
   pace and `checkError` mean what they meant.
@@ -314,7 +314,7 @@ the last two those of the
   | Where the server refused | What mysql2 3.24.6 hands out |
   | --- | --- |
   | At the login of a new connection, when the node held no check connection | The error packet with `errno`, `code` and `sqlState`, and no `fatal` |
-  | At the change of user on the connection the node holds, which the check sends first. The queries of the app send none since 5.0.0 | The same error with `fatal: true`. mysql2 marks every error of a change of user as fatal. The connection is dropped, so the next check logs in on a new one |
+  | At the change of user on the connection the node holds, which the check sends first. The queries of the app send none since 4.0.0 | The same error with `fatal: true`. mysql2 marks every error of a change of user as fatal. The connection is dropped, so the next check logs in on a new one |
   | As the answer to the status query. The check does not ask where an errno came from | The error packet, and no `fatal` |
 
 - **A failure the package made is never a refusal.** Its `checkError` is
@@ -476,7 +476,7 @@ the block nor one in the pool of a node without it.
 
 ### Passive health
 
-Added in 4.7.0. A check sees a node once every `interval`. The
+Added in 4.0.0. A check sees a node once every `interval`. The
 queries of the app see it all the time. With `passive: true`, the default of
 the block, four kinds of error move the node between two checks. They are
 the errors of a query, a transaction or a `getConnection()` of the app,
@@ -647,7 +647,7 @@ node yet:
 - **Not after `disconnect()`.** A check that learns of the loss after it
   opens nothing.
 - **The legacy check opens nothing again.** It asks through the pool, and a
-  lost connection there is a failed check, as in 4.6.0.
+  lost connection there is a failed check, as before 4.0.0.
 
 **The check does not use up the forgotten connections of the pool.** It
 asks on its own connection, so what the path forgot in the pool waits for
@@ -655,10 +655,10 @@ the queries of the app, or for the next ping of the timer that closes idle
 connections. That ping takes a forgotten connection out of the pool, and
 the timer runs every `idleCheckInterval`, 10 s by default. Each forgotten
 connection a query meets before that fails one attempt with
-`ECONNRESET`, as in 4.6.0 and as with `passive: false`. No node goes down
+`ECONNRESET`, as before 4.0.0 and as with `passive: false`. No node goes down
 for it: the first loss starts a check, which passes, and the losses after
 it in the same `interval` are kept for the check of the timer, which
-passes too. Since 5.0.0 a connection idle longer than `probeIdle` (1000 ms
+passes too. Since 4.0.0 a connection idle longer than `probeIdle` (1000 ms
 by default) answers a ping before a statement goes to it (#93). The ping
 meets the reset, the connection is destroyed, passive health hears of a
 lost connection, and the query goes on the next connection of the node,
@@ -666,7 +666,7 @@ with nothing lost. Only a connection used within `probeIdle` gets no ping:
 a query that meets such a forgotten connection fails under the statement
 itself, since the pool sends no change of user ahead of it. The statement
 went out, so `cluster.query()` does not send the query to the next node:
-it may have run. Up to 4.x the reset came on the change of user, with the
+it may have run. Before 4.0.0 the reset came on the change of user, with the
 statement not sent, and the next node got the query. What an
 app behind such a path sets
 is in [A quiet app behind a path with an idle
@@ -712,16 +712,16 @@ every connection is down after one check.
 
 **The check uses no connection of the pool.** A check through the pool
 draws an idle connection of the pool each time it runs. The legacy check
-does, in 4.6.0 and now. So the connection that `minConnections: 1` keeps
+does, before 4.0.0 and now. So the connection that `minConnections: 1` keeps
 carries a query at every check, and a path whose idle timeout is longer
 than the wait between two checks does not forget it. A node with the block
-has no such check: the block is not in 4.6.0 or earlier, and its check
+has no such check: the block is new in 4.0.0, and its check
 asks on the check connection. With nothing else, the pooled connections of
 a quiet app would carry no byte, the path would forget them, and the first
 query after the pause would fail with `ECONNRESET`.
 
-**So the idle connections of such a node get a ping.** Not in 4.6.0 or
-earlier. The timer that closes idle connections runs every
+**So the idle connections of such a node get a ping.** Not in earlier
+releases. The timer that closes idle connections runs every
 `idleCheckInterval`, 10 s by default. For a node with the block it also
 sends one `COM_PING` on every idle connection it keeps. A ping is a packet
 of the MySQL protocol, so a balancer or proxy that ends TCP itself hands
@@ -736,11 +736,11 @@ it on and counts it as use.
   [pool.md](pool.md#the-pace-of-the-ping).
 - **Behind a path with a shorter idle timeout the probe catches what the
   ping missed.** The path forgets the connection before the first ping.
-  Since 5.0.0 the first query after the pause finds the connection idle
+  Since 4.0.0 the first query after the pause finds the connection idle
   longer than `probeIdle`, so the pool pings it first (#93): the ping meets
   the reset, the connection is destroyed, and the query is answered on a
   new one, after a login. A path that swallows the packets costs up to
-  `probeTimeout` before that. Up to 4.x and in the rows of the table below
+  `probeTimeout` before that. Before 4.0.0 and in the rows of the table below
   the first query was rejected with `ECONNRESET`. No node goes down: the
   check that passive health starts passes. Set `idleCheckInterval` below
   the idle timeout of the path to keep the connections, and save the
@@ -965,7 +965,7 @@ does not decide alone:
   fails after that. The node is down with the third.
 - **Only a check that has to decide is meant.** A check with no failed call
   of the app before it that finds no route counts toward `fall` as any
-  failed check, with a block and without, as in 4.6.0.
+  failed check, with a block and without, as the check did before 4.0.0.
 
 The price is a node that is gone together with its route. It leaves
 rotation by `fall`, where a check that decides would take it out with the
@@ -1129,9 +1129,9 @@ after any pass, and the next failed check is the first of `fall`.
 | A syntax or constraint error | The query is wrong on every node |
 | A name that does not resolve, `ENOTFOUND`. A resolver that does not answer, `EAI_AGAIN` | A name lookup is shared by every node the app addresses by name. A resolver that fails for a moment says nothing about one node, and the connections the pools hold keep working. Not counted at either place |
 | `EADDRNOTAVAIL`, `ECONNABORTED`, `EHOSTDOWN`, `ENETDOWN` | Not among the codes above. The set is closed: a code of the network that is not named there changes nothing |
-| A refused login: 1045 and the rest of the [refusal list](#a-login-or-account-refusal) | The node answered. mysql2 marks it `fatal` when it comes at a change of user, which up to 4.x every query sent first, so `fatal` alone decides nothing. The next check gets the same answer and applies its own rule |
+| A refused login: 1045 and the rest of the [refusal list](#a-login-or-account-refusal) | The node answered. mysql2 marks it `fatal` when it comes at a change of user, which before 4.0.0 every query sent first, so `fatal` alone decides nothing. The next check gets the same answer and applies its own rule |
 | Too many connections, 1040. An account at its limit, 1226. A node that is not ready, 1047 | The node answered. The check and the validators decide. For 1040 that means the node stays up: the check passes on the connection it holds, and only a check that has to open a connection sees 1040. See below |
-| The query timeout, `PROTOCOL_SEQUENCE_TIMEOUT`, by the timer of the pool since 5.0.1 | The app stopped waiting. A slow query is not a dead node, and the error is not `fatal` |
+| The query timeout, `PROTOCOL_SEQUENCE_TIMEOUT`, by the timer of the pool since 4.0.0 | The app stopped waiting. A slow query is not a dead node, and the error is not `fatal` |
 | `HANDSHAKE_NO_SSL_SUPPORT`, `HANDSHAKE_SSL_ERROR`, `AUTH_SWITCH_PLUGIN_ERROR`, `PROTOCOL_ERROR` | `fatal` in mysql2, but about the settings of the connection or one packet. A check that runs into the same error counts it toward `fall` |
 | `Can't add new command when connection is in closed state` | `fatal`, with no code. The connection was closed on this side |
 | `Pool is closed.`, `Queue limit reached.`, `No connections available.` | The pool of mysql2 said no, not the node |
@@ -1177,7 +1177,7 @@ fails due to deadlock. Deadlocks are not dangerous. Just try again."
 The same holds for the limits of a Galera cluster, see
 [Percona XtraDB Cluster limitations](https://docs.percona.com/percona-xtradb-cluster/8.0/limitation.html).
 `cluster.query()` does not run it again: the statement reached the node,
-so since 5.0.0 a deadlock, like any error reply, goes to the caller without
+so since 4.0.0 a deadlock, like any error reply, goes to the caller without
 another node, see [cluster.md](cluster.md#8-retry-loop). The app runs it
 again itself, as an app that runs a transaction on a connection of
 `getConnection()` does.
@@ -1356,7 +1356,7 @@ The public surface that `GaleraCluster` and `Pool` read from:
 | `isValid` | `boolean` (getter over `_isValid`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Set by a check: from `Validator.check` in the legacy check, by [the rules of the block](#the-rules-of-a-healthcheck-block) for a node that has one. Initially `false` (the field default, re-asserted in the constructor): a pool that has never been polled is not yet routable. |
 | `queryTime` | `number` (getter over `_queryTime`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Wall-clock duration in seconds of the most recent `SHOW GLOBAL STATUS`, measured via `QueryTimer`. Set after both the success and the error branches of `checkStatus`. |
 | `loadScore` | `number` (getter over `_loadScore`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Sum from `LoadFactor.check`. **Initial value is `100000`** (set in the constructor at [PoolStatus.ts](../../src/pool/PoolStatus.ts), overriding the field's `= 0`). A pool that has never been polled sorts last in `_getActivePools` — see [cluster.md](cluster.md). |
-| `checkError` | `INodeCheckError \| undefined` (getter over `_checkError`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Since 4.6.0. What the last check failed with, reduced to `code`, `errno` and `sqlState`. `undefined` before the first check and after a check whose query ran. A new object on every read. See [The error of the last check](#the-error-of-the-last-check). |
+| `checkError` | `INodeCheckError \| undefined` (getter over `_checkError`) | [PoolStatus.ts](../../src/pool/PoolStatus.ts) | Since 4.0.0. What the last check failed with, reduced to `code`, `errno` and `sqlState`. `undefined` before the first check and after a check whose query ran. A new object on every read. See [The error of the last check](#the-error-of-the-last-check). |
 
 Private members worth knowing about:
 
@@ -1518,7 +1518,7 @@ name and that validator fails, so the pool is marked invalid (see
 
 ### The error of the last check
 
-Since 4.6.0 `PoolStatus` keeps what the last check failed with, and
+Since 4.0.0 `PoolStatus` keeps what the last check failed with, and
 `checkError` hands it out. `GaleraCluster` reads it through
 `Pool.checkError` for `nodes()`. The results of `ready` and `firstReady`
 take the outcome of the check of their own connect instead, see below. The
@@ -1561,7 +1561,7 @@ value is an empty object in these cases:
 
 A check that times out ends by its own timer. The status query of the legacy
 check is also bounded by the timer the pool puts on its commands (the
-`timeout` option of mysql2 up to 5.0.0). Both have the same length, and the
+`timeout` option of mysql2 before 4.0.0). Both have the same length, and the
 timer of the check is set first: the pool sets its timer only when it sends
 the query, after the connection was handed out and the database was changed,
 which is never in the same turn. A node with a `healthCheck` block sends the status
@@ -1614,7 +1614,7 @@ the former gates the timer, the latter gates `checkStatus` itself.
 
 `Pool.disconnect()` calls `stopTimerCheck()`, and `Pool.connect()` calls
 `startTimerCheck()` before its first check. That call sets `active` and
-turns the timer on, so a pool that is connected again is checked again. Up to 4.4.0 the timer stayed off after the first
+turns the timer on, so a pool that is connected again is checked again. Before 4.0.0 the timer stayed off after the first
 disconnect.
 
 A check that is still running at `stopTimerCheck()` belongs to a

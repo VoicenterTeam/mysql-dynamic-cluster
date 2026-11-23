@@ -83,12 +83,12 @@ This is tracked behaviour — see [../known-issues.md](../known-issues.md).
 awaits `_clusterHashing.connect()`, emits `'hashing_created'`, and logs;
 errors are caught and logged but do not propagate to `connect`.
 
-Since 4.5.0 every `connect()` call also settles the `ready` promise. It
+Since 4.0.0 every `connect()` call also settles the `ready` promise. It
 resolves once every `pool.connect()` of that call ended, with one result per
 pool, and it never rejects. `connect()` itself resolves and rejects as
 described above. See [../node-api.md](../node-api.md#ready).
 
-Since 4.6.0 every `connect()` call also settles the `firstReady` promise. It
+Since 4.0.0 every `connect()` call also settles the `firstReady` promise. It
 resolves when the first `pool.connect()` of that call passed, with the
 results that are in by then, or together with `ready` when none passed. It
 does not wait for `_enableHashing()`. `connect()` hands every
@@ -167,7 +167,7 @@ The first lines of the `try` block.
 
 - If the caller passed `serviceName` but no `serviceId`, look it up via
   `ServiceNames.getID(serviceName)` and write it back onto
-  `queryOptions.serviceId`. Since 5.0.0 the lookup is a `cluster.execute()`,
+  `queryOptions.serviceId`. Since 4.0.0 the lookup is a `cluster.execute()`,
   with the name bound by the server.
 - If `serviceId` is still falsy, fall back: set `serviceId = 0` and
   `serviceName = ${clusterName}_${_nullServiceName}` (i.e.
@@ -184,7 +184,7 @@ The first lines of the `try` block.
 2. Filter `_pools` to those where `pool.status.isValid` is true **and**
    the pool id is **not** the pinned pool id.
 3. Sort the filtered list ascending by `pool.status.loadScore`.
-   Since 4.5.0 steps 2 and 3 are the helper `_validPools(exclude)`, called
+   Since 4.0.0 steps 2 and 3 are the helper `_validPools(exclude)`, called
    here with the pinned pool id. `getConnection()` picks its node through the
    same helper, with the caller's `exclude` and without steps 1 and 4.
 4. If the pinned pool exists in `_pools`, find it and `unshift` it to
@@ -202,7 +202,7 @@ The first lines of the `try` block.
 `_maxRetryCount`
 clamps the retry count to the active-pool count so the retry loop never
 overruns the array; if `maxRetry` is missing or non-positive it falls
-back to `_errorRetryCount`. Since 5.0.0 the count is at least 1, so a
+back to `_errorRetryCount`. Since 4.0.0 the count is at least 1, so a
 query always tries one node, also with `errorRetryCount: 0`. The count is
 how many nodes the call may try at most: step 8 stops sooner when the
 statement may have run.
@@ -229,9 +229,8 @@ wrote a value into the text.
   swaps in the value when the object has the key as its own property,
   otherwise leaves the placeholder verbatim. The value goes through
   `mysql2.escape(value, true)`, so a plain object becomes the string
-  `'[object Object]'`, not SQL. Since 5.0.0 always: the setting and the
-  query option `escapeNamedValues` of 4.x, which left the value as text by
-  default, are gone, and so is their warning. A `mysql2.raw()` value, or
+  `'[object Object]'`, not SQL. Always: there is no `escapeNamedValues`
+  setting or query option to leave the value as text, as 3.2.2 did. A `mysql2.raw()` value, or
   any object with a `toSqlString` function, is still written as SQL.
 
 Every escaped value relies on the server reading a backslash in a string
@@ -275,7 +274,7 @@ stays `false` when the borrow of the connection failed: there is no mysql2
 pool, mysql2 gave no connection, every connection failed its probe, or the
 session could not be got ready, as a reset of a dirty connection or a
 `USE` of another database that failed or timed out. See
-[pool.md](pool.md#borrow-taking-and-giving-back-a-connection). Since 5.0.0
+[pool.md](pool.md#borrow-taking-and-giving-back-a-connection). Since 4.0.0
 the pool sends no change of user. A pooled connection the path forgot
 that was idle longer than `probeIdle` fails its probe, which costs the
 call nothing: the pool takes the next connection of the node (#93). One
@@ -322,8 +321,8 @@ health check keeps in `PoolStatus`, which also has errors that differ from
 node to node, such as 1049 and 1129. A statement refused with 1047 did not
 run, so the next node is safe, except for a procedure that commits part of
 its work before the 1047: `retryNotReady: false` is for that. No setting
-brings back the retry of 4.x, which tried the next node after any error.
-Since 5.0.0.
+brings back the retry of earlier releases, which tried the next node after any error.
+Since 4.0.0.
 
 The list of step 4 is made once per call, and each turn of the loop takes
 the next pool of it, so a retry never asks the pool that just failed. For a
@@ -359,7 +358,7 @@ stopped it:
 into it. An app that logs or ships the error whole ships those values
 too, so it should drop `sql` first.
 
-Since 5.0.0. Before, `query()` rejected with a new `Error` whose message
+Since 4.0.0. Before, `query()` rejected with a new `Error` whose message
 joined `Pool: <name>; Error: Query error: <message>` lines and which had
 no code. See the changelog.
 
@@ -392,7 +391,7 @@ next node.
 
 ### The `signal` option
 
-Since 5.0.0 (#89). `signal` is an `AbortSignal` that ends the call when it
+Since 4.0.0 (#89). `signal` is an `AbortSignal` that ends the call when it
 aborts. The call then rejects with `abortReason(signal)` of
 [src/utils/Abort.ts](../../src/utils/Abort.ts): the reason of the signal
 as it is, or, for a signal without a reason, an `Error` named
@@ -437,7 +436,7 @@ block passes no signal, and its connection gets no probe. `multiStatementQuery()
 
 ### `execute()` and bound values
 
-Since 5.0.0 (#91). `execute<T>(sql, values?, queryOptions?)` is
+Since 4.0.0 (#91). `execute<T>(sql, values?, queryOptions?)` is
 `query(sql, values, { ...queryOptions, execute: true })`, and the option
 works the same on `query()` itself. Nothing is switched to it for a caller:
 `query()` without the option writes its values into the text, as before.
@@ -505,7 +504,7 @@ them:
 
 ### Values in the text under `NO_BACKSLASH_ESCAPES`
 
-Since 5.0.0 (#91). Escaping a value into the text puts a backslash before
+Since 4.0.0 (#91). Escaping a value into the text puts a backslash before
 each quote. A server whose `sql_mode` has `NO_BACKSLASH_ESCAPES` reads that
 backslash as a character, so the quote ends the string and the rest of the
 value is SQL. The server says so in bit 512 of the status flags of every OK
@@ -564,13 +563,13 @@ names the mode and `execute()`. Always: there is no setting.
 | `disconnect(): Promise<void>` | [`disconnect`](../../src/cluster/GaleraCluster.ts) | Synchronous in practice — does not await pool disconnects. |
 | `on(event, callback)` | [`on`](../../src/cluster/GaleraCluster.ts) | Pass-through to the shared `Events` emitter. |
 | `query<T>(sql, values?, queryOptions?)` | [`query`](../../src/cluster/GaleraCluster.ts) | The full routing pipeline described above. |
-| `execute<T>(sql, values?, queryOptions?)` | [`execute`](../../src/cluster/GaleraCluster.ts) | Since 5.0.0. `query()` with the option `execute`: values bound by the server. No Redis. |
-| `ready: Promise<INodeReadyResult[]>` (getter) | [`ready`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Resolves once every pool finished the first connect of the current `connect()` call. Never rejects. Since 4.6.0 a result has `checkError` when the health check of that connect did not get its answer. |
-| `firstReady: Promise<INodeReadyResult[]>` (getter) | [`firstReady`](../../src/cluster/GaleraCluster.ts) | Since 4.6.0. Resolves when the first pool passed the first connect of the current `connect()` call, with the results that are in by then. With every result when none passed. Never rejects. |
-| `getConnection(options?)` | [`getConnection`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. One connection of the valid node with the lowest load score. The `signal` option, which came after 4.6.0, ends the wait: the call rejects with the reason of the signal. Since 5.0.0 the connection is probed on the way out when it was idle, and its `release()` resets it before it goes back (#93). |
-| `failWaiting(nodeId, error): number` | [`failWaiting`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Fails the requests that wait for a connection of one node. |
-| `getPoolStats(): INodePoolStats[]` | [`getPoolStats`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. Used, idle and waiting connections per node. |
-| `nodes(): INodeInfo[]` | [`nodes`](../../src/cluster/GaleraCluster.ts) | Since 4.5.0. A snapshot of the nodes as plain objects. Since 4.6.0 a node has `checkError` when its last health check did not get its answer. |
+| `execute<T>(sql, values?, queryOptions?)` | [`execute`](../../src/cluster/GaleraCluster.ts) | Since 4.0.0. `query()` with the option `execute`: values bound by the server. No Redis. |
+| `ready: Promise<INodeReadyResult[]>` (getter) | [`ready`](../../src/cluster/GaleraCluster.ts) | Since 4.0.0. Resolves once every pool finished the first connect of the current `connect()` call. Never rejects. A result has `checkError` when the health check of that connect did not get its answer. |
+| `firstReady: Promise<INodeReadyResult[]>` (getter) | [`firstReady`](../../src/cluster/GaleraCluster.ts) | Since 4.0.0. Resolves when the first pool passed the first connect of the current `connect()` call, with the results that are in by then. With every result when none passed. Never rejects. |
+| `getConnection(options?)` | [`getConnection`](../../src/cluster/GaleraCluster.ts) | Since 4.0.0. One connection of the valid node with the lowest load score. The `signal` option ends the wait: the call rejects with the reason of the signal. The connection is probed on the way out when it was idle, and its `release()` resets it before it goes back (#93). |
+| `failWaiting(nodeId, error): number` | [`failWaiting`](../../src/cluster/GaleraCluster.ts) | Since 4.0.0. Fails the requests that wait for a connection of one node. |
+| `getPoolStats(): INodePoolStats[]` | [`getPoolStats`](../../src/cluster/GaleraCluster.ts) | Since 4.0.0. Used, idle and waiting connections per node. |
+| `nodes(): INodeInfo[]` | [`nodes`](../../src/cluster/GaleraCluster.ts) | Since 4.0.0. A snapshot of the nodes as plain objects. A node has `checkError` when its last health check did not get its answer. |
 
 The last six rows are the node API. Its contract, errors and examples are in
 [../node-api.md](../node-api.md).

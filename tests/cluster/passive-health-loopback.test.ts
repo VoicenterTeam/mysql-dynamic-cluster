@@ -540,7 +540,7 @@ describe('two healthy nodes whose idle pooled connections the path forgot', () =
 
     // A connection idle longer than probeIdle answers a ping before the statement goes to it
     // (#93). The ping meets the reset of the path, so no statement does: the pool takes the
-    // next connection of the node, and the query is answered there. Up to 4.x the change of
+    // next connection of the node, and the query is answered there. Before 4.0.0 the change of
     // user before every statement met it, with the statement not sent, and the next node got
     // the query. Within probeIdle a statement still meets a forgotten connection, see above
     it('through cluster.query after a pause longer than probeIdle: every query is answered ' +

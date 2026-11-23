@@ -41,12 +41,12 @@ Base configuration applied to every host in `hosts`.
 | `timerCheckRange` | `{ start, end }` (ms), either half may be left out | `{ start: 5000, end: 15000 }` |
 | `timerCheckMultiplier` | `number` | `1.3` |
 | `healthCheck` | object | not set: the node keeps the legacy check, see [below](#healthcheck) |
-| `queryTimeout` | `number` (ms), 0 to 2147483647. The time limit of each statement and of the commands before it, by a timer of the pool, see [subsystems/pool.md](subsystems/pool.md#the-session-of-a-connection). 0 means none. The query option `timeout` overrides it per call. A negative one is refused since 5.0.1, here and as the query option | `120000` |
-| `resetTimeout` | `number` (ms), 1 or more. How long the reset of a dirty connection may take. One that fails or takes longer ends with the connection destroyed with its socket. See [subsystems/pool.md](subsystems/pool.md#the-session-of-a-connection). Since 5.0.0 | `1000` |
-| `maxPreparedStatements` | `number`, a whole number, 1 or more. How many statements of `execute()` mysql2 keeps prepared per connection; past it the one used longest ago is closed. The server counts every one against `max_prepared_stmt_count` (16382 by default), for all its clients: keep `processes × connectionLimit × maxPreparedStatements` per node below it, with room for the other clients. See [subsystems/cluster.md](subsystems/cluster.md#execute-and-bound-values). Since 5.0.0 | `100` |
-| `probeIdle` | `number` (ms), 0 or more. A pooled connection idle longer than this answers a ping before a statement or the app gets it. An answered ping of the idle timer counts as use. See [subsystems/pool.md](subsystems/pool.md#borrow-taking-and-giving-back-a-connection). Since 5.0.0 | `1000` |
-| `probeTimeout` | `number` (ms), 1 or more. How long that ping may take. One that fails or takes longer ends with the connection destroyed with its socket, and the next connection of the node is taken, until health gives the node up. Since 5.0.0 | `1000` |
-| `resetAfterStatements` | `number`, a whole number, 1 or more. A connection is reset when it goes back to the pool after this many replies since its last reset, so prepared statements a procedure left behind cannot pile up. Since 5.0.0 | `1000` |
+| `queryTimeout` | `number` (ms), 0 to 2147483647. The time limit of each statement and of the commands before it, by a timer of the pool, see [subsystems/pool.md](subsystems/pool.md#the-session-of-a-connection). 0 means none. The query option `timeout` overrides it per call. A negative one is refused, here and as the query option | `120000` |
+| `resetTimeout` | `number` (ms), 1 or more. How long the reset of a dirty connection may take. One that fails or takes longer ends with the connection destroyed with its socket. See [subsystems/pool.md](subsystems/pool.md#the-session-of-a-connection). | `1000` |
+| `maxPreparedStatements` | `number`, a whole number, 1 or more. How many statements of `execute()` mysql2 keeps prepared per connection; past it the one used longest ago is closed. The server counts every one against `max_prepared_stmt_count` (16382 by default), for all its clients: keep `processes × connectionLimit × maxPreparedStatements` per node below it, with room for the other clients. See [subsystems/cluster.md](subsystems/cluster.md#execute-and-bound-values). | `100` |
+| `probeIdle` | `number` (ms), 0 or more. A pooled connection idle longer than this answers a ping before a statement or the app gets it. An answered ping of the idle timer counts as use. See [subsystems/pool.md](subsystems/pool.md#borrow-taking-and-giving-back-a-connection). | `1000` |
+| `probeTimeout` | `number` (ms), 1 or more. How long that ping may take. One that fails or takes longer ends with the connection destroyed with its socket, and the next connection of the node is taken, until health gives the node up. | `1000` |
+| `resetAfterStatements` | `number`, a whole number, 1 or more. A connection is reset when it goes back to the pool after this many replies since its last reset, so prepared statements a procedure left behind cannot pile up. | `1000` |
 | `slowQueryTime` | `number` (s) | `1` |
 | `redisFactor` | `number` | `1` |
 | `flags` | `string` or `string[]` | not set: picked per node, see [below](#flags) |
@@ -76,7 +76,7 @@ A load factor is `{ key: string, multiplier: number }`.
 
 ### `flags`
 
-Added in 4.1.0. The `flags` connection option of mysql2, passed to `mysql.createPool` as they are. A name adds a flag, a name with a leading `-` turns a default one off. mysql2 takes an array or one comma-separated string. Left out, the library picks them per node, see below.
+The `flags` connection option of mysql2, passed to `mysql.createPool` as they are. A name adds a flag, a name with a leading `-` turns a default one off. mysql2 takes an array or one comma-separated string. Left out, the library picks them per node, see below.
 
 Nobody checks the names. mysql2 ignores a name it does not know, without an error, and matches array entries exactly: upper case, no spaces. An array entry such as `'-client_query_attributes'` changes nothing, and neither does a misspelt name. mysql2 upper-cases only the string form. Leave `MULTI_STATEMENTS` off: it lets one query carry several statements, which makes SQL injection worse.
 
@@ -84,7 +84,7 @@ The case it exists for: mysql2 3.21.0 and later turn on `CLIENT_QUERY_ATTRIBUTES
 
 #### Picked per node when `flags` is left out
 
-Added in 4.2.0. A pool without `flags` asks its server first. Before it creates the mysql2 pool it logs in once, reads the version and the capabilities from the server's greeting, and logs out. Then:
+A pool without `flags` asks its server first. Before it creates the mysql2 pool it logs in once, reads the version and the capabilities from the server's greeting, and logs out. Then:
 
 | the server | flags of the pool |
 |---|---|
@@ -116,7 +116,7 @@ defaultPoolSettings: {
 
 ### `healthCheck`
 
-Added in 4.7.0. A node that has this block is checked by new rules: a fixed wait between two checks, down after `fall` failed checks in a row, back after `rise` passed ones. A node without it keeps the legacy check, which is every node of an app that does not set the block. The rules of both are in [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#two-modes).
+A node that has this block is checked by new rules: a fixed wait between two checks, down after `fall` failed checks in a row, back after `rise` passed ones. A node without it keeps the legacy check, which is every node of an app that does not set the block. The rules of both are in [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#two-modes).
 
 | key | type | default | meaning |
 |---|---|---|---|
@@ -188,11 +188,11 @@ The block is strict like every other object of the settings, and every problem i
 
 #### Moving from `timerCheckRange` and `timerCheckMultiplier`
 
-This part is for an app that runs on the legacy check and wants the block. Nothing forces the move. A node without the block is checked as in 4.6.0: the same waits, the same timeout, down at the second failed check and back with one pass. [tests/pool/health-check-legacy.test.ts](../tests/pool/health-check-legacy.test.ts) holds that, with the default settings and with the settings of the example below.
+This part is for an app that runs on the legacy check and wants the block. Nothing forces the move. A node without the block keeps the legacy check: the same waits, the same timeout, down at the second failed check and back with one pass. [tests/pool/health-check-legacy.test.ts](../tests/pool/health-check-legacy.test.ts) holds that, with the default settings and with the settings of the example below.
 
 The steps:
 
-1. Upgrade the package first. Versions 4.0.0 to 4.6.0 reject the key `healthCheck` when the cluster is created, as they reject every key they do not know.
+1. Upgrade the package first. 3.2.2 ignores the key `healthCheck`, so the block does nothing until the app runs 4.0.0.
 2. Add `healthCheck: {}` to `defaultPoolSettings`. To try it on one node first, add it to that host instead. A block on one host switches that host alone, see [On `defaultPoolSettings` and on a host](#on-defaultpoolsettings-and-on-a-host).
 3. Remove `timerCheckRange` and `timerCheckMultiplier` once every host they reach has the block. A node with the block ignores them. While they are there it logs one `warn` that names them, whether the app wrote them on that host or in `defaultPoolSettings`, and the settings stay valid. With the block on some hosts only, the hosts without it still take the two keys from `defaultPoolSettings`. Removing them there would put those hosts on the default range and multiplier, and nothing would say so. Leave the keys there and expect the `warn`, or move them to the hosts that keep the legacy check.
 4. Keep `queryTimeout`. It still limits the queries of the app. It no longer limits the check.
@@ -279,7 +279,7 @@ A multiplier below 1 turns the legacy rule around: the wait shrinks after an ans
 12. **The check no longer uses a connection of the pool, and the idle ones get a ping instead.** The legacy check draws an idle connection of the pool each time it runs, so a balancer or firewall with an idle timeout does not forget the one connection that `minConnections: 1` keeps. With the block the check asks on its own connection. So the timer that closes idle connections also sends a ping on every idle connection of such a node, once every `idleCheckInterval`, 10 s by default. Keep `idleCheckInterval` below the idle timeout of the path. Behind a path that forgets a flow sooner than that, a quiet app on the defaults still loses its first query after a pause: it fails with `ECONNRESET` on each node it tries, and the node stays up. A ping that fails, or has no answer within `timeout`, closes that connection, and the next query opens a new one. A ping is no check and no query of the app: it moves no node, emits no event and is no record of a metric. Measured in [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#a-quiet-app-behind-a-path-with-an-idle-timeout). Idle connections the path forgot while others were in use fail one query each, unless a ping finds them first.
 13. **A call that can open no connection makes the next check open one.** After a call of the app found no route or ran into the connect timeout, the check that starts asks on a new connection, opened beside the one the node holds, so a node that takes no new connection does not pass on the old one. A new one that logs in replaces the old one. A new one that finds no route leaves the old one, and the check counts toward `fall`: a node goes down by `fall` only while calls go on failing, and it comes back by `rise` on the old connection once no call is sent to it. A new one that fails any other way takes the node down and the old connection with it. With `passive: false` the node is told of no call: its checks ask on the connection the node holds, and the node stays up for as long as that one answers. See [A check after a call that could open no connection](subsystems/health-and-scoring.md#a-check-after-a-call-that-could-open-no-connection).
 
-## Named values (`escapeNamedValues`, removed in 5.0.0)
+## Named values
 
 `cluster.query(sql, values)` takes an object of values for `:name` placeholders.
 
@@ -287,21 +287,21 @@ A multiplier below 1 turns the legacy rule around: the wait shrinks after an ans
 await cluster.query('SELECT * FROM users WHERE email = :email', { email });
 ```
 
-Since 5.0.0 each named value is always escaped, as array and string values are. The setting `escapeNamedValues` (added in 4.3.0, off by default) and the query option of the same name are gone, and so is the `warn` line that named them. Strict validation refuses the setting with `Unrecognized key: "escapeNamedValues"`, and the query option is ignored. For `email = "o'neil@example.com"` the SQL sent is `... WHERE email = 'o\'neil@example.com'`. In 4.x, with the setting off, it was `... WHERE email = o'neil@example.com`.
+Each named value is always escaped, as array and string values are. For `email = "o'neil@example.com"` the SQL sent is `... WHERE email = 'o\'neil@example.com'`. 3.2.2 put the value in as text: `... WHERE email = o'neil@example.com`. There is no setting to turn the escaping off: strict validation refuses an `escapeNamedValues` setting with `Unrecognized key: "escapeNamedValues"`, and a query option of that name is ignored.
 
 Each named value goes through mysql2's `escape`. A string arrives quoted and escaped, a number as a number, `null` and `undefined` as `NULL`, an array as a comma-separated list, a `Date` as a quoted date. A plain object arrives as the string `'[object Object]'`, never as SQL. To send SQL through a value on purpose, wrap it: `require('mysql2').raw('NOW()')`. Any object with a `toSqlString` function is sent as SQL the same way. JSON cannot carry a function, so a parsed request body cannot hold one.
 
-**Escaping protects a placeholder that stands where a value stands, and nowhere else.** A placeholder inside quotes, backticks or a `/* */` comment stays open to injection: for `name = ':n'` the value ` OR 1=1 -- ` gives `name = '' OR 1=1 -- ''`. See [Upgrading from 4.x](#upgrading-from-4x).
+**Escaping protects a placeholder that stands where a value stands, and nowhere else.** A placeholder inside quotes, backticks or a `/* */` comment stays open to injection: for `name = ':n'` the value ` OR 1=1 -- ` gives `name = '' OR 1=1 -- ''`. See [Upgrading from 3.2.2](#upgrading-from-322).
 
 **Check the type of a value that comes from a request.** An array becomes a list, so `LIMIT :n` with `[0, 100000]` gives `LIMIT 0, 100000`, a nested array gives `(1, 2), (3, 4)`, and an empty array gives `IN ()`. Where the SQL expects one number or one string, make sure the value is one.
 
 **The escaping needs a server without `NO_BACKSLASH_ESCAPES`**, as for array values. On a connection whose server reports that mode, `query()` refuses values in the text with `MDC_UNSAFE_SQL_MODE`. `cluster.execute()` sends them bound by the server instead, with no escaping, see [subsystems/cluster.md](subsystems/cluster.md#execute-and-bound-values).
 
-### Upgrading from 4.x
+### Upgrading from 3.2.2
 
-A service that ran with the setting off, the 4.x default, sent named values as text. Before it moves to 5.0.0:
+3.2.2 sent named values as text. Before a service moves to 4.0.0:
 
-- **Remove `escapeNamedValues` from the settings.** Strict validation refuses it.
+- **Remove `escapeNamedValues` from the settings**, if they have it. Strict validation refuses it.
 - **Remove the quotes around placeholders.** `name = ':name'` becomes `name = :name`. This step is not optional. With the quotes left in, the value's own quotes close the literal early, and a value written for it changes the statement without a single quote character in it. The same holds for a placeholder inside backticks or a block comment.
 - **Move SQL fragments out of the values.** A value such as `NOW()`, a column name or `ASC` is now sent as a quoted string. Write those into the SQL text, from a fixed list the code owns, or wrap them in mysql2's `raw()`.
 - **`LIKE` patterns.** Put the wildcards in the value: `name LIKE :pattern` with `{ pattern: '%' + text + '%' }`, not `'%:text%'`, which is a placeholder inside quotes.

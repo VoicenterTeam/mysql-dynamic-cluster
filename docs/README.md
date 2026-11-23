@@ -24,7 +24,7 @@ If you're new to the project, read in this order:
 - [branch-divergence.md](branch-divergence.md) — side-by-side of `dev` vs V3 API shapes and what stayed the same.
 - [glossary.md](glossary.md) — short defs: Galera, validator, load factor, hashing, OpenTelemetry metric terms.
 - [releasing.md](releasing.md): how a release is cut: version bump, npm config check, dry run, registry and tag.
-- [node-api.md](node-api.md): the node API added in 4.5.0: `getConnection`, `ready`, `failWaiting`, `getPoolStats`, `nodes`, and who owns a connection. Since 4.6.0 also `firstReady` and `checkError`.
+- [node-api.md](node-api.md): the node API: `getConnection`, `ready`, `failWaiting`, `getPoolStats`, `nodes`, and who owns a connection. It also has `firstReady` and `checkError`.
 
 ## Subsystems
 

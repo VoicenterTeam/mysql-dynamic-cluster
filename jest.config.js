@@ -15,7 +15,7 @@ module.exports = {
     "src/**/*.ts",
     "index.ts"
   ],
-  // Measured on 4.3.0 plus the follow-up tests: statements 84.89, branches 78.83,
+  // Measured on an earlier build of this line plus the follow-up tests: statements 84.89, branches 78.83,
   // functions 83.41, lines 85.63. Each floor is that number less 5, rounded down
   coverageThreshold: {
     global: {

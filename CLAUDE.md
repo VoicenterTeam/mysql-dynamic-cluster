@@ -58,7 +58,7 @@ There is **no** `lint`, `typecheck`, or `test:load` script, and no linter is ins
 
 - **TypeScript:** interfaces named `I*` (e.g. `IClusterSettings`); default exports for singletons (`Logger`, `Redis`, `Metrics`, `config`, `Events`); 4-space indent.
 - **Build:** `tsc -p tsconfig.build.json` only (target `es6`, module `commonjs`). No Babel, esbuild, or bundler.
-- **Linting:** none. `tslint` was removed after 4.1.0 (deprecated, never wired). Don't add a linter as part of feature work.
+- **Linting:** none. `tslint` was removed in 4.0.0 (deprecated, never wired). Don't add a linter as part of feature work.
 - **Layout:** new subsystems live under `src/<area>/`; their types go in `src/types/`.
 - **Adding a metric:** see the "Adding a new metric" section of [docs/subsystems/metrics.md](docs/subsystems/metrics.md).
 
@@ -85,7 +85,7 @@ Full human-facing index lives in [docs/README.md](docs/README.md). Quick map:
 - [docs/branch-divergence.md](docs/branch-divergence.md) — `dev` vs V3 API shapes side-by-side.
 - [docs/glossary.md](docs/glossary.md) — Galera, validator, load factor, hashing, OpenTelemetry metric terms.
 - [docs/releasing.md](docs/releasing.md): how a release is cut: version bump, npm config check, dry run, registry and tag.
-- [docs/node-api.md](docs/node-api.md): the node API added in 4.5.0: `getConnection`, `ready`, `failWaiting`, `getPoolStats`, `nodes`, and who owns a connection. Since 4.6.0 also `firstReady` and `checkError`.
+- [docs/node-api.md](docs/node-api.md): the node API: `getConnection`, `ready`, `failWaiting`, `getPoolStats`, `nodes`, and who owns a connection. It also has `firstReady` and `checkError`.
 
 **Subsystems**
 

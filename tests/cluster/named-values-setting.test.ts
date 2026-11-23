@@ -27,7 +27,7 @@ describe('named values through createPoolCluster', () => {
         expect(poolQuery.mock.calls[0][0]).toBe(ESCAPED);
     });
 
-    it('the escapeNamedValues setting of 4.x is refused', () => {
+    it('refuses an escapeNamedValues setting', () => {
         expect(() => createPoolCluster(settings({ escapeNamedValues: true })))
             .toThrow('Unrecognized key: "escapeNamedValues"');
     });

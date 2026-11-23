@@ -26,12 +26,12 @@ const defaultsOf322 = {
         ],
         timerCheckRange: { start: 5000, end: 15000 },
         timerCheckMultiplier: 1.3, queryTimeout: 120000, slowQueryTime: 1, redisFactor: 1,
-        // not in 3.2.2: added in 5.0.0, which resets a dirty connection instead of changing
+        // not in 3.2.2: added in 4.0.0, which resets a dirty connection instead of changing
         // the user before every query
         resetTimeout: 1000,
-        // not in 3.2.2: added in 5.0.0 with execute()
+        // not in 3.2.2: added in 4.0.0 with execute()
         maxPreparedStatements: 100,
-        // not in 3.2.2: added in 5.0.0, which probes an idle connection before it lends it
+        // not in 3.2.2: added in 4.0.0, which probes an idle connection before it lends it
         // and resets a connection after this many statements
         probeIdle: 1000, probeTimeout: 1000, resetAfterStatements: 1000
     },
@@ -189,7 +189,7 @@ describe('settings validation', () => {
         ['amqp_logs', { amqp_logs: {} }],
         ['redisSettings', { redisSettings: { enabled: true } }],
         ['globalPoolSettings', { globalPoolSettings: {} }],
-        // 4.x only: 5.0.0 always escapes named values
+        // never a setting: 4.0.0 always escapes named values
         ['escapeNamedValues', { escapeNamedValues: false }]
     ])('rejects the removed or misnamed key %s', (key, extra) => {
         expect(errorOf({ ...base(), ...extra })).toContain(`Unrecognized key: "${key}"`);

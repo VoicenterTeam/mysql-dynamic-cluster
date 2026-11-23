@@ -89,7 +89,7 @@ export class SessionState {
      * statement can go, at once when nothing has to be sent. An error means the statement
      * was not sent: a reset that failed or ran out of time has destroyed the connection by
      * then, and a USE or DO 0 that failed left it dirty
-     * @param database left out or empty: the one of the pool, as the change of user of 4.x
+     * @param database left out or empty: the one of the pool, as the change of user of earlier releases
      * took it
      * @param timeout timeout of the USE and the DO 0, the one of the query. 0 means none
      * @param valuesInText the statement has values written into its text: see

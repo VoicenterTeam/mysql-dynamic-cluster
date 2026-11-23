@@ -10,7 +10,7 @@ This document describes the test layout of `@voicenter-team/mysql-dynamic-cluste
 - Config: [jest.config.js:1](../jest.config.js#L1). Uses the `ts-jest` preset, `node` test environment, and a 5-minute per-test timeout (`testTimeout: 300000`).
 - Scripts ([package.json:33](../package.json#L33)):
   - `npm test` runs `jest`.
-  - `npm run coverage` runs `jest --coverage`. Coverage is collected from `src/**/*.ts` and `index.ts` (`collectCoverageFrom` in [jest.config.js](../jest.config.js)) and checked against the `coverageThreshold` in the same file: statements 79, branches 73, functions 78, lines 80. Measured on 4.3.0 with the suites that run: statements 84.89 %, branches 78.83 %, functions 83.41 %, lines 85.63 %. Each floor is the measured number less 5, rounded down. The command exits 1 either way, as `npm test` does, because of the four stale suites below. So a missed threshold does not change the exit code today: look for a line that starts with `Jest: Coverage for` in the output. There is none when the thresholds are met.
+  - `npm run coverage` runs `jest --coverage`. Coverage is collected from `src/**/*.ts` and `index.ts` (`collectCoverageFrom` in [jest.config.js](../jest.config.js)) and checked against the `coverageThreshold` in the same file: statements 79, branches 73, functions 78, lines 80. Measured with the suites that run: statements 84.89 %, branches 78.83 %, functions 83.41 %, lines 85.63 %. Each floor is the measured number less 5, rounded down. The command exits 1 either way, as `npm test` does, because of the four stale suites below. So a missed threshold does not change the exit code today: look for a line that starts with `Jest: Coverage for` in the output. There is none when the thresholds are met.
 - The `tests/loads` directory is excluded from `npm test` via `testPathIgnorePatterns` ([jest.config.js:9](../jest.config.js#L9)). Load tests must be invoked explicitly (e.g. `npx jest tests/loads`).
 
 ## Layout
@@ -23,7 +23,7 @@ tests/
     hashing-upgrade.test.ts      # Hashing schema: backward compatible upgrade in place
     hashing-restart.test.ts      # Cluster hashing after stop(): a second connect, a check that ends late
     no-valid-pool-cache.test.ts  # GaleraCluster.query when no pool is valid: stale cache fallback
-    named-values.test.ts         # object values: always escaped, the 4.x option ignored, the setting refused
+    named-values.test.ts         # object values: always escaped, an escapeNamedValues option ignored, the setting refused
     named-values-setting.test.ts # named values through createPoolCluster: escaped, the setting refused
     execute.test.ts              # execute() and the execute option on loopback: prepare, bound values, NO_BACKSLASH_ESCAPES
     host-ids.test.ts             # Host ids: which id each host gets, with and without an id in the settings
@@ -72,7 +72,7 @@ tests/
     check-error.test.ts          # PoolStatus.checkError: what it holds, when it is set and cleared, odd errors
     check-error-paths.test.ts    # Every way a check of a real Pool fails, and what checkError holds after each
     reconnect-checks.test.ts     # A pool connected, disconnected and connected again is checked again
-    health-check-legacy.test.ts  # Health check as 4.6.0 runs it: waits, timeout, down and up, time to leave rotation
+    health-check-legacy.test.ts  # Health check of the legacy mode: waits, timeout, down and up, time to leave rotation
     health-check.test.ts         # Health check with a healthCheck block: interval, timeout, fall, rise, refused logins, authRetryInterval and its slow pace, settings, timing
     check-connection.test.ts     # The check connection of a healthCheck node against a mysql2 the test drives: its options and flags, what a check sends, kept or dropped, the one new connection after a loss, the new connection after a call of the app that could open none, the timeout and its turn of the event loop, connect and disconnect, the operation metric
     passive-health.test.ts       # Passive health of a healthCheck node: the four kinds of error from query, transaction and getConnection, the check that opens a new connection for one it lost, once, the check that asks on a new connection after a call that could open none, the check that finds no route itself and counts toward fall, what never counts, one check at a time, fall and rise, passive false, the legacy check, timing
@@ -140,7 +140,7 @@ Each suite in `tests/galera` runs a cluster with the package's default settings,
 | Suite | Scenario | What it proves |
 | --- | --- | --- |
 | `node-drops-out.test.ts` | `SET GLOBAL wsrep_provider_options = 'gmcast.isolate=1'` on the node the cluster asks first. The cluster asks again until the node sees it is out of the primary component, about 6 s later. Then `isolate=0`. | The first call after the drop gets 1047 from that node and answers from another node within the same call, in under 1 s (#87, #90: no change of user that waits for its timeout). Once the node is Synced again, the cluster's next check takes it back and `getConnection()` hands it out. The statement reads a table: a node out of the primary component still answers `SELECT 1` and `SELECT @@hostname`. |
-| `double-write.test.ts` | `write_then_fail()` inserts a row, then `SIGNAL`s. `write_then_sleep()` inserts a row, then sleeps 3 s, called with `timeout: 1000`. Three nodes valid. | Each call rejects (errno 1644, or `PROTOCOL_SEQUENCE_TIMEOUT` after 1 s), with `sent: true` and an empty `errors`, and leaves one row, counted with `wsrep_sync_wait = 1` after the sleep is over. 4.x wrote two rows each (#87). |
+| `double-write.test.ts` | `write_then_fail()` inserts a row, then `SIGNAL`s. `write_then_sleep()` inserts a row, then sleeps 3 s, called with `timeout: 1000`. Three nodes valid. | Each call rejects (errno 1644, or `PROTOCOL_SEQUENCE_TIMEOUT` after 1 s), with `sent: true` and an empty `errors`, and leaves one row, counted with `wsrep_sync_wait = 1` after the sleep is over. Earlier releases wrote two rows each (#87). |
 | `left-open-transaction.test.ts` | One node. A `CALL` that leaves a transaction open with a row lock, and a `getConnection()` caller that does the same and calls `release()`. | The next caller on that connection gets reply headers without the in-transaction bit, and another session takes the row lock at once with `FOR UPDATE NOWAIT` and reads the value as it was: the reset rolled the transaction back (#90 for the query, #93 for the lent connection). |
 | `dead-connection.test.ts` | A TCP proxy in front of node 1. After a call through it, the proxy goes silent on the open flows, without a close on the client's side. 1.1 s later, an `INSERT` of `CONNECTION_ID()`. | The call resolves, the row is there once, and the connection id in it is higher than any id the node had before the cut: the idle connection failed its ping and the write ran on a new connection (#93). |
 | `bound-values.test.ts` | Hostile strings under the default mode, `ANSI_QUOTES` and `NO_BACKSLASH_ESCAPES`; `query()` with values refused on a new connection of a node whose global `sql_mode` has `NO_BACKSLASH_ESCAPES` (restored after); cluster hashing as root. | See #91. |
@@ -148,7 +148,7 @@ Each suite in `tests/galera` runs a cluster with the package's default settings,
 
 jest runs the files side by side, and a suite that isolates a node would break one that counts the nodes. `describeRig` in `support.ts` takes a lock (a directory next to the env file) before the hooks of its block and gives it back after them, so the suites run one at a time whatever `--maxWorkers` says. A lock whose process is gone is taken over. `node-drops-out.test.ts` sets `isolate=0` and waits for the node to be Synced in its `afterAll`, also when a test failed, so the next suite gets three nodes.
 
-Measured on the shared CI machine before the 5.0.0 release, three runs in a row, each from a fresh `up` to `down`, 107 tests passed in each:
+Measured on the shared CI machine before the 4.0.0 release, three runs in a row, each from a fresh `up` to `down`, 107 tests passed in each:
 
 | Run | `up` | jest `tests/galera` | `down` |
 | --- | --- | --- | --- |

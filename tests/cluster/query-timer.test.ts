@@ -352,7 +352,7 @@ describe('a command that runs out of its timeout', () => {
 
     // The prepare under the same timer: execute.test.ts, 'gives the prepare the timeout of the
     // query'
-    it('execute(): a silent execute fails with the package\'s own error, as in 5.0.0',
+    it('execute(): a silent execute fails with the package\'s own error',
         async () => {
             const { cluster, n1, n2 } = await twoNodes();
             n1.become('ignores the statement');

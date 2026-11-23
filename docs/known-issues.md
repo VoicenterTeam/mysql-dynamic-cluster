@@ -75,7 +75,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   set or the code is `PROTOCOL_SEQUENCE_TIMEOUT`; plain SQL errors still
   `release()`. `changeUser` also gets its own timeout, since mysql2 ignores
   its timeout option and a query's timer only starts once `changeUser` ends.
-  Since 5.0.0 the query path sends no `changeUser` at all: a `USE` when the
+  The query path sends no `changeUser` at all: a `USE` when the
   database differs, and a reset bounded by `resetTimeout` only for a dirty
   connection, see
   [subsystems/pool.md](subsystems/pool.md#the-session-of-a-connection).
@@ -287,7 +287,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   that. `_leaveQueue()` searches the private `_connectionQueue` of the mysql2
   pool (a `Denque` in mysql2 3) for the callback of the request and takes it
   out with `get()` and `removeOne()`. The code came with
-  `getConnection({ signal })` in 4.7.0 and moved into `Borrow` in 5.0.0, so
+  `getConnection({ signal })` and lives in `Borrow`, so
   `query()` and `execute()` with a signal rely on it too.
   `failWaiting()` and `stats()` of `Pool` and the reaper read private fields
   of the mysql2 pool too. If mysql2 renames the field or changes its shape,
@@ -401,7 +401,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 - **Location:** [package.json](../package.json) (the `scripts` block) and the
   absence of any `.github/workflows/` directory.
 - **Description:** there is no linter and no `lint`, `lint:fix`, or
-  `typecheck` script. `tslint` was a dev dependency until 4.1.0, deprecated
+  `typecheck` script. `tslint` was a dev dependency before 4.0.0, deprecated
   upstream since 2019 and never wired to a script; it is removed now.
   There is no GitHub Actions config in
   the repository, so `npm test`, `npm run build`, and any linter never run on

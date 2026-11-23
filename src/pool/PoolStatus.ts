@@ -286,7 +286,7 @@ export class PoolStatus {
                 Logger.debug("Did the validators accept the status of host " + this._pool.host +
                     "? -> " + passed.toString(), { pool: this._pool.name, passed });
             } else {
-                // the line of 4.6.0, as it was: there the state is what the validators said
+                // the line as it was before 4.0.0: there the state is what the validators said
                 Logger.debug("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())
             }
             this._loadScore = this._loadFactor.check(result);
@@ -359,7 +359,7 @@ export class PoolStatus {
     }
 
     /**
-     * Ask the node for its status. The legacy check asks through the pool, as 4.6.0 does:
+     * Ask the node for its status. The legacy check asks through the pool, as releases before 4.0.0 did:
      * it waits for a connection there like a query of the app. A node with a healthCheck
      * block asks on its check connection, see _askOnCheckConnection()
      * @private
@@ -367,7 +367,7 @@ export class PoolStatus {
     private _askNode(asked: { drop?: () => void }): Promise<GlobalStatusResult[]> {
         if (this._healthCheck) return this._askOnCheckConnection(asked);
         const options = { redis: false, timeout: this._checkTimeout };
-        // never probed: the check draws a connection of the app as it is, as in 4.6.0
+        // never probed: the check draws a connection of the app as it is, as before 4.0.0
         const answer = this._pool.query(`SHOW GLOBAL STATUS;`, options, {}, { probe: false });
         return answer as Promise<GlobalStatusResult[]>;
     }

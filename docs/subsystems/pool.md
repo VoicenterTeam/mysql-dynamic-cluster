@@ -178,7 +178,7 @@ The `Promise` callback chain is, in order:
    `USE` when it is on another database, and `DO 0` for a call with
    values in its text when the `sql_mode` of the connection is unknown, see
    [The session of a connection](#the-session-of-a-connection). Most of
-   the time it sends nothing. No change of user is sent, since 5.0.0. On
+   the time it sends nothing. No change of user is sent, since 4.0.0. On
    error, records the attempt with its `error.type` and rejects with
    `sent: false`: mysql2 gave no connection, `"Can't find connection.
    Maybe it was unexpectedly closed."`, every connection failed its probe,
@@ -190,7 +190,7 @@ The `Promise` callback chain is, in order:
    once with `MDC_PACKETS_OUT_OF_ORDER` and `sent: true`, see
    [Borrow](#borrow-taking-and-giving-back-a-connection). An abort of the
    signal destroys the connection, as before.
-3. The guard, since 5.0.0: a call without `execute` whose `valuesInText`
+3. The guard, since 4.0.0: a call without `execute` whose `valuesInText`
    is set (the cluster's formatting changed the text), on a connection
    whose `_session.noBackslashEscapes(conn)` is true, rejects
    with `MDC_UNSAFE_SQL_MODE` and `sent: false` through `fail()`. The
@@ -244,7 +244,7 @@ without a `healthCheck` block. See
 The status query of a health check is never told. For a node with a
 `healthCheck` block it does not run through `query()` at all: it is asked
 on the [check connection](#the-check-connection). For a node without the
-block it does run through `query()`, as in 4.6.0, and passive health does
+block it does run through `query()`, as before 4.0.0, and passive health does
 nothing for such a node. It passes `{ probe: false }`, the `IPoolCall`
 that is the last parameter of `query()`, which no other caller sets: the check draws a connection of the
 app as it is, with no probe, no retry and no signal.
@@ -339,8 +339,8 @@ and committed before any of them ran — see
 
 ## The session of a connection
 
-[src/pool/SessionState.ts](../../src/pool/SessionState.ts). Since 5.0.0.
-Up to 4.x every query and every transaction sent a change of user
+[src/pool/SessionState.ts](../../src/pool/SessionState.ts). Since 4.0.0.
+Before 4.0.0 every query and every transaction sent a change of user
 (`COM_CHANGE_USER`) first, to switch the database. That was two commands
 per query, a reset of the whole session each time, and on a Galera node
 outside the primary component a change of user gets no answer, so the
@@ -350,7 +350,7 @@ query waited for its whole timeout instead of failing with 1047 at once.
 database the session is on, whether it is dirty, whether its server has
 `NO_BACKSLASH_ESCAPES` (on, off or unknown), and the texts `execute` prepared on it. It is the
 one place for the switch of database, the dirty rule, that bit, those
-texts, the reset with its time limit and, since 5.0.1, the time limit of
+texts, the reset with its time limit and, since 4.0.0, the time limit of
 every other command of the pool. `query()` and
 `multiStatementQuery()` call it.
 
@@ -400,7 +400,7 @@ every other command of the pool. `query()` and
   `session_track_schema=OFF` the pool cannot see such a `USE`: an app must
   not send `USE` through `query()` there, and should use the `database`
   option instead.
-- **The texts of `execute`.** Since 5.0.0 (#91). mysql2 keeps one
+- **The texts of `execute`.** Since 4.0.0 (#91). mysql2 keeps one
   prepared statement per text and connection, whatever the database, and
   the server runs it in the database it was prepared in. `executed()`
   notes each text, the one used last at the end, and the database they
@@ -417,7 +417,7 @@ every other command of the pool. `query()` and
   the list lost. A connection that takes no command any more makes
   `unprepare` throw. That is caught, and the `USE` or statement that
   follows fails the call.
-- **`noBackslashEscapes`.** Since 5.0.0 (#91). `observe()` sets it from
+- **`noBackslashEscapes`.** Since 4.0.0 (#91). `observe()` sets it from
   bit 512 of the last header of a reply (`SERVER_STATUS_NO_BACKSLASH_ESCAPES`)
   and clears it when that header lacks the bit, each time: it is not
   sticky. The reply to the `USE` of `prepare()` counts too. A reply without
@@ -433,14 +433,13 @@ every other command of the pool. `query()` and
   `query()` reads the bit through `noBackslashEscapes(connection)`, false
   while unknown, to refuse values written into the text. Inside a transaction of `multiStatementQuery()` only the
   `COMMIT` or `ROLLBACK` sets it, as for the dirty rule.
-- **The time limit of a command.** Since 5.0.1 (#120). `send()` sends the
+- **The time limit of a command.** Since 4.0.0 (#120). `send()` sends the
   statement of `query()` and `execute()`, the `USE` and the `DO 0` before
   it, and `START TRANSACTION`, the statements, `COMMIT` and `ROLLBACK` of
   `multiStatementQuery()`, each within the `timeout` of the call, by a
   timer of the pool. mysql2 is handed no `timeout`: it clears the timer of
   that option when the command ends, not when the connection is destroyed.
-  So up to 5.0.0 a command still out on a connection the pool dropped (an
-  abort by the signal, packets out of order, a lost connection) kept a
+  So before 4.0.0 a command still out on a lost connection kept a
   timer that held the process open until it fired, after `queryTimeout`,
   120 s by default, and then called back a second time. The timer of the
   pool is unref'd, and is cleared at the reply, at `drop()` of the
@@ -449,7 +448,7 @@ every other command of the pool. `query()` and
   `errorno` `PROTOCOL_SEQUENCE_TIMEOUT`, `syscall: 'query'`), not marked
   as the package's own, and a reply after that is not passed on. A bound
   statement fails with the package's `Query inactivity timeout`, code
-  `PROTOCOL_SEQUENCE_TIMEOUT`, marked as its own, as in 5.0.0. Either way
+  `PROTOCOL_SEQUENCE_TIMEOUT`, marked as its own. Either way
   the connection counts as broken and is destroyed with its socket. A
   `timeout` of 0, or none, is no limit. The reset has its own time limit,
   `resetTimeout`, see above.
@@ -457,7 +456,7 @@ every other command of the pool. `query()` and
   leaves its session state on the connection for the next query that gets
   it: user variables, session variables set with `SET`, named locks of
   `GET_LOCK()`, tables locked with `LOCK TABLES`, temporary tables and
-  prepared statements. Up to 4.x the change of user released all of them.
+  prepared statements. Before 4.0.0 the change of user released all of them.
   The statements `execute` prepares stay too, in the cache mysql2 keeps
   per connection, up to `maxPreparedStatements`, until a reset or a `USE`
   of another database closes them.
@@ -488,7 +487,7 @@ every other command of the pool. `query()` and
 
 ## Borrow: taking and giving back a connection
 
-[src/pool/Borrow.ts](../../src/pool/Borrow.ts). Since 5.0.0 (#93, #94).
+[src/pool/Borrow.ts](../../src/pool/Borrow.ts). Since 4.0.0 (#93, #94).
 The one place a connection of the pool is taken and given back: `query()`,
 its `execute` form, `multiStatementQuery()` and `getConnection()` all go
 through it, and no other code takes or releases a pooled connection.
@@ -587,7 +586,7 @@ an aborted signal, see [A signal on getConnection](#a-signal-on-getconnection).
 ## The check connection
 
 [src/pool/CheckConnection.ts](../../src/pool/CheckConnection.ts). Not in
-4.6.0 or earlier, and only for a node with a `healthCheck` block. A node
+earlier releases, and only for a node with a `healthCheck` block. A node
 without the block opens none, and its check asks through `query()` as
 before.
 
@@ -619,7 +618,7 @@ away from the app. The rules of the check are in
   opened one.
 - **`checkQuery(sql)`** sends one query of a check: a change of user to
   the database of the node first, which `query()` no longer does since
-  5.0.0, then the query, with no `timeout` of mysql2. It opens a connection when the node holds none
+  4.0.0, then the query, with no `timeout` of mysql2. It opens a connection when the node holds none
   and waits for the server to take the login before it sends anything, so
   a login the server refuses arrives as mysql2 made it, not `fatal`. It
   tells nothing to passive health. It rejects with the error of mysql2, or
@@ -712,8 +711,8 @@ long as the pool has more than
 `minConnections` free ones. With the defaults the pool keeps one idle
 connection whatever its age.
 
-**The ping, for a node with a `healthCheck` block.** Not in 4.6.0 or
-earlier. Every idle connection the age rule kept gets one `COM_PING`. The
+**The ping, for a node with a `healthCheck` block.** Not in earlier
+releases. Every idle connection the age rule kept gets one `COM_PING`. The
 check of such a node asks on [the check connection](#the-check-connection),
 so without the ping nothing would use the pooled connections of a quiet
 app, and a balancer, a NAT or a firewall with an idle timeout would forget
@@ -808,13 +807,13 @@ The age rule is in
 
 ## Node API helpers
 
-Added in 4.5.0, at the end of the class, so the line references above did
+Added in 4.0.0, at the end of the class, so the line references above did
 not move. `GaleraCluster` calls them for the node API of
 [../node-api.md](../node-api.md). `_pool` stays private.
 
 - `getConnection(signal?, outcome?)` takes one connection through
   `_borrow.take({ signal }, outcome)`: probed when it was idle longer than
-  `probeIdle`, or one the reaper's ping is still out on, since 5.0.0. Then
+  `probeIdle`, or one the reaper's ping is still out on, since 4.0.0. Then
   it lends it, `_borrow.lend()`: the app's `release()` resets the
   connection, and a second one does nothing. The lend is inside, so no
   caller can forget it. It does not change the database, sets no timeout
@@ -835,7 +834,7 @@ not move. `GaleraCluster` calls them for the node API of
   the mysql2 pool exists. The pool connection metrics read it at each
   collection, see [metrics.md](./metrics.md#pool-connection-metrics).
 
-Added in 4.6.0, after them, for `checkError` and `firstReady` of the node
+Added in 4.0.0, after them, for `checkError` and `firstReady` of the node
 API:
 
 - `checkError` (getter) returns `status.checkError`: what the last health
@@ -859,7 +858,7 @@ API:
 `GaleraCluster.getConnection()` hands the `signal` of its options to
 `getConnection(signal, outcome)`. The contract is in
 [../node-api.md](../node-api.md#give-up-the-wait-with-a-signal). Since
-5.0.0 it is `_request` of [Borrow](#borrow-taking-and-giving-back-a-connection),
+4.0.0 it is `_request` of [Borrow](#borrow-taking-and-giving-back-a-connection),
 and `query()` waits for its connection the same way. An abort during the
 probe that follows drops the connection, see there. The wait works like
 this:
