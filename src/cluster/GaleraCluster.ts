@@ -399,6 +399,21 @@ export class GaleraCluster {
             record(undefined, error);
             throw error;
         }
+        // The values of an object take the named pass of _formatSQL. A :name of the object
+        // inside quotes or backticks would get a quoted value, whose quotes close the literal
+        // (#131). Before any node
+        if (!queryOptions.execute && values && typeof values !== 'string'
+            && !Array.isArray(values)) {
+            const quoted = GaleraCluster._namedPlaceholders(sql, values)
+                .find(found => found.quoted);
+            if (quoted) {
+                const error = Object.assign(new Error(`query: the placeholder :${quoted.key} is ` +
+                    `inside quotes or backticks. Write it bare, as = :${quoted.key}`),
+                    { code: 'MDC_QUOTED_PLACEHOLDER' });
+                record(undefined, error);
+                throw error;
+            }
+        }
         // The caller gave up: the call rejects with the reason of the signal as it is, never
         // with stale data of Redis. A falsy reason is a failed query to the metric too
         const stopIfAborted = () => {
@@ -607,16 +622,97 @@ export class GaleraCluster {
             } else if (typeof values === 'string') {
                 return formatValues(sql, values);
             } else {
-                // one pass over the sql: a value that holds :name itself is not replaced again
-                return sql.replace(/:(\w+)/g, (txt, key) => {
-                    if (!Object.prototype.hasOwnProperty.call(values, key)) return txt;
+                // one pass over the sql: a value that holds :name itself is not replaced again.
+                // A :name in quotes or backticks stays as it is: query() refused it before
+                let text = '';
+                let last = 0;
+                for (const found of GaleraCluster._namedPlaceholders(sql, values)) {
+                    if (found.quoted) continue;
                     // true: a plain object becomes a quoted string, not `key` = value pairs
-                    return escapeValue(values[key], true);
-                })
+                    text += sql.slice(last, found.start) + escapeValue(values[found.key], true);
+                    last = found.end;
+                }
+                return text + sql.slice(last);
             }
         }
 
         return sql;
+    }
+
+    /**
+     * Each :name of the text whose key the object has as its own, in order. The text is read as
+     * sql-escaper 1.7 reads it for a ? (skipSqlContext, without ANSI_QUOTES): a :name inside a
+     * comment is text and is left out, one inside /*! *\/ or /*+ *\/ is code, since the server
+     * runs those, and one inside quotes or backticks comes with quoted: true
+     * @param sql MySQL query
+     * @param values the named values
+     * @private
+     */
+    private static _namedPlaceholders(sql: string, values: object) {
+        const found: { key: string, start: number, end: number, quoted: boolean }[] = [];
+        // the placeholders of own keys from start up to end
+        const collect = (start: number, end: number, quoted: boolean) => {
+            const placeholder = /:(\w+)/g;
+            const part = sql.slice(start, end);
+            let match: RegExpExecArray;
+            while ((match = placeholder.exec(part))) {
+                if (!Object.prototype.hasOwnProperty.call(values, match[1])) continue;
+                const at = start + match.index;
+                found.push({ key: match[1], start: at, end: at + match[0].length, quoted });
+            }
+        };
+        const length = sql.length;
+        // where the code not looked at yet starts
+        let code = 0;
+        for (let position = 0; position < length; position++) {
+            const char = sql[position];
+            const next = sql[position + 1];
+            // the end of the context that opens here, or -1 for code. Unterminated, a context
+            // runs to the end of the text
+            let end = -1;
+            if (char === "'" || char === '"') {
+                // a string, until the same quote. A backslash skips the next character
+                end = length;
+                for (let cursor = position + 1; cursor < length; cursor++) {
+                    if (sql[cursor] === '\\') {
+                        cursor++;
+                    } else if (sql[cursor] === char) {
+                        end = cursor + 1;
+                        break;
+                    }
+                }
+            } else if (char === '`') {
+                // an identifier, until a backtick that is not doubled
+                end = length;
+                for (let cursor = position + 1; cursor < length; cursor++) {
+                    if (sql[cursor] !== '`') continue;
+                    if (sql[cursor + 1] === '`') {
+                        cursor++;
+                        continue;
+                    }
+                    end = cursor + 1;
+                    break;
+                }
+            } else if (char === '#' || (char === '-' && next === '-'
+                && !(sql.charCodeAt(position + 2) > 32))) {
+                // a comment up to and including the line break: # or -- with a space, a
+                // control character or the end of the text after it
+                const lineBreak = sql.indexOf('\n', position + 1);
+                end = lineBreak === -1 ? length : lineBreak + 1;
+            } else if (char === '/' && next === '*' && sql[position + 2] !== '!'
+                && sql[position + 2] !== '+') {
+                // a comment until */. The server runs /*! */ and /*+ */: code
+                const commentEnd = sql.indexOf('*/', position + 2);
+                end = commentEnd === -1 ? length : commentEnd + 2;
+            }
+            if (end === -1) continue;
+            collect(code, position, false);
+            if (char === "'" || char === '"' || char === '`') collect(position, end, true);
+            code = end;
+            position = end - 1;
+        }
+        collect(code, length, false);
+        return found;
     }
 
     /**
