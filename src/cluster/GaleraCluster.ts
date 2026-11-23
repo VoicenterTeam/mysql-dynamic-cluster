@@ -215,7 +215,9 @@ export class GaleraCluster {
 
                     this.connected = true;
                     this._clusterConnect = (async () => {
-                        if (this._useClusterHashing) await this._enableHashing();
+                        if (this._useClusterHashing) await this._enableHashing(generation);
+                        // disconnect() came while the hashing ran: no event after its own
+                        if (generation !== this._generation) return;
 
                         Events.emit('connected');
                         Logger.info('Cluster connected');
@@ -375,10 +377,13 @@ export class GaleraCluster {
 
     /**
      * Enable hashing for cluster
+     * @param generation the _generation of the connect() call: after a disconnect() no event
      */
-    private async _enableHashing() {
+    private async _enableHashing(generation: object | undefined) {
         try {
             await this._clusterHashing.connect();
+            // disconnect() came meanwhile: no event after its own
+            if (generation !== this._generation) return;
             Events.emit('hashing_created');
             Logger.info("Cluster hashing enabled");
         } catch (e) {
