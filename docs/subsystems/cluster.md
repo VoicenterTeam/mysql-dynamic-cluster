@@ -41,10 +41,11 @@ Pool construction, in the constructor:
 3. Every host gets a `Pool`, constructed with `(poolSettings,
    clusterName)`. A host without `host` never gets here: the settings
    schema rejects it.
-4. Since 4.1.1 the constructor logs one `warn` per host whose id is
+4. Since 4.1.1 the constructor logs a `warn` for a host whose id is
    negative, not an integer, the id of another host too, or above 127 with
-   `useClusterHashing` on. The id is kept as it is. See
-   [`hosts`](../configuration.md#hosts).
+   `useClusterHashing` on, also an id it gave. The id is kept as it is. A
+   host gets one `warn` at most: the line about a replaced `0` says it
+   too. See [`hosts`](../configuration.md#hosts).
 
 After the pool array is built, the constructor instantiates
 `ServiceNames(this, config.current.serviceMetrics)` and
