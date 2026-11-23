@@ -12,6 +12,8 @@ jest.mock('../../src/Redis/Redis', () => ({
 }));
 
 import mysql from 'mysql2';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { GaleraCluster } from '../../src/cluster/GaleraCluster';
 
 // What query() writes into the SQL text with array values (#121): the format() of sql-escaper,
@@ -43,7 +45,10 @@ describe('array values: a ? that is no placeholder is left alone', () => {
         ['in backticks', 'SELECT ? AS `q?`, ? AS v', "SELECT 'X' AS `q?`, 'Y' AS v"],
         ['in a /* */ comment', 'SELECT ? /* why? */ AS v', "SELECT 'X' /* why? */ AS v"],
         ['in a -- comment', 'SELECT ? AS v -- why?\n, ? AS w',
-            "SELECT 'X' AS v -- why?\n, 'Y' AS w"]
+            "SELECT 'X' AS v -- why?\n, 'Y' AS w"],
+        // the server runs these comments, so a ? in one is a placeholder
+        ['in a /*! */ comment', 'SELECT /*! ? */ 1, ?', "SELECT /*! 'X' */ 1, 'Y'"],
+        ['in a /*+ */ comment', 'SELECT /*+ ? */ 1, ?', "SELECT /*+ 'X' */ 1, 'Y'"]
     ])('%s', async (_where, sql, expected) => {
         const { sent } = makeCluster();
         expect(await sent(sql, ['X', 'Y'])).toBe(expected);
@@ -66,6 +71,20 @@ describe('array values: what else the text gets', () => {
         expect(await sent('SELECT ?', [{ a: 1 }])).toBe("SELECT '[object Object]'");
     });
 
+    it('a Map or plain object becomes pairs after ON DUPLICATE KEY UPDATE, a Map after SET', async () => {
+        const { sent } = makeCluster();
+        expect(await sent('INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE ?', [{ a: 1 }]))
+            .toBe('INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE `a` = 1');
+        expect(await sent('UPDATE t SET ?', [new Map([['a', 1]])])).toBe('UPDATE t SET `a` = 1');
+        expect(await sent('SELECT ?', [new Map([['a', 1]])])).toBe("SELECT '[object Map]'");
+    });
+
+    it('a Set is a list, a Uint8Array is hex', async () => {
+        const { sent } = makeCluster();
+        expect(await sent('SELECT ?', [new Set([1, 2])])).toBe('SELECT 1, 2');
+        expect(await sent('SELECT ?', [new Uint8Array([1, 39, 92])])).toBe("SELECT X'01275c'");
+    });
+
     it('an object with toSqlString() is written raw, a named value too', async () => {
         const { sent } = makeCluster();
         expect(await sent('SELECT ?', [raw('NOW()')])).toBe('SELECT NOW()');
@@ -76,6 +95,19 @@ describe('array values: what else the text gets', () => {
 // query() calls sql-escaper itself, not through mysql2, with the arguments mysql2's format() and
 // escape() get: the text is the one mysql2 writes, here where both resolve the same copy
 describe('the text is the one of mysql2', () => {
+    // the comparisons below assume mysql2 re-exports the function the package calls
+    it('mysql2 exports the same format()', () => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        expect(require('sql-escaper').format).toBe(mysql.format);
+    });
+
+    it('the package requires sql-escaper 1.6.0 or later', () => {
+        const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf8'));
+        const range: string = pkg.dependencies['sql-escaper'];
+        const [major, minor] = range.replace(/^[^\d]*/, '').split('.').map(Number);
+        expect(major > 1 || (major === 1 && minor >= 6)).toBe(true);
+    });
+
     const formatSQL = (sql: string, values: any): string =>
         (GaleraCluster.prototype as any)._formatSQL(sql, values);
     // the text, or the message of what was thrown
