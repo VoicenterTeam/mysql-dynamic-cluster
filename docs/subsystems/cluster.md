@@ -244,19 +244,23 @@ more than put a quoted value in place of each `?` (#121):
 
 - `??` is an identifier placeholder: `SELECT ?? , ?` with `['X', 'Y']` gives
   ``SELECT `X` , 'Y'``.
-- A plain object among array values, in place of an assignment after `SET`, becomes
-  `` `key` = value `` pairs: `UPDATE t SET ?` with `[{ a: 1, b: 'x' }]` gives
+- A plain object or `Map` among array values, in place of an assignment after `SET` or
+  `ON DUPLICATE KEY UPDATE`, becomes `` `key` = value `` pairs: `UPDATE t SET ?` with `[{ a: 1, b: 'x' }]` gives
   ``UPDATE t SET `a` = 1, `b` = 'x'``. Anywhere else, `SELECT ?` for one, it becomes the
-  string `'[object Object]'`, and a named value always does.
+  string `'[object Object]'`, and a named value does too, unless it is an `expand()` value
+  (sql-escaper 1.7 and later), which becomes pairs.
 - An object with a `toSqlString()` function is written as raw SQL, a named value too.
 - A `?` inside `'...'`, `"..."`, backticks or a comment (`#`, `-- `, `/* */`) is left alone,
-  since sql-escaper 1.6. 1.5.x also replaced one inside `"..."` or after `#`, so every value
+  since sql-escaper 1.6. The exception is `/*! ... */` and `/*+ ... */`: the server runs
+  those, so a `?` there is replaced. 1.5.x also replaced one inside `"..."` or after `#`, so every value
   after it moved one place. mysql2 3.24 allows 1.5.1, so the package depends on
   `sql-escaper ^1.6.0` and calls it itself: `query()` leaves such a `?` alone whatever copy
   mysql2 gets. npm usually resolves the fixed copy for mysql2 too. An app that depends on a
   sql-escaper below 1.6 itself keeps that copy for mysql2 (npm then nests the newer one under
   this package), so `mysql2.format()` and `mysql2.escape()` called by the app directly still
   behave as 1.5.x there.
+- A `:name` is replaced anywhere, inside quotes and comments too: write `= :name`, never
+  `':name'` (see [named values](../configuration.md#named-values)).
 - Only `execute()` keeps the values out of the text.
 - Never pass an object from outside the app, such as a request body or parsed JSON, as a
   value: it can turn into column assignments or raw SQL.
