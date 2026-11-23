@@ -305,3 +305,29 @@ describe('a pass of a connect() that disconnect() came after', () => {
         expect(cluster._clusterHashing.connect).toHaveBeenCalledTimes(1);
     });
 });
+// The 'connected' event is emitted by the connect of the cluster. Events is one emitter per
+// module, so the listener throws only while the test asks it to
+describe('a connected listener that throws', () => {
+    let throwing = false;
+    beforeAll(() => {
+        const Events = require('../../src/utils/Events').default;
+        Events.on('connected', () => {
+            if (throwing) throw new Error('listener failed');
+        });
+    });
+    afterEach(() => { throwing = false; });
+
+    it('makes that connect() reject, and a later one reject at once with the same reason',
+        async () => {
+            throwing = true;
+            const pools = [node(1)];
+            const cluster = makeCluster(pools);
+            const first = cluster.connect();
+            pools[0].connects[0].pass();
+            expect(await stateOf(first)).toEqual({ error: 'listener failed' });
+
+            const second = cluster.connect().catch((reason: string) => reason);
+            await new Promise(resolve => setImmediate(resolve));
+            expect(await stateOf(second)).toEqual({ value: 'listener failed' });
+        });
+});
