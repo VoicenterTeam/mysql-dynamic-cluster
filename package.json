@@ -41,6 +41,7 @@
     "@types/ioredis": "^4.28.10",
     "ioredis": "^4.28.3",
     "mysql2": "^3.24.4",
+    "sql-escaper": "^1.6.0",
     "zod": "^4.6.7"
   },
   "peerDependencies": {
