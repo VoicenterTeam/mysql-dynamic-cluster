@@ -90,6 +90,13 @@ describe('array values: what else the text gets', () => {
         expect(await sent('SELECT ?', [raw('NOW()')])).toBe('SELECT NOW()');
         expect(await sent('SELECT :n', { n: raw('NOW()') })).toBe('SELECT NOW()');
     });
+
+    it('a named value is a string after SET, unless it is an expand() value', async () => {
+        const { sent } = makeCluster();
+        const { expand } = require('sql-escaper');
+        expect(await sent('UPDATE t SET :n', { n: { a: 1 } })).toBe("UPDATE t SET '[object Object]'");
+        expect(await sent('UPDATE t SET :n', { n: expand({ a: 1 }) })).toBe('UPDATE t SET `a` = 1');
+    });
 });
 
 // query() calls sql-escaper itself, not through mysql2, with the arguments mysql2's format() and
