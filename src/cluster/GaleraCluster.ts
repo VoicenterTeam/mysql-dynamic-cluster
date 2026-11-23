@@ -167,8 +167,6 @@ export class GaleraCluster {
         if (!this._resolveReady) this._newReady();
         const resolveReady = this._resolveReady;
         this._resolveReady = undefined;
-        // the `ready` of this call: a later call makes a new one
-        const ready = this._ready;
         // the same for `firstReady`
         if (!this._resolveFirstReady) this._newFirstReady();
         const resolveFirstReady = this._resolveFirstReady;
@@ -241,12 +239,6 @@ export class GaleraCluster {
             all.then(resolveReady);
             // no pool passed: every result, at the moment of `ready`. After a pass it does nothing
             all.then(everyResult => resolveFirstReady(GaleraCluster._ownResults(everyResult)));
-            // No node passed: the pools of a connect() that failed report no metrics. Kept
-            // when the cluster is connected, or when a later connect() call, which has a
-            // `ready` of its own, runs
-            all.then(() => {
-                if (!this.connected && this._ready === ready) Metrics.unregisterPools(this._pools);
-            });
         });
         this._connecting = call;
         const ended = () => {
