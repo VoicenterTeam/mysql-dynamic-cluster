@@ -243,7 +243,7 @@ import type { IQueryTiming, QueryStep } from './index';
 
 export const timingTypes: [
     Same<QueryStep, 'queue' | 'probe' | 'prepare' | 'statement'>,
-    Same<IQueryTiming, { step: QueryStep; queuedMs: number; nodeId?: number }>
+    Same<IQueryTiming, { step: QueryStep; queuedMs: number; nodeId: number }>
 ] = [true, true];
 export const told = cluster.query('SELECT 1', undefined, {
     onTiming: (timing: IQueryTiming) => console.log(timing.step, timing.queuedMs)

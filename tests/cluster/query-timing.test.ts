@@ -383,7 +383,9 @@ describe('a call that ends after its connection came', () => {
             const node = await listen(1);
             const settings = { probeTimeout: 200, idleCheckInterval: LONG };
             const { cluster } = await connect([node], settings);
-            // every connection counts as idle, a new one too, so the borrow probes each one
+            // Every connection counts as idle, a new one too, so the borrow probes each one.
+            // Borrow.take() then ends in the catch of its probe with tries >= most, most being
+            // connectionLimit + 1, while the node is still valid
             jest.spyOn(cluster.pools[0]._reaper, 'drawn').mockReturnValue({ aliveAt: 0 });
             node.cutOff();
             const logins = node.seen().logins;
@@ -480,7 +482,7 @@ describe('onTiming itself', () => {
         expect(warned[0][0]).toContain('bad callback');
     });
 
-    const THREW = 'onTiming of a query threw, the call keeps its result: ';
+    const THREW = 'onTiming of a query threw or rejected, the call keeps its result: ';
     const warnings = (logger: { warn: jest.Mock }) => logger.warn.mock.calls
         .map(([message]: unknown[]) => String(message))
         .filter((message: string) => message.includes('onTiming'));
@@ -540,7 +542,8 @@ describe('onTiming itself', () => {
     });
 
     // Jest takes an unhandled rejection over, and a listener of the test never hears it. A
-    // clean Node process does, with a listener of its own: there it never fires
+    // clean Node process does, with a listener of its own: there it hears only the control,
+    // a rejection the script leaves unhandled on purpose
     it('an async one that rejects leaves no unhandled rejection, in a clean Node process', () => {
         const script = `
             const ts = require('typescript');
@@ -557,6 +560,8 @@ describe('onTiming itself', () => {
             };
             const unhandled = [];
             process.on('unhandledRejection', reason => unhandled.push(String(reason.message)));
+            // the control: the listener hears this one
+            Promise.reject(new Error('control'));
             const warned = [];
             const quiet = () => undefined;
             const cluster = require('./index.ts').createPoolCluster({
@@ -590,7 +595,7 @@ describe('onTiming itself', () => {
         });
 
         expect(res.stderr).toBe('');
-        expect(res.stdout).toBe('[1,1,[]]\n');
+        expect(res.stdout).toBe('[1,1,["control"]]\n');
         expect(res.status).toBe(0);
     });
 
