@@ -291,7 +291,7 @@ Each named value is always escaped, as array and string values are. For `email =
 
 Each named value goes through sql-escaper's `escape` (the function mysql2 exports). A string arrives quoted and escaped, a number as a number, `null` and `undefined` as `NULL`, an array as a comma-separated list, a `Date` as a quoted date. A plain object arrives as the string `'[object Object]'`, never as SQL. To send SQL through a value on purpose, wrap it: `require('mysql2').raw('NOW()')`. Any object with a `toSqlString` function is sent as SQL the same way. JSON cannot carry a function, so a parsed request body cannot hold one.
 
-**Escaping protects a placeholder that stands where a value stands, and nowhere else.** A placeholder inside quotes, backticks or a `/* */` comment stays open to injection: for `name = ':n'` the value ` OR 1=1 -- ` gives `name = '' OR 1=1 -- ''`. See [Upgrading from 3.2.2](#upgrading-from-322).
+**Escaping protects a placeholder that stands where a value stands, and nowhere else.** Inside quotes the value's own quotes would close the literal: for `name = ':n'` the value ` OR 1=1 -- ` would give `name = '' OR 1=1 -- ''`. So a placeholder inside quotes or backticks makes `query()` reject with the code `MDC_QUOTED_PLACEHOLDER` before any node is asked, when the object has that key. Write `name = :n`. A placeholder inside a comment stays text. One inside `/*! */` or `/*+ */` is replaced, since the server runs those. See [Upgrading from 3.2.2](#upgrading-from-322).
 
 **Check the type of a value that comes from a request.** An array becomes a list, so `LIMIT :n` with `[0, 100000]` gives `LIMIT 0, 100000`, a nested array gives `(1, 2), (3, 4)`, and an empty array gives `IN ()`. Where the SQL expects one number or one string, make sure the value is one.
 
@@ -302,10 +302,10 @@ Each named value goes through sql-escaper's `escape` (the function mysql2 export
 3.2.2 sent named values as text. Before a service moves to 4.0.0:
 
 - **Remove `escapeNamedValues` from the settings**, if they have it. Strict validation refuses it.
-- **Remove the quotes around placeholders.** `name = ':name'` becomes `name = :name`. This step is not optional. With the quotes left in, the value's own quotes close the literal early, and a value written for it changes the statement without a single quote character in it. The same holds for a placeholder inside backticks or a block comment.
+- **Remove the quotes around placeholders.** `name = ':name'` becomes `name = :name`. This step is not optional. 4.0.0 replaced a placeholder inside quotes: the value's own quotes closed the literal early, and a value written for it changed the statement without a single quote character in it. 4.0.1 refuses such a call with `MDC_QUOTED_PLACEHOLDER` before any node is asked. The same holds for a placeholder inside backticks.
 - **Move SQL fragments out of the values.** A value such as `NOW()`, a column name or `ASC` is now sent as a quoted string. Write those into the SQL text, from a fixed list the code owns, or wrap them in mysql2's `raw()`.
 - **`LIKE` patterns.** Put the wildcards in the value: `name LIKE :pattern` with `{ pattern: '%' + text + '%' }`, not `'%:text%'`, which is a placeholder inside quotes.
-- **A `:name` inside a string literal is still replaced** when the object has that key, now with quotes, which breaks out of the literal as above. Rename the key or the text.
+- **A `:name` inside a string literal is refused** when the object has that key, such as `'10:30'` with a key `30`. Rename the key or the text.
 - **Redis cache keys change.** The formatted SQL is the cache key, so each such query misses the cache once after the upgrade.
 
 ## `hosts`

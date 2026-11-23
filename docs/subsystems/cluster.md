@@ -225,9 +225,10 @@ wrote a value into the text.
 
 - Array `values` → sql-escaper's `format(sql, values)` (positional `?`).
 - String `values` → same `format()` call.
-- Object `values` → regex `:paramName` substitution: `sql.replace(/:(\w+)/g, ...)`
-  swaps in the value when the object has the key as its own property,
-  otherwise leaves the placeholder verbatim. The value goes through
+- Object `values` → `:paramName` substitution in one pass: `_namedPlaceholders()`
+  reads the text as sql-escaper reads it for a `?`, and each `:name` in code
+  gets the value when the object has the key as its own property,
+  otherwise the placeholder stays verbatim. The value goes through
   sql-escaper's `escape(value, true)`, so a plain object becomes the string
   `'[object Object]'`, not SQL. Always: there is no `escapeNamedValues`
   setting or query option to leave the value as text, as 3.2.2 did. A
@@ -259,8 +260,10 @@ more than put a quoted value in place of each `?` (#121):
   sql-escaper below 1.6 itself keeps that copy for mysql2 (npm then nests the newer one under
   this package), so `mysql2.format()` and `mysql2.escape()` called by the app directly still
   behave as 1.5.x there.
-- A `:name` is replaced anywhere, inside quotes and comments too: write `= :name`, never
-  `':name'` (see [named values](../configuration.md#named-values)).
+- A `:name` of the object inside quotes or backticks makes `query()` reject with
+  `MDC_QUOTED_PLACEHOLDER` before any node is asked: write `= :name`, never `':name'`
+  (see [named values](../configuration.md#named-values)). One in a comment stays text, one
+  in `/*! */` or `/*+ */` is replaced.
 - Only `execute()` keeps the values out of the text.
 - Never pass an object from outside the app, such as a request body or parsed JSON, as a
   value: it can turn into column assignments or raw SQL.

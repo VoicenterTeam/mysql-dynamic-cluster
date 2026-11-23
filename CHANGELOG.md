@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A `:name` inside quotes or backticks is refused** (#131). 4.0.0 replaced a `:name` of the object wherever it stood, inside a string literal or backticks too, and the quotes of the escaped value closed the literal: `name = ':n'` with ` OR 1=1 OR ` sent `name = '' OR 1=1 OR ''`. Now `query()` rejects such a call with `code: 'MDC_QUOTED_PLACEHOLDER'` before any node is asked, when the object has that key. The text is read as sql-escaper reads it for a `?`. A `:name` inside a comment is left as text, where 4.0.0 replaced it too. One inside `/*! */` or `/*+ */` is still replaced, since the server runs those. Array and string values and `execute()` are not affected. An app writes `id = :id`, not `id = ':id'`. A quoted number such as `id = ':id'` with `{ id: 5 }` worked by accident in 4.0.0, as `id = '5'`, and now fails.
+
 ## 4.0.0 (2026-11-23)
 
 The same code as 4.0.0-rc.2, which vc-dal tested on its unit and MySQL contract suites and a three-node Galera rig.
