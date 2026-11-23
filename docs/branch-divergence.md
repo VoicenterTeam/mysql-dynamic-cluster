@@ -26,14 +26,14 @@ Sibling docs: [configuration.md](configuration.md), [architecture.md](architectu
 
 | Concept | `dev` (per README) | V3.0 |
 |---|---|---|
-| Global pool settings key | `globalPoolSettings` ([README.md:258](../README.md)) | `defaultPoolSettings` ([schema.ts](../src/configs/schema.ts)) |
-| Log level | `logLevel: LOGLEVEL` enum (`QUIET`/`REGULAR`/`FULL`) ([README.md:392-402](../README.md)) | `logs.level`: one of `'info' \| 'error' \| 'debug' \| 'warn' \| 'silent'` ([schema.ts](../src/configs/schema.ts), [LoggerInterfaces.ts](../src/types/LoggerInterfaces.ts)) |
-| Log destination | `useConsoleLogger`, `useAmqpLogger` booleans ([README.md:348-376](../README.md)) | No setting. Logs go to the console, or to the `logger` object the app passes in the settings ([Logger.ts](../src/utils/Logger.ts), [subsystems/logger.md](subsystems/logger.md)) |
-| AMQP config | `amqpLoggerSettings.log_amqp[]` — array of `{connection, channel}` ([README.md:723-762](../README.md)) | None. The library has no AMQP settings; the schema rejects `amqp_logs` |
-| Redis config | flat `redisSettings: {keyPrefix, expire, …}` plus `useRedis` boolean ([README.md:288-294](../README.md), [README.md:636-704](../README.md)) | `redis: {enabled, keyPrefix, expire, …}` — `enabled` lives inside the block; `redisSettings` is rejected ([schema.ts](../src/configs/schema.ts)) |
-| Redis client injection | `redis: <RedisInstance>` ([README.md:269-278](../README.md)) | `redisInstant: <RedisInstance>` — stripped from user settings before validation ([index.ts](../index.ts), `createPoolCluster`) |
-| Config delivery | Object passed directly to `createPoolCluster` ([README.md:169-185](../README.md)) | Object passed to `createPoolCluster`, validated by a strict zod schema that fills in the defaults; each host is then deep-merged with `defaultPoolSettings`. No environment variables, no `.env`, no config files ([schema.ts](../src/configs/schema.ts), [Settings.ts](../src/utils/Settings.ts)) |
-| AMQP transport | [`@voicenter-team/amqp-logger`](https://www.npmjs.com/package/@voicenter-team/amqp-logger) ([README.md:20](../README.md)) | None. To log to AMQP, pass a `logger` that publishes there ([subsystems/logger.md](subsystems/logger.md)) |
+| Global pool settings key | `globalPoolSettings` ([README.md](../README.md), "User settings", `globalPoolSettings`) | `defaultPoolSettings` ([schema.ts](../src/configs/schema.ts)) |
+| Log level | `logLevel: LOGLEVEL` enum (`QUIET`/`REGULAR`/`FULL`) ([README.md](../README.md), "User settings", `logLevel`) | `logs.level`: one of `'info' \| 'error' \| 'debug' \| 'warn' \| 'silent'` ([schema.ts](../src/configs/schema.ts), [LoggerInterfaces.ts](../src/types/LoggerInterfaces.ts)) |
+| Log destination | `useConsoleLogger`, `useAmqpLogger` booleans ([README.md](../README.md), "User settings", `useConsoleLogger` and `useAmqpLogger`) | No setting. Logs go to the console, or to the `logger` object the app passes in the settings ([Logger.ts](../src/utils/Logger.ts), [subsystems/logger.md](subsystems/logger.md)) |
+| AMQP config | `amqpLoggerSettings.log_amqp[]` — array of `{connection, channel}` ([README.md](../README.md), "AMQP settings", `log_amqp`) | None. The library has no AMQP settings; the schema rejects `amqp_logs` |
+| Redis config | flat `redisSettings: {keyPrefix, expire, …}` plus `useRedis` boolean ([README.md](../README.md), "User settings", `useRedis`; "Redis settings") | `redis: {enabled, keyPrefix, expire, …}` — `enabled` lives inside the block; `redisSettings` is rejected ([schema.ts](../src/configs/schema.ts)) |
+| Redis client injection | `redis: <RedisInstance>` ([README.md](../README.md), "User settings", `redis`) | `redisInstant: <RedisInstance>` — stripped from user settings before validation ([index.ts](../index.ts), `createPoolCluster`) |
+| Config delivery | Object passed directly to `createPoolCluster` ([README.md](../README.md), "Functions", `createPoolCluster`) | Object passed to `createPoolCluster`, validated by a strict zod schema that fills in the defaults; each host is then deep-merged with `defaultPoolSettings`. No environment variables, no `.env`, no config files ([schema.ts](../src/configs/schema.ts), [Settings.ts](../src/utils/Settings.ts)) |
+| AMQP transport | [`@voicenter-team/amqp-logger`](https://www.npmjs.com/package/@voicenter-team/amqp-logger) ([README.md](../README.md), "Technologies") | None. To log to AMQP, pass a `logger` that publishes there ([subsystems/logger.md](subsystems/logger.md)) |
 | Logger | Custom console logger + custom AMQP logger | Small `Logger` class: console by default, or the app-supplied `logger` object with `debug`/`info`/`warn`/`error` ([Logger.ts](../src/utils/Logger.ts)) |
 | `LOGLEVEL` import path | `src/types/AmqpInterfaces` (per dev — README does not pin it but the old enum sat alongside AMQP types) | `src/types/LoggerInterfaces` ([LoggerInterfaces.ts](../src/types/LoggerInterfaces.ts), re-exported from [index.ts](../index.ts)) |
 | Schema file | none — config is whatever the caller passes | declared in [src/configs/schema.ts](../src/configs/schema.ts), a zod schema in which every object is strict, so an unknown key is an error |
@@ -42,17 +42,17 @@ Sibling docs: [configuration.md](configuration.md), [architecture.md](architectu
 
 The Galera-side semantics did not move between branches: validators are still
 `{key, operator, value}` triples ([schema.ts](../src/configs/schema.ts),
-[README.md:457-463](../README.md)), load factors are still
+[README.md](../README.md), "Pool settings", `validators`), load factors are still
 `{key, multiplier}` pairs ([schema.ts](../src/configs/schema.ts),
-[README.md:477-482](../README.md)), and pool selection remains
+[README.md](../README.md), "Pool settings", `loadFactors`), and pool selection remains
 filter-then-sort by pool status then pool score
-([architecture.md](architecture.md), [README.md:9-13](../README.md)). The
+([architecture.md](architecture.md), [README.md](../README.md), "Features"). The
 cluster-hashing model (service → node pin in a backing MySQL table) and the SQL
 asset layout under `assets/` are identical between branches — see
 [sql-assets.md](sql-assets.md). The public API surface that consumers actually
 touch — `createPoolCluster`, `cluster.connect`, `cluster.disconnect`,
 `cluster.on`, `cluster.query` — is unchanged in name and signature
-([index.ts](../index.ts), [README.md:168-220](../README.md));
+([index.ts](../index.ts), [README.md](../README.md), "Functions");
 only the shape of the config object passed to the factory differs.
 
 ## Migration note (dev examples → V3.0)
