@@ -5,7 +5,7 @@ This document describes the test layout of `@voicenter-team/mysql-dynamic-cluste
 ## Framework and commands
 
 - Runner: **Jest 30** (`jest ^30.4.2`) with `ts-jest ^29.4.9` (see `devDependencies` in [package.json:50](../package.json#L50)).
-- Node: running the suite needs Node 20 or later, because of the two `overrides` below. The library itself has no such floor. `tests/cluster/query-timer.test.ts`, `tests/pool/session-state.test.ts` and `tests/metrics/no-side-effects.test.ts` count timers with `process.getActiveResourcesInfo()`, which needs Node 17.3 or later. The first two fail with a message that says so when it is missing.
+- Node: running the suite needs Node 20 or later, because of the two `overrides` below. The library itself has no such floor. `tests/metrics/no-side-effects.test.ts` counts timers with `process.getActiveResourcesInfo()`, which needs Node 17.3 or later.
 - `overrides` in [package.json](../package.json): `glob ^14.0.2` and `minimatch ^11.0.1` are dev-only and lift jest and test-exclude past the ranges they declare, for GHSA-3g3m-2fjr-6pw4 (glob) and GHSA-g3hv-75wg-m249 (minimatch). Remove them when jest and test-exclude declare patched ranges: delete the block, run `npm install` and check that `npm audit` shows neither advisory.
 - Config: [jest.config.js:1](../jest.config.js#L1). Uses the `ts-jest` preset, `node` test environment, and a 5-minute per-test timeout (`testTimeout: 300000`).
 - Scripts ([package.json:33](../package.json#L33)):
@@ -17,6 +17,7 @@ This document describes the test layout of `@voicenter-team/mysql-dynamic-cluste
 
 ```
 tests/
+  timers.ts                      # recordTimers(): the timers a scenario started that still keep the process alive at its end, by an async_hooks hook. Timers other code starts before or ends meanwhile do not count, which a count of every timer of the process got wrong under load. Used by query-timer.test.ts and session-state.test.ts
   cluster/
     hashing.test.ts              # ClusterHashing wiring against a live cluster + helper schema (stale)
     hashing-upgrade.test.ts      # Hashing schema: backward compatible upgrade in place

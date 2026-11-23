@@ -5,6 +5,7 @@ import { parseSettings } from '../../src/configs/schema';
 import { Pool } from '../../src/pool/Pool';
 import { SessionState } from '../../src/pool/SessionState';
 import { Settings } from '../../src/utils/Settings';
+import { recordTimers } from '../timers';
 
 // The session of a pooled connection, with the cluster of createPoolCluster and the real mysql2
 // against mysql2's own server class on the loopback interface. The fake server keeps the
@@ -718,23 +719,17 @@ describe('send(): the time limit of a command', () => {
         expect(jest.getTimerCount()).toBe(0);
     });
 
-    it('the timer keeps no process alive', () => {
+    it('the timer keeps no process alive', async () => {
         jest.useRealTimers();
         const { connection, ask } = silent();
         const session = state();
-        // An unref'd timer is not listed. Node 17.3 and later, see docs/testing.md
-        const info = (process as unknown as { getActiveResourcesInfo?: () => string[] })
-            .getActiveResourcesInfo;
-        if (typeof info !== 'function') {
-            throw new Error('this test needs process.getActiveResourcesInfo(), Node 17.3+');
-        }
-        const timers = () => info.call(process).filter((name: string) => name === 'Timeout').length;
-        const before = timers();
+        const record = recordTimers();
 
         session.send(connection, LIMIT, ask, jest.fn());
-        const during = timers();
+        // the timer of the command is still running here
+        const left = await record.stop();
         session.drop(connection);
 
-        expect(during).toBe(before);
+        expect(left).toEqual([]);
     });
 });

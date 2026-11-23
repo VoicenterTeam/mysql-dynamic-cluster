@@ -2,15 +2,15 @@ import mysql from 'mysql2';
 import { AddressInfo } from 'net';
 import { createPoolCluster } from '../../index';
 import { PoolStatus } from '../../src/pool/PoolStatus';
+import { recordTimers } from '../timers';
 
 // The time limit of a command of the pool (#120), against the real mysql2 and mysql2's own
 // server class on the loopback interface. mysql2 clears the timer of its `timeout` option only
 // when the command ends, on an error reply or when the timer fires, not when the connection is
 // destroyed. So a command still out on a connection the pool dropped kept that timer, and the
 // process could not exit until it fired. The pool bounds its commands with a timer of its own.
-// What keeps the process alive is read with process.getActiveResourcesInfo(), which lists a
-// timer only while it is ref'd: after disconnect() the count of 'Timeout' must be the one from
-// before the cluster
+// A test records the timers its scenario starts, from before the cluster to after its
+// disconnect(): none of them may still keep the process alive then, see ../timers.ts
 const COM_CHANGE_USER = 0x11;
 const COM_RESET_CONNECTION = 0x1f;
 const LONG = 600000;
@@ -175,21 +175,6 @@ const until = async (done: () => boolean, what: string): Promise<void> => {
 };
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// What keeps the process alive, by kind. An unref'd timer is not listed. Node 17.3 and later,
-// see docs/testing.md: the typings of Node in this repo are those of Node 16
-const resources = (): string[] => {
-    const info = (process as unknown as { getActiveResourcesInfo?: () => string[] })
-        .getActiveResourcesInfo;
-    if (typeof info !== 'function') {
-        throw new Error('these tests need process.getActiveResourcesInfo(), Node 17.3+');
-    }
-    return info.call(process);
-};
-const timers = () => resources().filter(name => name === 'Timeout').length;
-// Run alone, the file shares its process with jest, whose child processes of the start hold
-// timers for a moment. The counts of the tests begin once they are gone
-beforeAll(() => until(() => !resources().includes('ProcessWrap'), 'the start of jest'));
-
 const clusters: any[] = [];
 afterEach(() => clusters.splice(0).forEach(cluster => cluster.disconnect()));
 
@@ -224,13 +209,12 @@ const isOwn = (error: object) => (PoolStatus as any)._ownErrors.has(error);
 
 // The calls whose command a node never answers, aborted by the signal well before their
 // timeout. The abort destroys the connection, and nothing of the call may keep the process
-// alive once the cluster disconnected. These run first: before the fix the timer of each
-// stayed for LATER ms, and one that fired during a later test would hide the timer of that one
+// alive once the cluster disconnected. Before the fix each left the timer of mysql2, LATER ms
 describe('an aborted call leaves no timer', () => {
     const aborted = async (
         mode: Mode, ask: (cluster: any, signal: AbortSignal) => Promise<any>
     ) => {
-        const before = timers();
+        const record = recordTimers();
         const { cluster, n1, n2 } = await twoNodes();
         n1.become(mode);
         const controller = new AbortController();
@@ -242,14 +226,24 @@ describe('an aborted call leaves no timer', () => {
         const { error } = await pending;
         await until(() => n1.open() === 0, 'the connection to close');
         await cluster.disconnect();
+        const left = await record.stop();
 
         expect(error).toBe(reason);
         expect(n2.order()).toEqual([]);
-        expect(timers()).toBe(before);
+        expect(left).toEqual([]);
         return n1.order();
     };
 
     it('query(): the statement', async () => {
+        const order = await aborted('ignores the statement', (cluster, signal) =>
+            cluster.query(APP_SQL, undefined, { signal, timeout: LATER, redis: false }));
+        expect(order).toEqual([APP_SQL]);
+    });
+
+    // What made a count of every timer flaky: a ref'd timer of other code, as of jest under
+    // load, that started before the scenario and ended during it
+    it('query(): a timer of other code that ends meanwhile does not count', async () => {
+        setTimeout(() => undefined, 50);
         const order = await aborted('ignores the statement', (cluster, signal) =>
             cluster.query(APP_SQL, undefined, { signal, timeout: LATER, redis: false }));
         expect(order).toEqual([APP_SQL]);
@@ -281,7 +275,7 @@ describe('an aborted call leaves no timer', () => {
 // PROTOCOL_CONNECTION_LOST, and before the fix a second time when its timer fired
 describe('a lost connection leaves no timer', () => {
     it('query(): rejects once, with the error of mysql2, and tries no other node', async () => {
-        const before = timers();
+        const record = recordTimers();
         const { cluster, n1, n2 } = await twoNodes();
         n1.become('hangs up on the statement');
         const attempts = jest.spyOn(cluster.pools[0], 'query');
@@ -290,16 +284,17 @@ describe('a lost connection leaves no timer', () => {
             timeout: LATER, redis: false, maxRetry: 2
         }));
         await cluster.disconnect();
+        const left = await record.stop();
 
         expect([error.code, error.fatal, error.sent, error.nodeId])
             .toEqual(['PROTOCOL_CONNECTION_LOST', true, true, 1]);
         expect(attempts).toHaveBeenCalledTimes(1);
         expect(n2.order()).toEqual([]);
-        expect(timers()).toBe(before);
+        expect(left).toEqual([]);
     });
 
     it('multiStatementQuery(): the statement of the transaction', async () => {
-        const before = timers();
+        const record = recordTimers();
         const node = await listen(1);
         const cluster = await connectCluster(node);
         node.become('hangs up on the statement');
@@ -308,10 +303,11 @@ describe('a lost connection leaves no timer', () => {
             cluster.pools[0].multiStatementQuery([APP_SQL], { timeout: LATER })
         );
         await cluster.disconnect();
+        const left = await record.stop();
 
         expect([error.code, error.fatal]).toEqual(['PROTOCOL_CONNECTION_LOST', true]);
         expect(node.order()).toEqual(['START TRANSACTION', APP_SQL]);
-        expect(timers()).toBe(before);
+        expect(left).toEqual([]);
     });
 });
 
