@@ -28,12 +28,14 @@ interface ICollected { [name: string]: { unit: string, scope: { name: string, ve
 const OPERATION = 'mysql_dynamic_cluster.operation.duration';
 const QUERY = 'mysql_dynamic_cluster.query.duration';
 const CACHE = 'mysql_dynamic_cluster.cache.lookup.duration';
+const WAIT = 'mysql_dynamic_cluster.connection.wait_time';
 
 // attribute keys
 const SOURCE = 'mysql_dynamic_cluster.result.source';
 const CACHE_RESULT = 'mysql_dynamic_cluster.cache.result';
 const SERVICE = 'mysql_dynamic_cluster.service.name';
 const CLUSTER = 'mysql_dynamic_cluster.cluster.name';
+const STEP = 'mysql_dynamic_cluster.attempt.step';
 
 // delta temporality: every collect returns only what was recorded since the previous one
 const exporter = new InMemoryMetricExporter(AggregationTemporality.DELTA);
@@ -147,7 +149,7 @@ describe('OpenTelemetry metrics', () => {
         await makePool(makeConn({ rows: [{ a: 1 }] })).query('SELECT 1', { serviceId: 7, serviceName: 'billing' });
 
         const collected = await collect();
-        expect(Object.keys(collected)).toEqual([OPERATION]);
+        expect(Object.keys(collected)).toEqual([OPERATION, WAIT]);
         expect(collected[OPERATION].unit).toBe('s');
         expect(collected[OPERATION].points).toHaveLength(1);
         expect(collected[OPERATION].points[0].value.count).toBe(1);
@@ -161,7 +163,8 @@ describe('OpenTelemetry metrics', () => {
             'server.port': 3307,
             'db.client.connection.pool.name': 'node1',
             [CLUSTER]: 'c1',
-            [SERVICE]: 'billing'
+            [SERVICE]: 'billing',
+            [STEP]: 'statement'
         });
     });
 
@@ -181,7 +184,8 @@ describe('OpenTelemetry metrics', () => {
             'server.address': '10.0.0.1',
             'server.port': 3307,
             'db.client.connection.pool.name': 'node1',
-            [CLUSTER]: 'c1'
+            [CLUSTER]: 'c1',
+            [STEP]: 'prepare'
         });
     });
 
@@ -192,6 +196,88 @@ describe('OpenTelemetry metrics', () => {
         expect(attributes['error.type']).toBe('_OTHER');
         expect(attributes['db.response.status_code']).toBeUndefined();
     });
+
+    // the USE of a query on another database fails, the statement would pass
+    const useFails = () => ({
+        ...makeConn(),
+        query: jest.fn((options: any, cb: Cb) => {
+            cb(options.sql.startsWith('USE ') ? accessDenied : null, []);
+        })
+    });
+    it.each([
+        ['a successful attempt', 'statement', () => makePool(makeConn({ rows: [] })).query('SELECT 1')],
+        ['a failed statement', 'statement',
+            () => makePool(makeConn({ queryErr: accessDenied })).query('SELECT 1')],
+        ['a failed USE', 'prepare',
+            () => makePool(useFails()).query('SELECT 1', { database: 'other' })],
+        ['a request mysql2 gave no connection', 'queue', () => {
+            const pool = makePool(makeConn());
+            (pool as any)._pool = { getConnection: jest.fn((cb: Cb) => cb(accessDenied)) };
+            return pool.query('SELECT 1');
+        }]
+    ])('records the step %s ended in as %s', async (_name, step, attempt) => {
+        await attempt().catch(() => undefined);
+
+        const collected = await collect();
+        expect(counts(collected, OPERATION)).toEqual([1]);
+        expect(collected[OPERATION].points[0].attributes[STEP]).toBe(step);
+    });
+
+    it('records the wait of each attempt for a connection, with the attributes of its node',
+        async () => {
+            const HOLD = 200;
+            // the statement of each attempt runs HOLD ms
+            const conn: any = {
+                ...makeConn(),
+                query: jest.fn((_options: any, cb: Cb) => { setTimeout(() => cb(null, []), HOLD); })
+            };
+            const pool = new Pool({
+                id: 1, host: '10.0.0.1', port: 3307, name: 'node1',
+                user: 'u', password: 'p', database: 'd',
+                queryTimeout: 1000, resetTimeout: 1000, slowQueryTime: 1000, redisFactor: 1,
+                redisExpire: 1,
+                connectionLimit: 1, minConnections: 0, idleTimeout: 30000, idleCheckInterval: 10000,
+                validators: [], loadFactors: [], timerCheckRange: { start: 1000, end: 10000 },
+                timerCheckMultiplier: 2
+            } as any, 'c1');
+            // mysql2 with its one connection: a request while it is out waits for its release
+            const waiting: Cb[] = [];
+            let out = false;
+            conn.release = jest.fn(() => {
+                const next = waiting.shift();
+                if (next) return next(null, conn);
+                out = false;
+            });
+            (pool as any)._pool = {
+                getConnection: jest.fn((cb: Cb) => {
+                    if (out) return waiting.push(cb);
+                    out = true;
+                    cb(null, conn);
+                })
+            };
+            const started = Date.now();
+
+            await Promise.all([pool.query('SELECT 1'), pool.query('SELECT 2')]);
+            const elapsed = Date.now() - started;
+
+            const collected = await collect();
+            expect(collected[WAIT].unit).toBe('s');
+            expect(collected[WAIT].points).toHaveLength(1);
+            const { attributes, value } = collected[WAIT].points[0] as any;
+            expect(attributes).toEqual({
+                'db.system.name': 'mysql',
+                'server.address': '10.0.0.1',
+                'server.port': 3307,
+                'db.client.connection.pool.name': 'node1',
+                [CLUSTER]: 'c1'
+            });
+            expect(value.buckets.boundaries).toEqual([0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10]);
+            // the first attempt took the connection at once, the second waited for the first
+            expect(value.count).toBe(2);
+            expect(value.min).toBeLessThan(0.05);
+            expect(value.max).toBeGreaterThanOrEqual((HOLD - 20) / 1000);
+            expect(value.max).toBeLessThanOrEqual(elapsed / 1000);
+        });
 
     it('records a transaction once, without an operation name', async () => {
         await makePool(makeConn({ rows: [] })).multiStatementQuery(['INSERT INTO t VALUES (1)', 'DELETE FROM t'], {});

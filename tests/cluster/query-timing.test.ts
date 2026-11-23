@@ -415,8 +415,7 @@ describe('onTiming itself', () => {
     it.each([
         ['a number', 1],
         ['a string', 'onTiming'],
-        ['an object', {}],
-        ['null', null]
+        ['an object', {}]
     ])('%s rejects with a TypeError, and no node is asked', async (_name, onTiming) => {
         const node = await listen(1);
         const { cluster } = await connect([node]);
@@ -434,6 +433,17 @@ describe('onTiming itself', () => {
 });
 
 type Start = (cluster: any, options: object) => Promise<any>;
+describe('onTiming: null', () => {
+    it('counts as no onTiming, as signal: null counts as no signal', async () => {
+        const node = await listen(1);
+        const { cluster } = await connect([node]);
+
+        const result = await cluster.query(APP_SQL, undefined, { redis: false, onTiming: null });
+
+        expect(result.affectedRows).toBe(1);
+    });
+});
+
 describe('a call that asks no node gets no onTiming', () => {
     const fresh = JSON.stringify({ data: 'fresh', expired: Date.now() + LONG });
     it.each<[string, Start, string]>([
