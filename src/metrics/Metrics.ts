@@ -298,11 +298,22 @@ class Metrics {
         if (operation) attributes[MetricAttributes.dbOperation] = operation;
 
         if (error) {
+            // read one at a time: a getter or a Proxy that throws counts as no value, so the
+            // point is still written
+            const read = (name: 'code' | 'errno'): unknown => {
+                try {
+                    return error[name];
+                } catch {
+                    return undefined;
+                }
+            };
             // mysql2 error code like ER_ACCESS_DENIED_ERROR or ECONNREFUSED
-            const code = typeof error.code === 'string' && error.code ? error.code : '_OTHER';
-            attributes[MetricAttributes.errorType] = code;
-            if (typeof error.errno === 'number') {
-                attributes[MetricAttributes.dbStatusCode] = String(error.errno);
+            const code = read('code');
+            attributes[MetricAttributes.errorType] =
+                typeof code === 'string' && code ? code : '_OTHER';
+            const errno = read('errno');
+            if (typeof errno === 'number') {
+                attributes[MetricAttributes.dbStatusCode] = String(errno);
             }
         }
 
