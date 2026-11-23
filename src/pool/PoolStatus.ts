@@ -728,7 +728,7 @@ export class PoolStatus {
             Events.emit('pool_check_failed', err, this._pool.id);
         } catch (listenerError) {
             Logger.error("A pool_check_failed listener threw in host: " + this._pool.host +
-                ".\n Message: " + PoolStatus._errorText(listenerError && listenerError.stack ? listenerError.stack : listenerError));
+                ".\n Message: " + PoolStatus._errorText(listenerError, true));
         }
     }
 
@@ -736,10 +736,13 @@ export class PoolStatus {
      * Text of whatever a check or a listener threw. Not every error has a message:
      * a rejection may be undefined, and a refused connection to a host with several
      * addresses is an AggregateError with a code and an empty message
+     * @param stack whether the stack is the text, when there is one: for what a listener threw
      * @private
      */
-    private static _errorText(err: any): string {
+    private static _errorText(err: any, stack: boolean = false): string {
         try {
+            // read here, inside the try: a stack getter can throw as well
+            if (stack && err && err.stack) err = err.stack;
             return String((err && (err.message || err.code)) || err);
         } catch (unreadable) {
             // an object without a prototype, a symbol, a getter that throws

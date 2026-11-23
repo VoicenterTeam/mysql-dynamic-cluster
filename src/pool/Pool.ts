@@ -178,6 +178,9 @@ export class Pool {
         await this.status.checkStatus(outcome);
 
         if (this.status.isValid) {
+            // A disconnect() or a later connect() came during the check: this connect()
+            // tells nothing, so no pool_connected comes after a pool_disconnected
+            if (attempt !== this._connectAttempt) return;
             Logger.info('Pool is connected');
             Events.emit('pool_connected', this.id);
         } else {
@@ -262,20 +265,42 @@ export class Pool {
     private _connectEvents() {
         this._pool.on("connection", (connection) => {
             Logger.debug("Open connection");
-            Events.emit('connection', connection, this.id);
+            this._emitToApp('connection', connection);
         })
 
         this._pool.on("release", (connection) => {
             this._reaper.onRelease(connection);
             Logger.debug("Connection closed");
-            Events.emit('release', connection, this.id);
+            this._emitToApp('release', connection);
         })
 
         this._pool.on('acquire', (connection) => {
             this._reaper.onAcquire(connection);
             Logger.debug("Connection is acquire");
-            Events.emit('acquire', connection, this.id);
+            this._emitToApp('acquire', connection);
         })
+    }
+
+    /**
+     * Emit an event of a connection to the listeners of the app. They run inside a handler
+     * of mysql2, where a throw would lose the connection or leave a query pending for ever,
+     * so a listener that throws is logged at warn and mysql2 goes on
+     * @private
+     */
+    private _emitToApp(event: 'connection' | 'acquire' | 'release', connection: PoolConnection) {
+        try {
+            Events.emit(event, connection, this.id);
+        } catch (thrown) {
+            let error: unknown;
+            try {
+                error = thrown?.message || thrown;
+            } catch {
+                // a revoked proxy, a message getter that throws
+                error = 'unreadable error';
+            }
+            Logger.warn("Pool " + this.name + ": a listener of the " + event + " event threw",
+                { nodeId: this.id, pool: this.name, error });
+        }
     }
 
     /**
@@ -704,6 +729,9 @@ export class Pool {
                     " threw while it was failed: " + (thrown?.message || thrown));
             }
         });
+        Logger.info("Pool " + this.name + ": failed " + waiting.length + " requests that " +
+            "waited for a connection in host " + this.host,
+            { nodeId: this.id, pool: this.name, failed: waiting.length });
         return waiting.length;
     }
 
