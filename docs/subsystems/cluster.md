@@ -487,7 +487,7 @@ The package exports `IQueryTiming` and `QueryStep` as types:
 | Field | Value |
 | --- | --- |
 | `step` | Where the last attempt ended, see the next table. |
-| `queuedMs` | The time in ms the call waited for a connection, summed over every node it tried. |
+| `queuedMs` | The time the call waited for a connection, summed over every node it tried. In milliseconds, with a fraction: it comes from a monotonic clock. |
 | `nodeId` | The node of the last attempt. |
 
 | `step` | The last attempt ended |
@@ -499,8 +499,8 @@ The package exports `IQueryTiming` and `QueryStep` as types:
 
 The wait for a connection runs from the request to mysql2 until the
 connection came, the request failed or the signal aborted. The borrow
-measures it with `performance.now()`, a monotonic clock, so a change of
-the system time does not count. The login of a new connection is part of it. After a failed probe the borrow asks mysql2
+measures it with `performance.now()` of `perf_hooks`, a monotonic clock,
+so a change of the system time does not count. The login of a new connection is part of it. After a failed probe the borrow asks mysql2
 again, and that wait is added.
 
 `onTiming` is called once, when the call resolves, rejects or aborts. It

@@ -503,7 +503,7 @@ Borrow.ts, `{ signal?, target?, probe? }`, internal and in no public type;
 `IAttemptTiming` of a query, for its `onTiming` option: `take()` sets
 its `step` to `queue`, `probe` or `prepare` as it goes, and adds the
 wait of each request to mysql2 to its `queuedMs`, measured with the
-monotonic `performance.now()`. See
+monotonic `performance.now()` of `perf_hooks`. See
 [cluster.md](./cluster.md#the-ontiming-option):
 
 1. **One request to mysql2** (`_request`), which waits in its queue while
