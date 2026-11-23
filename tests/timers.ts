@@ -10,6 +10,12 @@ export interface ITimerRecord {
     stop: () => Promise<number[]>
 }
 
+// Turns off the hook of each record not stopped yet. A test that failed before stop() leaves
+// its record here, and this afterEach of every file that imports this one turns it off, so no
+// hook outlives its test in a worker that runs other files next
+const open = new Set<() => void>();
+afterEach(() => open.forEach(close => close()));
+
 export const recordTimers = (): ITimerRecord => {
     const started = new Map<number, NodeJS.Timeout>();
     const hook = createHook({
@@ -18,17 +24,28 @@ export const recordTimers = (): ITimerRecord => {
         },
         destroy: asyncId => { started.delete(asyncId); }
     }).enable();
+    const close = () => {
+        hook.disable();
+        open.delete(close);
+    };
+    open.add(close);
     return {
         stop: async () => {
             // Node calls the destroy hook of a timer that fired or was cleared on a later turn
-            // of the event loop, not at once. The hook must stay on until then
+            // of the event loop, not at once, so the hook must stay on until then. Two turns
+            // is measured on Node 24 (one was enough for 50 cleared timers), not guaranteed by
+            // Node. A destroy later than that leaves its ended timer here, and hasRef() stays
+            // true after a timer ended: a miss is a false failure that names a timer already
+            // gone, never a false pass, since a timer that still runs gets no destroy at all
             for (let turn = 0; turn < 2; turn++) {
                 await new Promise(resolve => setImmediate(resolve));
             }
-            hook.disable();
-            return [...started.values()]
+            close();
+            const left = [...started.values()]
                 .filter(timer => timer.hasRef())
                 .map(timer => (timer as unknown as { _idleTimeout: number })._idleTimeout);
+            started.clear();
+            return left;
         }
     };
 };

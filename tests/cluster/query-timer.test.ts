@@ -211,10 +211,13 @@ const isOwn = (error: object) => (PoolStatus as any)._ownErrors.has(error);
 // timeout. The abort destroys the connection, and nothing of the call may keep the process
 // alive once the cluster disconnected. Before the fix each left the timer of mysql2, LATER ms
 describe('an aborted call leaves no timer', () => {
+    // `during` runs right after the record started
     const aborted = async (
-        mode: Mode, ask: (cluster: any, signal: AbortSignal) => Promise<any>
+        mode: Mode, ask: (cluster: any, signal: AbortSignal) => Promise<any>,
+        during: () => void = () => undefined
     ) => {
         const record = recordTimers();
+        during();
         const { cluster, n1, n2 } = await twoNodes();
         n1.become(mode);
         const controller = new AbortController();
@@ -240,12 +243,17 @@ describe('an aborted call leaves no timer', () => {
         expect(order).toEqual([APP_SQL]);
     });
 
-    // What made a count of every timer flaky: a ref'd timer of other code, as of jest under
-    // load, that started before the scenario and ended during it
-    it('query(): a timer of other code that ends meanwhile does not count', async () => {
+    // Ref'd timers of other code, as of jest under load, that end during the scenario: one
+    // started before the record, which made a count of every timer flaky, and two inside
+    // it, which the record forgets when they fire or are cleared
+    it('query(): timers of other code that end meanwhile do not count', async () => {
         setTimeout(() => undefined, 50);
+        const during = () => {
+            setTimeout(() => undefined, 50);
+            clearTimeout(setTimeout(() => undefined, LONG));
+        };
         const order = await aborted('ignores the statement', (cluster, signal) =>
-            cluster.query(APP_SQL, undefined, { signal, timeout: LATER, redis: false }));
+            cluster.query(APP_SQL, undefined, { signal, timeout: LATER, redis: false }), during);
         expect(order).toEqual([APP_SQL]);
     });
 
