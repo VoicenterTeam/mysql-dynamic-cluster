@@ -33,12 +33,19 @@ const PING_PACE_MIN = 100;
 // The longest wait a timer of Node takes. A longer one, as one below 1 ms, runs after 1 ms
 const TIMER_MAX = 2147483647;
 
+// The free list of mysql2: its length, and its entries one at a time where get() reads them,
+// as the queue of mysql2 3 does
+interface IFreeList {
+    length: number,
+    get?: (index: number) => any
+}
+
 export class IdleConnectionReaper {
     private readonly _minConnections: number;
     private readonly _idleTimeout: number;
     private readonly _idleCheckInterval: number;
     private readonly _ping?: IIdlePing;
-    private _pool: { _freeConnections: { length: number } } | null = null;
+    private _pool: { _freeConnections: IFreeList } | null = null;
     private _timer: ReturnType<typeof setInterval> | null = null;
     // the timer of the ping, apart from that of the age rule: see _pingPace()
     private _pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -63,15 +70,16 @@ export class IdleConnectionReaper {
         this._ping = IdleConnectionReaper._checked(ping);
     }
 
-    start(pool: { _freeConnections: { length: number } }): void {
+    start(pool: { _freeConnections: IFreeList }): void {
         // a connect() without a disconnect() starts again: its timer takes the place of
         // the one before, which would keep the process alive after a disconnect()
         if (this._timer !== null) clearInterval(this._timer);
         if (this._pingTimer !== null) clearInterval(this._pingTimer);
         this._pool = pool;
         this._timer = setInterval(() => this._tick(), this._idleCheckInterval);
-        // Started after the timer of the age rule, so where the two share a tick the age
-        // rule runs first
+        // Started after the timer of the age rule, so where the two have the same wait the
+        // age rule runs first at a tick they share. With idleCheckInterval below 100 ms
+        // they do not, see _pingPace()
         const ping = this._ping;
         if (ping) this._pingTimer = setInterval(() => this._pingIdle(ping), this._pingPace());
     }
@@ -158,25 +166,54 @@ export class IdleConnectionReaper {
         if (!this._pool) return;
 
         let freeCount: number;
+        // the connections in the free list, read one at a time where it can be. Not for a
+        // node with the ping, see below
+        let free: Set<any> | undefined;
         try {
-            freeCount = this._pool._freeConnections.length;
+            const list = this._pool._freeConnections;
+            freeCount = list.length;
+            if (!this._ping && typeof list.get === 'function') {
+                free = new Set();
+                for (let index = 0; index < freeCount; index++) free.add(list.get(index));
+            }
         } catch {
             return; // degrade gracefully if mysql2 changes private API
+        }
+
+        // A connection mysql2 took out of its free list by itself, as after the server
+        // closed it, is forgotten. The age rule stops at minConnections and would keep it.
+        // With the ping, the next ping fails on it and forgets it with its debug line
+        if (free) {
+            for (const connection of this._idleConnections.keys()) {
+                if (!free.has(connection)) this._forget(connection);
+            }
         }
 
         const now = Date.now();
         for (const [connection, releasedAt] of this._idleConnections) {
             if (freeCount <= this._minConnections) break;
             if (now - releasedAt > this._idleTimeout) {
+                // first, so a ping that is out on it decides nothing and logs nothing
+                this._forget(connection);
                 try {
                     drop(connection);
                 } catch {
                     // ignore errors from already-dead connections
                 }
-                this._idleConnections.delete(connection);
                 freeCount--;
             }
         }
+    }
+
+    /**
+     * Forget an idle connection, and end the ping that is out on it: its answer and its
+     * timeout decide nothing any more
+     */
+    private _forget(connection: any): void {
+        this._idleConnections.delete(connection);
+        const out = this._pings.get(connection);
+        if (out) clearTimeout(out.timer);
+        this._pings.delete(connection);
     }
 
     /**
