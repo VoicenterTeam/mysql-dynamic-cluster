@@ -265,8 +265,10 @@ wrote a value into the text.
 
 What `_formatSQL` throws, such as the error of a `toSqlString()` of a
 value, is recorded as a failed query, and the call rejects with that error.
-The same holds where step 4 formats the SQL to read stale data from Redis.
-Since 4.1.1. Before, no metric was recorded for it.
+The same holds where step 4 formats the SQL to read stale data from Redis,
+and for what the check of the placeholders of an object of values throws
+before any node, such as a Proxy whose trap throws. Since 4.1.1. Before, no
+metric was recorded for it.
 
 #### What values do in the SQL text
 
