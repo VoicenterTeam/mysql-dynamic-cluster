@@ -383,6 +383,16 @@ export class GaleraCluster {
             });
             if (attempts.length) GaleraCluster._tellTiming(queryOptions.onTiming, attempts);
         }
+        // What _formatSQL throws, such as the error of a toSqlString() of a value, is a failed
+        // query too. A falsy one as well
+        const formatSQL = (): string => {
+            try {
+                return this._formatSQL(sql, values);
+            } catch (formatError) {
+                record(undefined, formatError || {});
+                throw formatError;
+            }
+        };
 
         // null stands for no signal, as undefined does
         const signal = queryOptions.signal ?? undefined;
@@ -458,7 +468,7 @@ export class GaleraCluster {
             stopIfAborted();
             // no pool passed the validator: serve cached data, even expired, as when every pool fails
             if (queryOptions.redis && !queryOptions.redisRefreshCache) {
-                const redisResult = await Redis.get(this._formatSQL(sql, values));
+                const redisResult = await Redis.get(formatSQL());
                 // or while Redis was read
                 stopIfAborted();
                 if (redisResult) {
@@ -486,7 +496,7 @@ export class GaleraCluster {
 
         // bound values stay apart from the text
         if (!queryOptions.execute) {
-            sql = this._formatSQL(sql, values);
+            sql = formatSQL();
             Logger.debug("formatSQL", {sql, values})
         }
         // The one rule for values in the text: the formatting changed it. The pool refuses
