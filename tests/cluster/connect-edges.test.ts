@@ -78,6 +78,27 @@ describe('connect() of a cluster without hosts', () => {
     });
 });
 
+describe('ready and firstReady when a pool rejects with a value that is not text', () => {
+    it.each([
+        ['an object without a prototype', () => Object.create(null)],
+        ['a Proxy whose every read throws', () => new Proxy({}, {
+            get() { throw new Error('no read'); }
+        })]
+    ])('resolve for %s, with an Error of their own, and connect() rejects', async (_name, make) => {
+        const pools = [node(1)];
+        const cluster = makeCluster(pools);
+        const connecting = cluster.connect();
+        pools[0].connects[0].fail(make());
+
+        expect(await stateOf(connecting)).toEqual({ error: 'unreadable error' });
+        const [ready] = await cluster.ready;
+        expect(ready.ok).toBe(false);
+        expect(ready.error).toBeInstanceOf(Error);
+        expect(ready.error.message).toBe('unreadable error');
+        expect((await cluster.firstReady)[0].error).toBe(ready.error);
+    });
+});
+
 describe('connect() when a pool rejects with no Error', () => {
     it.each([
         ['undefined', undefined, 'undefined'],
