@@ -154,13 +154,16 @@ Signature:
   [The `signal` option](#the-signal-option). The values of an `execute`
   call are checked right after it. Then a `:name` of an object of values
   inside quotes or backticks rejects with `MDC_QUOTED_PLACEHOLDER`.
+- `onTiming` gets no default. It is checked right after `timeout`, before
+  the values: see [The `onTiming` option](#the-ontiming-option).
 
 ### 2. Metrics
 
 Starts a `QueryTimer` before any work. Every way out of `query` records
 one `mysql_dynamic_cluster.query.duration` sample through the local
 `record` helper ([src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts)).
-See [metrics.md](./metrics.md).
+See [metrics.md](./metrics.md). For a call that reached step 8 the same
+helper calls `onTiming`, see [The `onTiming` option](#the-ontiming-option).
 
 ### 3. Service-id resolution
 
@@ -298,8 +301,8 @@ Runs before any pool query when `queryOptions.redis && !queryOptions.redisRefres
 The `for` loop.
 
 For `i` from `0` to `retryCount - 1`, calls
-`this._queryRequest(sql, activePools[i], queryOptions, outcome, values, valuesInText)`, with a
-new empty `outcome` for each node. First success records the query with
+`this._queryRequest(sql, activePools[i], queryOptions, outcome, { values, valuesInText, timing })`,
+with a new empty `outcome` and `timing` for each node. First success records the query with
 source `pool` and returns. Each failure is kept as `{ nodeId, error }` in
 `errors`. The loop goes on to the next pool only when the statement cannot
 have run on the one that failed, so one call never writes twice.
@@ -414,8 +417,9 @@ attempt is still logged with `Logger.error`. The single
 ### 10. `_queryRequest`
 
 `_queryRequest` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
-Wraps a single `pool.query(sql, queryOptions, outcome, { values, valuesInText })` call. The
-pool records the attempt as `mysql_dynamic_cluster.operation.duration`. On success:
+Wraps a single `pool.query(sql, queryOptions, outcome, call)` call, `call` being
+`{ values, valuesInText, timing }`. The pool records the attempt as
+`mysql_dynamic_cluster.operation.duration` and fills `timing`. On success:
 
 - If `queryOptions.serviceId` is truthy and `_clusterHashing.connected`,
   awaits `_clusterHashing.updateNodeForService(serviceId, pool.id)` to
@@ -471,6 +475,57 @@ A `signal` that is no `AbortSignal` rejects with the `TypeError`
 query. `_isAbortSignal` tells a signal by its members, as for
 `getConnection()`. The status query of a node without a `healthCheck`
 block passes no signal, and its connection gets no probe. `multiStatementQuery()` reads no signal.
+
+### The `onTiming` option
+
+Since 4.1.0 (#122). `onTiming` tells a caller where the time of a call
+went: waiting for a connection, or on the node. It gets one object,
+`IQueryTiming` of [src/types/PoolInterfaces.ts](../../src/types/PoolInterfaces.ts):
+
+| Field | Value |
+| --- | --- |
+| `step` | Where the last attempt ended, see the next table. |
+| `queuedMs` | The time in ms the call waited for a connection, summed over every node it tried. |
+| `nodeId` | The node of the last attempt. |
+
+| `step` | The last attempt ended |
+| --- | --- |
+| `queue` | while it waited for a connection of the pool: in mysql2's queue, or while a new connection opened |
+| `probe` | during the ping of an idle connection |
+| `prepare` | during the reset, the `USE` or the `DO 0` before the statement, or with the `MDC_UNSAFE_SQL_MODE` refusal |
+| `statement` | after the statement was sent. A call that resolved has this step too |
+
+The wait for a connection runs from the request to mysql2 until the
+connection came, the request failed or the signal aborted. The login of a
+new connection is part of it. After a failed probe the borrow asks mysql2
+again, and that wait is added.
+
+`onTiming` is called once, when the call resolves, rejects or aborts. It
+is called before the promise settles, so the caller has the timing when its
+`await` returns. It is called only for a call that reached step 8. So it
+is not called for a Redis hit, or for a call refused before any node: an
+option that is wrong, a signal that was already aborted,
+`MDC_QUOTED_PLACEHOLDER`, or `MDC_NO_NODE_AVAILABLE` and the stale data
+of Redis served for it. Stale data served after every node failed (step 9)
+does call it, with the step of the last attempt.
+
+The local `record` helper of step 2 calls it, and every way out of
+`query` goes through that helper once. Each attempt of step 8 hands
+`Pool.query` a new `IAttemptTiming` object through `IPoolCall`. The
+borrow sets its step as it goes and adds the wait of each request to
+mysql2, see [pool.md](pool.md#borrow-taking-and-giving-back-a-connection).
+The pool sets `statement` right before it sends. The `outcome` the retry
+rule reads is not changed.
+
+A throw in `onTiming` is caught and logged at `warn`. It never changes
+the result or the error of the call. The error and the reason of the signal
+stay as they are (#89): no property is added to them. A value that is not a
+function rejects with the `TypeError`
+`query: options.onTiming must be a function`, before any node, recorded as
+a failed query.
+
+`execute()` takes it as `query()` does. `multiStatementQuery()` and
+`getConnection()` do not take it.
 
 ### `execute()` and bound values
 

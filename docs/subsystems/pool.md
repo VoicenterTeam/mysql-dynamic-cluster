@@ -167,7 +167,7 @@ can be broken down by pool, service and error type. See
 
 The `Promise` callback chain is, in order:
 
-1. `_borrow.take({ signal, target, probe }, asked)`, `target` being
+1. `_borrow.take({ signal, target, probe }, asked, timing)`, `target` being
    `{ database, timeout, valuesInText }` (`valuesInText` only without
    `execute`, and `timeout` clamped to 2147483647 ms, the longest wait of a
    timer) — takes a connection ready for the statement,
@@ -198,7 +198,8 @@ The `Promise` callback chain is, in order:
    borrow passed `valuesInText` to the prepare step, which sent `DO 0`
    when the mode was unknown, so the guard reads a known mode. See
    [cluster.md](./cluster.md#values-in-the-text-under-no_backslash_escapes).
-4. The send step, the one step a bound statement does differently:
+4. The send step, the one step a bound statement does differently (the pool
+   sets `timing.step` to `statement` right before it):
    `conn.query({ sql })` for text, `conn.execute({ sql, values })` with the
    option `execute`, both through `_session.send()`. mysql2 prepares a bound statement
    once per connection and keeps it until a reset, a `USE` of another
@@ -492,9 +493,13 @@ The one place a connection of the pool is taken and given back: `query()`,
 its `execute` form, `multiStatementQuery()` and `getConnection()` all go
 through it, and no other code takes or releases a pooled connection.
 
-Taking, `take(options, outcome)`. `options` is `ITakeOptions` of
+Taking, `take(options, outcome, timing)`. `options` is `ITakeOptions` of
 Borrow.ts, `{ signal?, target?, probe? }`, internal and in no public type;
-`probe` is `true` unless the caller says `false`:
+`probe` is `true` unless the caller says `false`. `timing` is the
+`IAttemptTiming` of a query, for its `onTiming` option: `take()` sets
+its `step` to `queue`, `probe` or `prepare` as it goes, and adds the
+wait of each request to mysql2 to its `queuedMs`. See
+[cluster.md](./cluster.md#the-ontiming-option):
 
 1. **One request to mysql2** (`_request`), which waits in its queue while
    the pool is at its limit. An abort there takes the request out of the

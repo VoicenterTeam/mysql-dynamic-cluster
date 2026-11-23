@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`onTiming`, a query option that tells where the time of a call went** (#122). `query()` and `execute()` call it once when the call settles, before its promise does, with `step`, `queuedMs` and `nodeId`. `step` is where the last attempt ended: `queue` (waiting for a connection of the pool, in mysql2's queue or while a new connection opens), `probe` (the ping of an idle connection), `prepare` (the reset, `USE` or `DO 0` before the statement) or `statement` (the statement was sent, also for a call that resolved). `queuedMs` is the time the call waited for a connection, summed over every node it tried. `nodeId` is the node of the last attempt. So an app can tell a call that waited for a busy pool from one that was slow on its node. It is not called for a Redis hit or a call refused before any node. A throw in it is logged and changes nothing, and the error and the reason of the signal stay as they are. A value that is not a function rejects with a `TypeError` before any node. `multiStatementQuery()` and `getConnection()` do not take it.
+
 ## 4.0.1 (2026-11-23)
 
 The same code as 4.0.1-rc.1, which vc-dal tested on its unit and MySQL contract suites and a three-node Galera rig.
