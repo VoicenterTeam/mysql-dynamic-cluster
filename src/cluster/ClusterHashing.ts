@@ -18,6 +18,8 @@ export class ClusterHashing {
     private _timer: Timer;
     // goes up at every stop(): a check that started before a stop belongs to a run that is over
     private _checkRun: number = 0;
+    // the connect() that runs, which a second call shares until it ends or stop() is called
+    private _connecting?: Promise<void>;
 
     // Next time for hashing check
     private readonly _nextCheckTime: number;
@@ -42,9 +44,27 @@ export class ClusterHashing {
     }
 
     /**
-     * Activate hashing and create helper db if needed
+     * Activate hashing and create helper db if needed. A second call while one runs gets the
+     * promise of the first. After a stop() the next call starts a run of its own
      */
-    public async connect() {
+    public connect(): Promise<void> {
+        if (!this._connecting) {
+            const connecting = this._connect();
+            this._connecting = connecting;
+            const ended = () => {
+                if (this._connecting === connecting) this._connecting = undefined;
+            };
+            connecting.then(ended, ended);
+        }
+        return this._connecting;
+    }
+
+    /**
+     * The run of connect()
+     * @private
+     */
+    private async _connect() {
+        const run = this._checkRun;
         // a stop() before this turned the check timer off for good otherwise
         this._timer.activate();
         try {
@@ -64,6 +84,8 @@ export class ClusterHashing {
             Logger.info(`Database ${this._database} created for hashing`);
 
             await this._insertNodes();
+            // stopped while the steps ran: this run is over, the check belongs to the next one
+            if (run !== this._checkRun) return;
             await this._checkHashing();
         } catch (err) {
             throw err;
@@ -75,6 +97,7 @@ export class ClusterHashing {
      */
     public stop() {
         this._checkRun++;
+        this._connecting = undefined;
         this._timer.dispose();
         this.connected = false;
         Logger.info("Checking hashing in the cluster stopped");
