@@ -501,18 +501,24 @@ export class GaleraCluster {
         }
         // The values of an object take the named pass of _formatSQL. A :name of the object
         // inside quotes or backticks would get a quoted value, whose quotes close the literal
-        // (#131). Before any node
-        if (!queryOptions.execute && values && typeof values !== 'string'
-            && !Array.isArray(values)) {
-            const quoted = GaleraCluster._namedPlaceholders(sql, values)
-                .find(found => found.quoted);
-            if (quoted) {
-                const error = Object.assign(new Error(`query: the placeholder :${quoted.key} is ` +
-                    `inside quotes or backticks. Write it bare, as = :${quoted.key}`),
-                    { code: 'MDC_QUOTED_PLACEHOLDER' });
-                record(undefined, error);
-                throw error;
+        // (#131). Before any node. What the check throws, such as a Proxy of values whose trap
+        // throws, is a failed query too, as for formatSQL
+        let quoted: { key: string } | undefined;
+        try {
+            if (!queryOptions.execute && values && typeof values !== 'string'
+                && !Array.isArray(values)) {
+                quoted = GaleraCluster._namedPlaceholders(sql, values).find(found => found.quoted);
             }
+        } catch (checkError) {
+            record(undefined, checkError || {});
+            throw checkError;
+        }
+        if (quoted) {
+            const error = Object.assign(new Error(`query: the placeholder :${quoted.key} is ` +
+                `inside quotes or backticks. Write it bare, as = :${quoted.key}`),
+                { code: 'MDC_QUOTED_PLACEHOLDER' });
+            record(undefined, error);
+            throw error;
         }
         // The caller gave up: the call rejects with the reason of the signal as it is, never
         // with stale data of Redis. A falsy reason is a failed query to the metric too
