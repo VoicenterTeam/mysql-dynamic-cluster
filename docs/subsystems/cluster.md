@@ -86,6 +86,16 @@ pool can make the first one fail. Its own first failure still rejects it.
 Before 4.1.1 such a call could stay pending for good. `disconnect()`
 forgets both, so the next `connect()` waits for its own pools.
 
+A `'connected'` listener that throws makes the `connect()` that connected
+the cluster reject with the message, and a later `connect()` without
+`disconnect()` rejects at once with the same reason.
+
+Since 4.1.1 `disconnect()` also puts a new object in `_generation`. A pool
+of a `connect()` called before it that passes late resolves that call and
+leaves the cluster as `disconnect()` left it: not connected, no hashing, no
+`'connected'` event, and nothing that counts for a later `connect()`.
+Before, such a pass marked the cluster connected again and started hashing.
+
 Failure semantics: any `pool.connect()` rejection rejects the outer
 promise in the `catch` callback, with a string: the message of the error,
 `String(err)` when it has none, or `unreadable error` when neither can be
@@ -118,7 +128,10 @@ does not wait for `_enableHashing()`. `connect()` hands every
 check of that connect ended (`ICheckOutcome` in
 [src/types/PoolInterfaces.ts](../../src/types/PoolInterfaces.ts)).
 `_readyResult` builds the result when the `pool.connect()` settles and reads
-that object then. A check that was recorded puts its own error on the result,
+that object then. A pool that rejected with no Error gets one whose message
+is the text `connect()` rejects with, `unreadable error` when the value
+cannot be made text, since 4.1.1. Before, such a value left `ready` and
+`firstReady` pending. A check that was recorded puts its own error on the result,
 whatever was called after it. A failed connect whose check was dropped, or
 that ran no check, gets an empty `checkError`, and `_failedCheckError` logs
 that at `debug` with `nodeId` and `pool`. A passed connect whose check was
@@ -133,7 +146,8 @@ See [../node-api.md](../node-api.md#firstready).
 
 Tears the cluster down in this order:
 
-1. `this.connected = false`.
+1. `this.connected = false`, and since 4.1.1 a new `_generation`, and
+   `_clusterConnect` and `_connecting` are forgotten.
 2. `Metrics.unregisterPools` ends the pool connection metrics of its pools.
 3. `this._clusterHashing?.stop()` halts the hashing refresh timer.
 4. `Redis.disconnect()` closes the shared Redis client.
