@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { ClusterEvent } from "../types/PoolInterfaces";
+import Logger from "./Logger";
 
 const eventEmitter = new EventEmitter();
 
@@ -13,13 +14,35 @@ const Events = {
         eventEmitter.on(event, callback);
     },
     /**
-     * Emit the event. Call all functions what connected to the event
+     * Emit the event. Call all functions what connected to the event, each in its own try,
+     * so one that throws keeps none after it from the event. The first throw goes on to the
+     * caller once every listener ran, as a throw did before. Each later one is logged at warn
      * @param event event name
-     * @param args arguments what will be passed to the callback function
+     * @param args arguments what will be passed to the callback function, as one array
      * @private
      */
     emit(event: ClusterEvent, ...args: any[]) {
-        eventEmitter.emit(event, args);
+        let first: { thrown: unknown } | undefined;
+        for (const listener of eventEmitter.listeners(event)) {
+            try {
+                // the arguments as one array, not one by one, see docs/events.md
+                listener.call(eventEmitter, args);
+            } catch (thrown) {
+                if (!first) {
+                    first = { thrown };
+                    continue;
+                }
+                let error: unknown;
+                try {
+                    error = (thrown as any)?.message || thrown;
+                } catch {
+                    // a revoked proxy, a message getter that throws
+                    error = 'unreadable error';
+                }
+                Logger.warn("A listener of the " + event + " event threw", { event, error });
+            }
+        }
+        if (first) throw first.thrown;
     }
 }
 

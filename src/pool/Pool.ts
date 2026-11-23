@@ -7,8 +7,8 @@ import Logger from "../utils/Logger";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
 import {
-    IAbortOutcome, IAttemptTiming, ICheckOutcome, IQueryOptions, IQueryOutcome, QueryResult,
-    QueryValues
+    ClusterEvent, IAbortOutcome, IAttemptTiming, ICheckOutcome, IQueryOptions, IQueryOutcome,
+    QueryResult, QueryValues
 } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
 import { IHealthCheck, IUserPoolSettings } from "../types/PoolSettingsInterfaces";
@@ -183,7 +183,7 @@ export class Pool {
             // tells nothing, so no pool_connected comes after a pool_disconnected
             if (attempt !== this._connectAttempt) return;
             Logger.info('Pool is connected');
-            Events.emit('pool_connected', this.id);
+            this._emitToApp('pool_connected', this.id);
         } else {
             throw new Error("pool in host " + this.host + " is not valid");
         }
@@ -266,31 +266,34 @@ export class Pool {
     private _connectEvents() {
         this._pool.on("connection", (connection) => {
             Logger.debug("Open connection");
-            this._emitToApp('connection', connection);
+            this._emitToApp('connection', connection, this.id);
         })
 
         this._pool.on("release", (connection) => {
             this._reaper.onRelease(connection);
             Logger.debug("Connection closed");
-            this._emitToApp('release', connection);
+            this._emitToApp('release', connection, this.id);
         })
 
         this._pool.on('acquire', (connection) => {
             this._reaper.onAcquire(connection);
             Logger.debug("Connection is acquire");
-            this._emitToApp('acquire', connection);
+            this._emitToApp('acquire', connection, this.id);
         })
     }
 
     /**
-     * Emit an event of a connection to the listeners of the app. They run inside a handler
-     * of mysql2, where a throw would lose the connection or leave a query pending for ever,
-     * so a listener that throws is logged at warn and mysql2 goes on
+     * Emit an event of this pool to the listeners of the app. Those of a connection run
+     * inside a handler of mysql2, where a throw would lose the connection or leave a query
+     * pending for ever. Those of pool_connected and pool_disconnected run inside connect()
+     * and disconnect(), which a throw would reject or cut short. So a listener that throws
+     * is logged at warn, and the throw goes no further
+     * @param args what the listeners get, the id of the pool last
      * @private
      */
-    private _emitToApp(event: 'connection' | 'acquire' | 'release', connection: PoolConnection) {
+    private _emitToApp(event: ClusterEvent, ...args: unknown[]) {
         try {
-            Events.emit(event, connection, this.id);
+            Events.emit(event, ...args);
         } catch (thrown) {
             let error: unknown;
             try {
@@ -323,7 +326,7 @@ export class Pool {
         this.status.active = false;
         this.status.stopTimerCheck();
         this._reaper.stop();
-        Events.emit('pool_disconnected', this.id);
+        this._emitToApp('pool_disconnected', this.id);
 
         Logger.info("pool named " + this.name + " closed");
     }
