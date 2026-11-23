@@ -773,7 +773,9 @@ export class Pool {
 
     /**
      * Whether the check connection the node holds right now logged in. One that is still
-     * logging in is not open. False for a node without a healthCheck block
+     * logging in is not open. False for a node without a healthCheck block. Only PoolStatus
+     * reads it
+     * @internal
      */
     public get holdsOpenCheckConnection(): boolean {
         return !!this._check?.open;

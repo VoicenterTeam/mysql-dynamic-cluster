@@ -100,7 +100,19 @@ export class CheckConnection {
     public async queryOnNew<T>(
         sql: string, keeps: (error: any) => boolean, asked: { drop?: () => void } = {}
     ): Promise<T> {
-        if (!this._held?.open) return this.query<T>(sql, asked);
+        if (!this._held?.open) {
+            const answer = this.query<T>(sql, asked);
+            // the connection query() asks on: one that still logs in, or one it opened
+            const handOff = "Pool " + this._name + ": a check asked on a new connection, as " +
+                "the node held no open one, and that one ";
+            this._held?.ready.then(
+                () => Logger.debug(handOff + "logged in",
+                    { pool: this._name, newConnection: 'logged_in' }),
+                (error: any) => Logger.debug(handOff + "failed",
+                    { pool: this._name, newConnection: 'failed', code: error?.code })
+            );
+            return answer;
+        }
         this._kept = this._held;
         const opened = this._open();
         asked.drop = () => {
@@ -109,20 +121,24 @@ export class CheckConnection {
         };
         const pool = "Pool " + this._name + ": a check opened a new connection beside the " +
             "one it held, and that one ";
+        // the old one is no longer put aside when it broke meanwhile and was dropped, or
+        // when the timeout of the check or a close() logged out of it
+        const closed = "The old one was closed already";
         try {
             await opened.ready;
         } catch (error) {
             const old = this._kept;
             this._settle(keeps(error));
             const kept = !!old && this._held === old;
-            Logger.debug(pool + "failed. The old one " +
-                (kept ? "stays" : "is logged out of as well"),
+            Logger.debug(pool + "failed. " + (!old ? closed
+                : kept ? "The old one stays" : "The old one is logged out of as well"),
                 { pool: this._name, newConnection: 'failed', code: error?.code, kept });
             throw error;
         }
         // the new one is the connection that is held now
+        const old = this._kept;
         this._settle(false);
-        Logger.debug(pool + "logged in. The old one is logged out of",
+        Logger.debug(pool + "logged in. " + (old ? "The old one is logged out of" : closed),
             { pool: this._name, newConnection: 'logged_in' });
         return this.query<T>(sql, asked);
     }
