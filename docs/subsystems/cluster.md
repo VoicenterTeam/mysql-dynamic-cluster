@@ -95,6 +95,9 @@ of a `connect()` called before it that passes late resolves that call and
 leaves the cluster as `disconnect()` left it: not connected, no hashing, no
 `'connected'` event, and nothing that counts for a later `connect()`.
 Before, such a pass marked the cluster connected again and started hashing.
+A `disconnect()` while the hashing of the pass that connected the cluster
+runs gets no `'hashing_created'` or `'connected'` event after its
+`'disconnected'`, and no `Cluster connected` line.
 
 Failure semantics: any `pool.connect()` rejection rejects the outer
 promise in the `catch` callback, with a string: the message of the error,

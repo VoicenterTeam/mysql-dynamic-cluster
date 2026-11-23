@@ -302,7 +302,9 @@ Since 4.1.1 a `connect` that is still in its schema steps at `stop`
 returns before its status check, so it does not mark hashing as connected
 beside the run of a later `connect`. That later run starts its schema steps
 only once those steps ended, so the statements of two runs never
-interleave. A run stopped before it began its steps does none of them.
+interleave. It can wait up to the query timeout of the stopped run for
+them, when a statement of that run gets no answer. A run stopped before it
+began its steps does none of them.
 
 `GaleraCluster.disconnect` invokes `this._clusterHashing?.stop()`
 as part of teardown
