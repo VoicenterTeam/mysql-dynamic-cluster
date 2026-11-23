@@ -866,7 +866,9 @@ export class GaleraCluster {
 
         if (poolIdService >= 0) {
             const servicePool = this._pools.find(pool => pool.id === poolIdService);
-            if (servicePool) activePools.unshift(servicePool);
+            // only a valid pinned pool goes first. An invalid one is left out: it is never the
+            // first attempt (#43)
+            if (servicePool?.status.isValid) activePools.unshift(servicePool);
         }
 
         if (activePools.length < 1) {
