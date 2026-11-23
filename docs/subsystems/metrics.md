@@ -327,7 +327,9 @@ Notes on cardinality and content:
 - **The cluster metric carries the code of the node tried last.** Since
   4.0.0 a failed `query()` rejects with the mysql2 error itself, so
   `error.type` is its code and `db.response.status_code` its errno.
-  `MDC_NO_NODE_AVAILABLE` when no node was valid. The per-attempt
+  `MDC_NO_NODE_AVAILABLE` when no node was valid, and
+  `MDC_QUOTED_PLACEHOLDER` when a `:name` of the object stood inside
+  quotes or backticks, before any node. The per-attempt
   `mysql_dynamic_cluster.operation.duration` carries the code of each
   attempt.
 - **`stale_cache` shows outages hidden by the cache.** Those queries succeed

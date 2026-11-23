@@ -152,7 +152,8 @@ Signature:
 - `signal` gets no default. `null` counts as no signal. Right after the
   `record` helper of step 2 the call checks it, before step 3: see
   [The `signal` option](#the-signal-option). The values of an `execute`
-  call are checked right after it.
+  call are checked right after it. Then a `:name` of an object of values
+  inside quotes or backticks rejects with `MDC_QUOTED_PLACEHOLDER`.
 
 ### 2. Metrics
 
@@ -252,8 +253,8 @@ more than put a quoted value in place of each `?` (#121):
   (sql-escaper 1.7 and later), which becomes pairs.
 - An object with a `toSqlString()` function is written as raw SQL, a named value too.
 - A `?` inside `'...'`, `"..."`, backticks or a comment (`#`, `-- `, `/* */`) is left alone,
-  since sql-escaper 1.6. The exception is `/*! ... */` and `/*+ ... */`: the server runs
-  those, so a `?` there is replaced. 1.5.x also replaced one inside `"..."` or after `#`, so every value
+  since sql-escaper 1.6. The exception is `/*! ... */` and `/*+ ... */`: sql-escaper treats
+  those as code, so a `?` there is replaced. 1.5.x also replaced one inside `"..."` or after `#`, so every value
   after it moved one place. mysql2 3.24 allows 1.5.1, so the package depends on
   `sql-escaper ^1.6.0` and calls it itself: `query()` leaves such a `?` alone whatever copy
   mysql2 gets. npm usually resolves the fixed copy for mysql2 too. An app that depends on a
@@ -263,7 +264,9 @@ more than put a quoted value in place of each `?` (#121):
 - A `:name` of the object inside quotes or backticks makes `query()` reject with
   `MDC_QUOTED_PLACEHOLDER` before any node is asked: write `= :name`, never `':name'`
   (see [named values](../configuration.md#named-values)). One in a comment stays text, one
-  in `/*! */` or `/*+ */` is replaced.
+  in `/*! */` or `/*+ */` is replaced, as a `?` there. The server may read such a comment as
+  a plain one, which ends at the first `*/`, also one inside a value: keep values out of
+  comments.
 - Only `execute()` keeps the values out of the text.
 - Never pass an object from outside the app, such as a request body or parsed JSON, as a
   value: it can turn into column assignments or raw SQL.

@@ -25,7 +25,7 @@ tests/
     no-valid-pool-cache.test.ts  # GaleraCluster.query when no pool is valid: stale cache fallback
     named-values.test.ts         # object values: always escaped, an escapeNamedValues option ignored, the setting refused
     named-values-setting.test.ts # named values through createPoolCluster: escaped, the setting refused
-    named-values-context.test.ts # where a :name stands (#131): replaced in code, kept in a comment, refused in quotes or backticks
+    named-values-context.test.ts # where a :name stands (#131): replaced in code, kept in a comment, refused in quotes or backticks; a seeded differential test against sql-escaper's format()
     values-in-text.test.ts       # values in the text (#121): a ? in "...", a # comment and the other quotes left alone, ??, plain objects, toSqlString(); the text equals mysql2's format()/escape() over a matrix of values
     execute.test.ts              # execute() and the execute option on loopback: prepare, bound values, NO_BACKSLASH_ESCAPES
     host-ids.test.ts             # Host ids: which id each host gets, with and without an id in the settings
