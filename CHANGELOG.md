@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.0.1-rc.1 (2026-11-23)
 
 ### Fixed
 
