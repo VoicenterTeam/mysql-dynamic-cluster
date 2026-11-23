@@ -1,6 +1,8 @@
 # Changelog
 
-## 4.0.1-rc.1 (2026-11-23)
+## 4.0.1 (2026-11-23)
+
+The same code as 4.0.1-rc.1, which vc-dal tested on its unit and MySQL contract suites and a three-node Galera rig.
 
 ### Fixed
 
