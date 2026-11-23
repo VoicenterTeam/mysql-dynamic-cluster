@@ -27,15 +27,15 @@ Sibling docs: [configuration.md](configuration.md), [architecture.md](architectu
 | Concept | `dev` (per README) | V3.0 |
 |---|---|---|
 | Global pool settings key | `globalPoolSettings` ([README.md:258](../README.md)) | `defaultPoolSettings` ([schema.ts](../src/configs/schema.ts)) |
-| Log level | `logLevel: LOGLEVEL` enum (`QUIET`/`REGULAR`/`FULL`) ([README.md:392-402](../README.md)) | `logs.level`: one of `'info' \| 'error' \| 'debug' \| 'warn' \| 'silent'` ([schema.ts](../src/configs/schema.ts), [LoggerInterfaces.ts:3-9](../src/types/LoggerInterfaces.ts#L3-L9)) |
+| Log level | `logLevel: LOGLEVEL` enum (`QUIET`/`REGULAR`/`FULL`) ([README.md:392-402](../README.md)) | `logs.level`: one of `'info' \| 'error' \| 'debug' \| 'warn' \| 'silent'` ([schema.ts](../src/configs/schema.ts), [LoggerInterfaces.ts](../src/types/LoggerInterfaces.ts)) |
 | Log destination | `useConsoleLogger`, `useAmqpLogger` booleans ([README.md:348-376](../README.md)) | No setting. Logs go to the console, or to the `logger` object the app passes in the settings ([Logger.ts](../src/utils/Logger.ts), [subsystems/logger.md](subsystems/logger.md)) |
 | AMQP config | `amqpLoggerSettings.log_amqp[]` — array of `{connection, channel}` ([README.md:723-762](../README.md)) | None. The library has no AMQP settings; the schema rejects `amqp_logs` |
 | Redis config | flat `redisSettings: {keyPrefix, expire, …}` plus `useRedis` boolean ([README.md:288-294](../README.md), [README.md:636-704](../README.md)) | `redis: {enabled, keyPrefix, expire, …}` — `enabled` lives inside the block; `redisSettings` is rejected ([schema.ts](../src/configs/schema.ts)) |
-| Redis client injection | `redis: <RedisInstance>` ([README.md:269-278](../README.md)) | `redisInstant: <RedisInstance>` — stripped from user settings before validation ([index.ts:13](../index.ts#L13)) |
+| Redis client injection | `redis: <RedisInstance>` ([README.md:269-278](../README.md)) | `redisInstant: <RedisInstance>` — stripped from user settings before validation ([index.ts](../index.ts), `createPoolCluster`) |
 | Config delivery | Object passed directly to `createPoolCluster` ([README.md:169-185](../README.md)) | Object passed to `createPoolCluster`, validated by a strict zod schema that fills in the defaults; each host is then deep-merged with `defaultPoolSettings`. No environment variables, no `.env`, no config files ([schema.ts](../src/configs/schema.ts), [Settings.ts](../src/utils/Settings.ts)) |
 | AMQP transport | [`@voicenter-team/amqp-logger`](https://www.npmjs.com/package/@voicenter-team/amqp-logger) ([README.md:20](../README.md)) | None. To log to AMQP, pass a `logger` that publishes there ([subsystems/logger.md](subsystems/logger.md)) |
 | Logger | Custom console logger + custom AMQP logger | Small `Logger` class: console by default, or the app-supplied `logger` object with `debug`/`info`/`warn`/`error` ([Logger.ts](../src/utils/Logger.ts)) |
-| `LOGLEVEL` import path | `src/types/AmqpInterfaces` (per dev — README does not pin it but the old enum sat alongside AMQP types) | `src/types/LoggerInterfaces` ([LoggerInterfaces.ts:3-9](../src/types/LoggerInterfaces.ts#L3-L9), re-exported from [index.ts:32](../index.ts#L32)) |
+| `LOGLEVEL` import path | `src/types/AmqpInterfaces` (per dev — README does not pin it but the old enum sat alongside AMQP types) | `src/types/LoggerInterfaces` ([LoggerInterfaces.ts](../src/types/LoggerInterfaces.ts), re-exported from [index.ts](../index.ts)) |
 | Schema file | none — config is whatever the caller passes | declared in [src/configs/schema.ts](../src/configs/schema.ts), a zod schema in which every object is strict, so an unknown key is an error |
 
 ## What stayed the same
@@ -52,7 +52,7 @@ asset layout under `assets/` are identical between branches — see
 [sql-assets.md](sql-assets.md). The public API surface that consumers actually
 touch — `createPoolCluster`, `cluster.connect`, `cluster.disconnect`,
 `cluster.on`, `cluster.query` — is unchanged in name and signature
-([index.ts:11-18](../index.ts#L11-L18), [README.md:168-220](../README.md));
+([index.ts](../index.ts), [README.md:168-220](../README.md));
 only the shape of the config object passed to the factory differs.
 
 ## Migration note (dev examples → V3.0)

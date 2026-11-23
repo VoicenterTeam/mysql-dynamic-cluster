@@ -30,7 +30,7 @@ constructing `GaleraCluster`:
    (`Invalid mysql-dynamic-cluster settings: ...`) that lists every
    problem by its path. It then deep-merges every host with
    `defaultPoolSettings`
-   ([src/utils/Settings.ts:16](../src/utils/Settings.ts#L16)).
+   ([src/utils/Settings.ts](../src/utils/Settings.ts), `Settings.mixSettings`).
 4. `config.load(...)` stores the validated settings in the `config`
    singleton ([index.ts](../index.ts)). The rest of the library
    reads them from `config.current`. The singleton is exported at

@@ -146,7 +146,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 - **Status:** **fixed in 3.2.2.** A missing key is logged by name and that
   validator fails, so the pool is marked invalid instead of the check throwing.
 - **Severity:** **medium**
-- **Location:** [src/pool/Validator.ts:45](../src/pool/Validator.ts#L45)
+- **Location:** [src/pool/Validator.ts](../src/pool/Validator.ts), `check`
 - **Description:** In the `default` branch of the switch, the expression
   `result.find(res => res.Variable_name === validator.key).Value` dereferences
   `.Value` on the find result without a guard. If the configured validator key
@@ -164,7 +164,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 
 - **Status:** **fixed in 3.2.2.** A missing key is logged by name and skipped.
 - **Severity:** **medium**
-- **Location:** [src/pool/LoadFactor.ts:28](../src/pool/LoadFactor.ts#L28)
+- **Location:** [src/pool/LoadFactor.ts](../src/pool/LoadFactor.ts), `check`
 - **Description:** The same pattern as issue #3:
   `result.find(res => res.Variable_name === loadFactor.key).Value` is
   dereferenced without checking the find result. The downstream
@@ -179,7 +179,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 ### 5. `Events.emit` wraps args in an array
 
 - **Severity:** **medium**
-- **Location:** [src/utils/Events.ts:22](../src/utils/Events.ts#L22)
+- **Location:** [src/utils/Events.ts](../src/utils/Events.ts), `emit`
 - **Description:** The `emit` wrapper is declared as
   `emit(event, ...args: any[])` and forwards to
   `eventEmitter.emit(event, args)` — passing the rest-collected array as a
@@ -259,7 +259,7 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   stores them. An unknown key or a wrong type throws one error at boot that
   lists every problem by its path.
 - **Severity:** **low**
-- **Location:** [index.ts:22](../index.ts#L22), the `config.load` call as it
+- **Location:** [index.ts](../index.ts), the `config.load` call as it
   is now. The description is of the code before 4.0.0.
 - **Description:** The statement reads
   `config.load(userSettings).validate;` — it accesses the `.validate` method

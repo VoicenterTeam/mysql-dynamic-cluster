@@ -13,7 +13,7 @@ The cache is **off by default** in the V3 schema
 ([src/configs/schema.ts](../../src/configs/schema.ts) —
 `redis.enabled` defaults to `false`). The user-facing `useRedis` flag on
 the cluster (`_useRedis`) is read directly from `redis.enabled`
-([src/cluster/GaleraCluster.ts:52](../../src/cluster/GaleraCluster.ts#L52)),
+(the `_useRedis` field of [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts)),
 so unless the caller flips that bit, the cache
 is bypassed entirely and no `ioredis` client is constructed.
 
@@ -88,8 +88,8 @@ hash(sql) = createHash(algorithm).update(sql).digest(encoding)
   ([src/configs/schema.ts](../../src/configs/schema.ts)).
 
 The `sql` passed to `hash()` is the **post-format** string built by
-`GaleraCluster._formatSQL(sql, values)` at
-[src/cluster/GaleraCluster.ts:187](../../src/cluster/GaleraCluster.ts#L187),
+`GaleraCluster._formatSQL(sql, values)` in
+[src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts),
 i.e. value interpolation has already happened. Different parameter
 bindings therefore hash to different keys and produce independent cache
 entries — `SELECT * FROM t WHERE id = 1` and
@@ -115,7 +115,7 @@ if (queryOptions.redis) {
 ```
 
 The payload shape is `IRedisData = { data: any, expired: number }`
-([src/types/RedisInterfaces.ts:23-26](../../src/types/RedisInterfaces.ts#L23)).
+([src/types/RedisInterfaces.ts](../../src/types/RedisInterfaces.ts), `IRedisData`).
 There are **two independent expiries** on every cache entry:
 
 1. **Redis-level TTL.** `Redis.set` uses `expireMode` (`EX` by default)
@@ -142,20 +142,20 @@ queries cached barely at all.
 
 ## Read path
 
-[src/cluster/GaleraCluster.ts:186-210](../../src/cluster/GaleraCluster.ts#L186).
+[src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts), the cache read in `query`.
 
 Before entering the pool retry loop, `GaleraCluster.query` performs:
 
 1. Skip the cache entirely when `queryOptions.redisRefreshCache` is
    set, even if `queryOptions.redis` is true
-   ([src/cluster/GaleraCluster.ts:190](../../src/cluster/GaleraCluster.ts#L190)).
+   ([src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts), `query`).
 2. Otherwise time a `Redis.get(sql)` call. Its duration is recorded as
    `mysql_dynamic_cluster.cache.lookup.duration` with the result `hit`,
    `expired` or `miss`
    ([src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts)).
 3. If `Redis.get` returns a JSON string, parse it into `redisData` and
    compare `redisData.expired` to `Date.now()`
-   ([src/cluster/GaleraCluster.ts:200-209](../../src/cluster/GaleraCluster.ts#L200)).
+   ([src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts), `query`).
    - **Fresh** (`expired > Date.now()`): record the cluster query with
      source `cache` and return
      `redisData.data` immediately. MySQL is not touched.
@@ -169,7 +169,7 @@ back by the write path above.
 
 ## Stale-while-down fallback
 
-[src/cluster/GaleraCluster.ts:240-245](../../src/cluster/GaleraCluster.ts#L240).
+[src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts), the end of `query`.
 
 When the retry loop ends without a result, `GaleraCluster.query`
 checks whether it has a stashed `redisData` from the earlier read
@@ -188,7 +188,7 @@ cached `data` rather than throwing. The behaviour:
   read path and therefore the fallback) or check the cluster's emitted
   metrics.
 - Bypasses the throw at
-  [src/cluster/GaleraCluster.ts:248](../../src/cluster/GaleraCluster.ts#L248)
+  [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts), the last `throw` of `query`,
   entirely.
 
 ## Key prefix override
