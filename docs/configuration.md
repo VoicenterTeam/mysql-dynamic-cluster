@@ -315,7 +315,7 @@ One entry per Galera node. `host` is required. Every key of `defaultPoolSettings
 | key | type | notes |
 |---|---|---|
 | `host` | `string` | required, not empty |
-| `id` | `number` | assigned by the cluster when left out or `0`. A `0` stays `0` only on the first host without an id of its own, and only when no host has another id. When it is replaced, the cluster logs a `warn` with the host, the port and the id the node got |
+| `id` | `number` | assigned by the cluster when left out or `0`. A `0` stays `0` only on the first host without an id of its own, and only when no host has another id. When it is replaced, the cluster logs a `warn` with the host, the port and the id the node got. Use a whole number above `0` that no other host has, and at most 127 with `useClusterHashing`: the hashing database keeps the id in a signed `TINYINT`. Since 4.1.1 the cluster logs one `warn` per host whose id is negative, not an integer, the id of another host too, or above 127 with `useClusterHashing`, and keeps the id as it is |
 | `name` | `string` | `host:port` when left out |
 | `redisExpire` | `number` (s) | cache TTL for queries served by this node |
 | any `defaultPoolSettings` key | as above | overrides the default for this node. `healthCheck` is mixed key by key, see [above](#on-defaultpoolsettings-and-on-a-host) |

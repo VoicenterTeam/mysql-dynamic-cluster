@@ -105,6 +105,10 @@ recreate the helper schema on next boot.
    `updateNodeForService` are short-circuited by guards in
    `GaleraCluster` (see below).
 
+Since 4.1.1 a second `connect` while one runs gets the promise of the
+first, so the steps run once. After `stop()` the next `connect` starts a
+run of its own, see [`stop()`](#stop).
+
 Any thrown error in steps 1-3 propagates out of `connect`; `GaleraCluster._enableHashing`
 ([`_enableHashing`](../../src/cluster/GaleraCluster.ts))
 catches and logs it so a hashing failure does not abort
@@ -132,6 +136,11 @@ The order of operations
 3. `multiStatementQuery` with the combined tables + routines payload.
 4. `multiStatementQuery` with the metadata payload.
 5. `INSERT INTO metadata (version) VALUES (${_databaseVersion});`.
+
+Steps 2 to 4 run on the first valid pool, in the order of the settings.
+Hashing starts after the first pool that connected, which need not be the
+first pool. With no valid pool, `_createDB` throws before step 2. Since
+4.1.1. Before, it used `pools[0]` whatever its state.
 
 The version row is inserted **last**: presence of the row is the
 implicit success signal for the next `connect`.
@@ -292,6 +301,9 @@ calling `connect` again turns the timer back on and resumes populating
 it. Before 4.0.0 a second `connect` left hashing off. A status check that
 is still running at `stop` does not mark hashing as connected when it
 ends, and logs nothing, also when `connect` ran again before it ended.
+Since 4.1.1 a `connect` that is still in its schema steps at `stop`
+returns before its status check, so it does not mark hashing as connected
+beside the run of a later `connect`.
 
 `GaleraCluster.disconnect` invokes `this._clusterHashing?.stop()`
 as part of teardown

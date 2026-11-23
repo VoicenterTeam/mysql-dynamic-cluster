@@ -41,6 +41,10 @@ Pool construction, in the constructor:
 3. Every host gets a `Pool`, constructed with `(poolSettings,
    clusterName)`. A host without `host` never gets here: the settings
    schema rejects it.
+4. Since 4.1.1 the constructor logs one `warn` per host whose id is
+   negative, not an integer, the id of another host too, or above 127 with
+   `useClusterHashing` on. The id is kept as it is. See
+   [`hosts`](../configuration.md#hosts).
 
 After the pool array is built, the constructor instantiates
 `ServiceNames(this, config.current.serviceMetrics)` and
@@ -70,8 +74,11 @@ Subsequent resolutions short-circuit on the `if (this.connected) return`
 guard
 at the top of the `then` callback.
 
-Failure semantics: any `pool.connect()` rejection calls `reject(err.message)`
-in the `catch` callback.
+Failure semantics: any `pool.connect()` rejection rejects the outer
+promise in the `catch` callback, with a string: the message of the error,
+`String(err)` when it has none, or `unreadable error` when neither can be
+read. Since 4.1.1. Before, a rejection with `undefined` or `null` threw
+there and left `connect()` pending.
 Because `forEach` does not await between iterations, **other pools may
 still be in flight or failing** after the outer promise has resolved or
 rejected. The first rejection that lands before the first success will
@@ -81,6 +88,16 @@ This is tracked behaviour — see [../known-issues.md](../known-issues.md).
 `_enableHashing`
 awaits `_clusterHashing.connect()`, emits `'hashing_created'`, and logs;
 errors are caught and logged but do not propagate to `connect`.
+
+Since 4.1.1 a cluster without hosts resolves `connect()` at once. It is not
+marked connected, and a query fails with `MDC_NO_NODE_AVAILABLE`, as with no
+valid node.
+
+Since 4.1.1 a call whose every pool failed hands the pools to
+`Metrics.unregisterPools` once the last one settled. The pools stay
+registered when a pool passed after the first failure, when the cluster was
+connected before, or when a later `connect()` call runs: that call has a
+`ready` of its own.
 
 Since 4.0.0 every `connect()` call also settles the `ready` promise. It
 resolves once every `pool.connect()` of that call ended, with one result per
@@ -238,6 +255,11 @@ wrote a value into the text.
   setting or query option to leave the value as text, as 3.2.2 did. A
   `mysql2.raw()` value, or
   any object with a `toSqlString` function, is still written as SQL.
+
+What `_formatSQL` throws, such as the error of a `toSqlString()` of a
+value, is recorded as a failed query, and the call rejects with that error.
+The same holds where step 4 formats the SQL to read stale data from Redis.
+Since 4.1.1. Before, no metric was recorded for it.
 
 #### What values do in the SQL text
 
@@ -410,9 +432,14 @@ or `errors` and is thrown without them. An error that already has an
 error of each address there. An error that the app handed `failWaiting()`
 is one object that many queries can meet. An entry that would lead back
 to it, itself or through the list an earlier query set, is left out, so
-the errors never form a cycle and `JSON.stringify` works on them. Each
-attempt is still logged with `Logger.error`. The single
-`All pools have error` line that listed them all is gone.
+the errors never form a cycle and `JSON.stringify` works on them. An
+error whose `errors` cannot be read, through a getter or a Proxy that
+throws, gets no list either, since 4.1.1. Each attempt is still logged with
+`Logger.error`:
+`Query failed in pool <name>: <message> (code <code>, errno <errno>)`.
+The code and the errno are there when the error has them, since 4.1.1. An
+error without a message, such as an `AggregateError`, is named by its
+text. The single `All pools have error` line that listed them all is gone.
 
 ### 10. `_queryRequest`
 
@@ -665,7 +692,7 @@ names the mode and `execute()`. Always: there is no setting.
 | --- | --- | --- |
 | `connected: boolean` | [`connected`](../../src/cluster/GaleraCluster.ts) | Flipped to `true` by the first successful pool connect; reset to `false` by `disconnect()`. |
 | `pools: Pool[]` (getter) | [`pools`](../../src/cluster/GaleraCluster.ts) | Tagged `@internal`. Used by `ClusterHashing`, `ServiceNames`, and the test harness; not meant for consumers. Apps use the node API below instead. |
-| `connect(): Promise<void>` | [`connect`](../../src/cluster/GaleraCluster.ts) | Resolves on the first pool that comes up; rejects on the first failure before any success. |
+| `connect(): Promise<void>` | [`connect`](../../src/cluster/GaleraCluster.ts) | Resolves on the first pool that comes up; rejects on the first failure before any success. Resolves at once without hosts. |
 | `disconnect(): Promise<void>` | [`disconnect`](../../src/cluster/GaleraCluster.ts) | Synchronous in practice — does not await pool disconnects. |
 | `on(event, callback)` | [`on`](../../src/cluster/GaleraCluster.ts) | Pass-through to the shared `Events` emitter. |
 | `query<T>(sql, values?, queryOptions?)` | [`query`](../../src/cluster/GaleraCluster.ts) | The full routing pipeline described above. |
