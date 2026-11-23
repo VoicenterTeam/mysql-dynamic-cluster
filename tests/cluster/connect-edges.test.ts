@@ -280,6 +280,7 @@ describe('a second connect() without disconnect()', () => {
         expect(await stateOf(second)).toEqual({ value: undefined });
     });
 });
+
 // A connect() that disconnect() came after, whose pool passes late (#61)
 describe('a pass of a connect() that disconnect() came after', () => {
     const withHashing = (cluster: any) => Object.assign(cluster, {
@@ -315,6 +316,56 @@ describe('a pass of a connect() that disconnect() came after', () => {
         expect(cluster._clusterHashing.connect).toHaveBeenCalledTimes(1);
     });
 });
+
+// disconnect() while the hashing of the pass that connected the cluster runs (#61)
+describe('a disconnect() during the hashing of the connect of the cluster', () => {
+    const emitted: string[] = [];
+    beforeAll(() => {
+        const Events = require('../../src/utils/Events').default;
+        ['connected', 'hashing_created', 'disconnected'].forEach(name =>
+            Events.on(name, () => emitted.push(name)));
+    });
+    beforeEach(() => emitted.splice(0));
+
+    it('leaves no connected or hashing_created event after disconnected', async () => {
+        const pools = [node(1)];
+        const cluster = makeCluster(pools);
+        let hashingDone: () => void;
+        Object.assign(cluster, {
+            _useClusterHashing: true,
+            _clusterHashing: {
+                connect: jest.fn(() => new Promise<void>(resolve => { hashingDone = resolve; })),
+                stop: jest.fn()
+            }
+        });
+        const connecting = cluster.connect();
+        pools[0].connects[0].pass();
+        await settle();
+        expect(cluster._clusterHashing.connect).toHaveBeenCalledTimes(1);
+        await cluster.disconnect();
+        hashingDone();
+        await stateOf(connecting);
+
+        expect(emitted).toEqual(['disconnected']);
+        expect(Logger.info).not.toHaveBeenCalledWith('Cluster connected');
+        expect(cluster.connected).toBe(false);
+    });
+
+    it('still gives both events when nothing disconnects', async () => {
+        const pools = [node(1)];
+        const cluster = makeCluster(pools);
+        Object.assign(cluster, {
+            _useClusterHashing: true,
+            _clusterHashing: { connect: jest.fn().mockResolvedValue(undefined), stop: jest.fn() }
+        });
+        const connecting = cluster.connect();
+        pools[0].connects[0].pass();
+
+        expect(await stateOf(connecting)).toEqual({ value: undefined });
+        expect(emitted).toEqual(['hashing_created', 'connected']);
+    });
+});
+
 // The 'connected' event is emitted by the connect of the cluster. Events is one emitter per
 // module, so the listener throws only while the test asks it to
 describe('a connected listener that throws', () => {
