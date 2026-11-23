@@ -11,6 +11,7 @@ jest.mock('../../src/Redis/Redis', () => ({
     default: { set: jest.fn(), get: jest.fn() }
 }));
 
+import { format } from 'sql-escaper';
 import { GaleraCluster } from '../../src/cluster/GaleraCluster';
 import Metrics from '../../src/metrics/Metrics';
 import Redis from '../../src/Redis/Redis';
@@ -47,10 +48,12 @@ describe('a :name in code is replaced, one in a comment is text', () => {
         ['a # comment', 'SELECT 1 # :n\n, :m', "SELECT 1 # :n\n, 'w'"],
         ['a /* */ comment', 'SELECT 1 /* :n */ :m', "SELECT 1 /* :n */ 'w'"],
         ['an unterminated /* comment', 'SELECT :m /* :n', "SELECT 'w' /* :n"],
-        // the server runs these comments
+        // code, as sql-escaper treats a ? there
         ['/*! */', 'SELECT /*! :n */ 1', "SELECT /*! 'v' */ 1"],
         ['/*+ */', 'SELECT /*+ :n */ 1', "SELECT /*+ 'v' */ 1"],
         ['-- with no space after it, which is code', 'SELECT 1--:n', "SELECT 1--'v'"],
+        ['-- at the end of the text', 'SELECT :m --', "SELECT 'w' --"],
+        ['-- with a tab after it', 'SELECT 1 --\t:n', 'SELECT 1 --\t:n'],
         // the escaped quote does not end the string early
         ["a string with \\'", "SELECT 'it\\'s' = :m", "SELECT 'it\\'s' = 'w'"],
         ['a quote inside a /* */ comment', "SELECT /* it's */ :n", "SELECT /* it's */ 'v'"],
@@ -82,6 +85,9 @@ describe('a :name of the object inside quotes or backticks is refused', () => {
         ["'it''s :n'", "SELECT 'it''s :n'", V, 'n'],
         ['a doubled backtick', 'SELECT `a``:n` FROM t', V, 'n'],
         ['an unterminated string', "SELECT 'abc :n", V, 'n'],
+        ['an unterminated backtick', 'SELECT `abc :n', V, 'n'],
+        ['a backslash inside double quotes', 'SELECT "a\\":n"', V, 'n'],
+        ["quotes inside /*! */", "SELECT /*! ':n' */ 1", V, 'n'],
         ['the first in the text', "SELECT ':m', ':n'", V, 'm']
     ])('%s', async (_where, sql, values, key) => {
         const { cluster, poolQuery } = makeCluster();
@@ -126,5 +132,59 @@ describe('values that take no named pass are not checked', () => {
             .catch(thrown => thrown);
         expect(error).toBeInstanceOf(TypeError);
         expect(error.code).toBeUndefined();
+    });
+});
+
+// sql-escaper's format() is the reference: a :name stands in code where format() replaces a ?.
+// Random texts from a fixed seed, each with a twin that has ?p in place of :p, at the same place
+describe('the walker reads the text as sql-escaper reads it for a ?', () => {
+    it('over random texts', () => {
+        const walk = (GaleraCluster as any)._namedPlaceholders;
+        const ALPHABET = ["'", '"', '`', '#', '-', '/', '*', '!', '+', '\\', '\n', '\t', '\r', '\0',
+            ' ', 'a', 'b', ':p '];
+        // mulberry32: every run walks the same texts
+        let seed = 131;
+        const random = () => {
+            seed = (seed + 0x6D2B79F5) | 0;
+            let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+        const mismatches: object[] = [];
+        const seen = { code: 0, quoted: 0, comment: 0 };
+        for (let run = 0; run < 20000; run++) {
+            let text = '';
+            const length = 1 + Math.floor(random() * 16);
+            for (let i = 0; i < length; i++) text += ALPHABET[Math.floor(random() * ALPHABET.length)];
+            const twin = text.split(':p ').join('?p ');
+            const count = twin.split('?').length - 1;
+            // the k-th marker stands for the k-th ? format() replaced
+            const markers = Array.from({ length: count }, (_, k) => ({ toSqlString: () => `@${k}@` }));
+            const out: string = format(twin, markers);
+            const replaced: number[] = [];
+            const marker = /@\d+@/g;
+            let shift = 0;
+            let match: RegExpExecArray;
+            while ((match = marker.exec(out))) {
+                replaced.push(match.index - shift);
+                shift += match[0].length - 1;
+            }
+            const found: { start: number, quoted: boolean }[] = walk(text, { p: 1 });
+            const code = found.filter(entry => !entry.quoted).map(entry => entry.start);
+            const quoted = found.filter(entry => entry.quoted).map(entry => entry.start);
+            // the ? twin of a quoted :name was left alone
+            const quotedLeft = quoted.every(at => twin[at] === '?' && !replaced.includes(at));
+            if (JSON.stringify(code) !== JSON.stringify(replaced) || !quotedLeft) {
+                mismatches.push({ text, out, code, quoted, replaced });
+            }
+            seen.code += code.length;
+            seen.quoted += quoted.length;
+            seen.comment += count - found.length;
+        }
+        expect(mismatches.slice(0, 5)).toEqual([]);
+        // every context came up
+        expect(seen.code).toBeGreaterThan(1000);
+        expect(seen.quoted).toBeGreaterThan(1000);
+        expect(seen.comment).toBeGreaterThan(1000);
     });
 });
