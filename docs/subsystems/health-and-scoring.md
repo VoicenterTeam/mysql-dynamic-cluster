@@ -630,9 +630,13 @@ node yet:
   [A check that finds no route itself](#a-check-that-finds-no-route-itself).
 - **Only a connection held from before is opened again.** A connection the
   check opened itself, because the node held none, cannot be a flow the
-  path forgot, so a loss there is the result of the check. A node that
-  resets every new connection gets one connection attempt per check, and
-  two from the one check that still held a connection.
+  path forgot, so a loss there is the result of the check. Nor can one
+  that another check is still logging in: since 4.1.1 the check reads
+  whether the connection logged in, not whether the node holds one. Before,
+  the second of two checks that shared such a login asked again after it
+  was lost. A node that resets every new connection gets one connection
+  attempt per check, and two from the one check that still held a
+  connection.
 - **Every check, not only one that has to decide.** A check of the timer
   with no failed call of the app before it opens a new connection the same
   way.
@@ -1410,7 +1414,7 @@ Private members worth knowing about:
   one of the timer.
 - `_askNode()` sends the status query: through `Pool.query` for the legacy
   check, through `_askOnCheckConnection()` for a node with the block. That
-  one reads `Pool.holdsCheckConnection` first, asks with
+  one reads `Pool.holdsOpenCheckConnection` first, asks with
   `Pool.checkQuery()`, and asks once more on a new connection when the one
   the node held failed with a code of `_lostCodes`. When `_decides` is
   `'unreachable'` or `'timeout'` it hands `Pool.checkQuery()` its
@@ -1755,14 +1759,12 @@ never-polled pool is by design — it parks fresh pools at the back of
 the rotation until at least one successful poll has produced a real
 score.
 
-### Crash on missing status key
+### A missing status key
 
-`result.find(...).Value`
-([src/pool/LoadFactor.ts:28](../../src/pool/LoadFactor.ts#L28)) is the
-same unguarded dereference as `Validator`. A typo or a missing
-status variable throws before the `isNaN(+value) || !value` check on
-line 29 has a chance to run, aborting scoring for the affected pool
-and falling into `checkStatus`'s catch branch — which means
-`loadScore` stays at its previous value (or `100000` if no successful
-poll has ever happened). See
+`result.find(...)?.Value`
+([src/pool/LoadFactor.ts:28](../../src/pool/LoadFactor.ts#L28)) reads the
+value with a guard since 3.2.2, as `Validator` does. A typo or a missing
+status variable gives `undefined`, and the `isNaN(+value) || !value`
+check on line 29 logs the key by name at `error`. That load factor adds
+nothing to the score, and the others still count. The check goes on. See
 [known-issues.md#4](../known-issues.md#4-loadfactorcheck-crashes-on-missing-status-key).

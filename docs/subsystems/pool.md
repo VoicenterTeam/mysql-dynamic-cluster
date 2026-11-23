@@ -80,6 +80,11 @@ calls on each pool. The steps:
 5. If `status.isValid`, emit `'pool_connected'` with the pool id; otherwise
    throw `Error("pool in host " + host + " is not valid")` so the
    cluster can log the failure and continue with the remaining pools.
+   Since 4.1.1 a `connect()` that a `disconnect()` or a later `connect()`
+   overtook during the check emits no `'pool_connected'` and logs no
+   `Pool is connected`, so the event never comes after a
+   `'pool_disconnected'`. It still resolves or throws by `isValid`, as
+   before.
 
 The `'pool_connected'` event is documented in
 [../events.md](../events.md).
@@ -100,6 +105,13 @@ reuse and dropped on every destroy.)
   `Events.emit('release', connection, this.id)`.
 - `acquire` — log and emit `Events.emit('acquire', connection,
   this.id)`.
+
+Since 4.1.1 `_emitToApp()` emits each of them in a `try`. The listeners
+of the app run inside a handler of mysql2. A throw there lost the
+connection of an `acquire`, kept the check on a new connection from
+passing after a `connection`, and left a `query()` pending after a
+`release`. Now the throw is logged at `warn` with `nodeId`, `pool` and
+`error`, the message of what was thrown, and mysql2 goes on.
 
 See [../events.md](../events.md) for the payload shapes consumers
 actually receive (note the `Events.emit` args-wrap quirk documented
@@ -636,8 +648,12 @@ away from the app. The rules of the check are in
   call is one record of `mysql_dynamic_cluster.operation.duration`, as a
   check through `query()` is.
 - **`holdsCheckConnection`** is `true` while the node holds a connection:
-  open, or logging in. `PoolStatus` reads it before a check asks, since
-  only a connection held from before can be one the path forgot.
+  open, or logging in.
+- **`holdsOpenCheckConnection`** is `true` once that connection logged
+  in, since 4.1.1. `PoolStatus` reads it before a check asks, since only a
+  connection that logged in before the check can be one the path forgot.
+  Before 4.1.1 it read `holdsCheckConnection`, so a second check that
+  shared a login that was then lost asked again on a new connection.
 - **`checkQuery(sql, keeps, asked)`** fills `asked.drop` before it sends
   anything: a function that destroys the connection this call went to,
   with its socket and whatever was asked on it. `PoolStatus` calls it when
@@ -657,6 +673,9 @@ away from the app. The rules of the check are in
   call of the app found no route or got no connection within the connect
   timeout, and keeps the old one after a new one that found no route. See
   [A check after a call that could open no connection](health-and-scoring.md#a-check-after-a-call-that-could-open-no-connection).
+  Since 4.1.1 one `debug` line tells how the new one ended, with the
+  meta `pool` and `newConnection`: `logged_in`, or `failed` with `code`
+  and `kept`, whether the old one stays.
 - **Kept or dropped as the pool does it.** A `fatal` error drops the
   connection, which every error of a change of user is. An error packet
   under the status query keeps it.
@@ -702,6 +721,8 @@ Pinned by
 against a mysql2 the test drives, and with the real mysql2 on loopback by
 the describe "the check connection of a healthCheck node" in
 [tests/cluster/passive-health-loopback.test.ts](../../tests/cluster/passive-health-loopback.test.ts).
+The open state and the `debug` line of a new connection are in
+[tests/pool/check-connection-loopback.test.ts](../../tests/pool/check-connection-loopback.test.ts).
 
 ## The idle connections of the pool
 
@@ -712,14 +733,29 @@ its timers and `disconnect()` stops them. The listeners of
 which connections are idle and since when.
 
 It does two things, each on a timer of its own, every `idleCheckInterval`,
-10 s by default. The timer of the age rule is started first, so at a tick
-the two share the age rule runs first.
+10 s by default. The timer of the age rule is started first, so where the
+two have the same wait the age rule runs first at a tick they share. With
+an `idleCheckInterval` below 100 ms they do not, see
+[The pace of the ping](#the-pace-of-the-ping).
 
 **The age rule, for every node.** A connection that has been idle for
 longer than `idleTimeout` is destroyed with its socket (`drop()`), as
 long as the pool has more than
 `minConnections` free ones. With the defaults the pool keeps one idle
 connection whatever its age.
+
+Since 4.1.1 the age rule ends the ping that is out on a connection it
+closes, so that ping logs no `debug` line. Before, a ping that ran first,
+or one that was still out at a later tick, gave the line of a failed ping
+for a connection the age rule had closed.
+
+On a node without the block the age rule first forgets every connection
+that is no longer in the free list of mysql2, since 4.1.1: one mysql2
+closed by itself, as after the server closed it. Before, the reaper kept
+such a connection for ever, since the age rule stops at `minConnections`.
+It reads the list with its `get()`, as mysql2 3 has it, and leaves a list
+without one alone. A node with the block forgets such a connection at its
+next ping, see below.
 
 **The ping, for a node with a `healthCheck` block.** Not in earlier
 releases. Every idle connection the age rule kept gets one `COM_PING`. The
@@ -813,7 +849,8 @@ a mysql2 the test drives, and with the real mysql2 behind a TCP proxy on
 loopback by
 [tests/cluster/idle-ping-loopback.test.ts](../../tests/cluster/idle-ping-loopback.test.ts).
 The age rule is in
-[tests/pool/reaper.test.ts](../../tests/pool/reaper.test.ts).
+[tests/pool/reaper.test.ts](../../tests/pool/reaper.test.ts) and
+[tests/pool/reaper-forget.test.ts](../../tests/pool/reaper-forget.test.ts).
 
 ## Node API helpers
 
@@ -838,6 +875,9 @@ not move. `GaleraCluster` calls them for the node API of
   queue is emptied first, so a callback that asks for a connection again is
   not failed in the same call. A callback that throws is logged and the
   others are still called. It returns `0` before the mysql2 pool exists.
+  Since 4.1.1 it logs one `info` line with the host and how many it
+  failed, also when none waited, with the meta `nodeId`, `pool` and
+  `failed`. Before the mysql2 pool exists it logs nothing.
 - `stats()` returns `{ used, idle, pending }` from mysql2's own lists:
   `_allConnections.length - _freeConnections.length`,
   `_freeConnections.length` and `_connectionQueue.length`. All zeros before
@@ -887,9 +927,10 @@ this:
   `abortReason(signal)`. When the callback comes later with a
   connection, `_releaseLate` gives it back. When it comes with an error, the
   error is dropped and nothing is logged.
-- mysql2 throws inside the request, which happens when a listener of one of
-  its events throws: the listener is taken off and the promise rejects with
-  what was thrown, as it did before.
+- mysql2 throws inside the request: the listener is taken off and the
+  promise rejects with what was thrown, as it did before. Before 4.1.1 a
+  listener of the app that threw on an event of mysql2 got there. Now the
+  pool catches it, see [`_connectEvents()`](#_connectevents).
 
 `_leaveQueue(mysqlPool, callback)` looks for the callback in
 `_connectionQueue` of that mysql2 pool with the `get` of that queue, and
@@ -911,12 +952,13 @@ is still rejected.
 `_releaseLate(connection)` calls `giveBack(connection)` in a `try`: a clean
 connection goes back with no command, as nobody used it. It runs
 in the callback of mysql2, where a throw would be an uncaught exception,
-and `release()` runs the `release` listeners of the app. mysql2 pushes the
-connection onto its free list before it emits `release`, and the listener
-of the pool tells the idle reaper before it emits the event of the cluster.
-So after a listener of the app threw, the connection is idle in the pool
-and the reaper knows it. The throw is logged at `warn` with `nodeId`, `pool`
-and `error`.
+and `release()` runs the `release` listeners of the app. Since 4.1.1 the
+pool catches a listener that throws, see [`_connectEvents()`](#_connectevents).
+mysql2 pushes the connection onto its free list before it emits `release`,
+and the listener of the pool tells the idle reaper before it emits the
+event of the cluster. So the connection is idle in the pool and the reaper
+knows it. Anything else that throws there is logged at `warn` with
+`nodeId`, `pool` and `error`.
 
 `abortReason(signal)` of [src/utils/Abort.ts](../../src/utils/Abort.ts)
 returns `signal.reason`, or, when
@@ -959,6 +1001,7 @@ the waiting requests reject with it as before.
 | `stats()` | `() => { used, idle, pending }` | [`stats`](../../src/pool/Pool.ts) |
 | `checkError` | getter returning `INodeCheckError \| undefined` | [`checkError`](../../src/pool/Pool.ts) |
 | `holdsCheckConnection` | getter returning `boolean` | [`holdsCheckConnection`](../../src/pool/Pool.ts) |
+| `holdsOpenCheckConnection` | getter returning `boolean` | [`holdsOpenCheckConnection`](../../src/pool/Pool.ts) |
 | `checkQuery<T>(sql, keeps?, asked?)` | `(sql: string, keeps?: (error: any) => boolean, asked?: { drop?: () => void }) => Promise<T>` | [`checkQuery`](../../src/pool/Pool.ts) |
 | `dropCheckConnection()` | `() => void` | [`dropCheckConnection`](../../src/pool/Pool.ts) |
 

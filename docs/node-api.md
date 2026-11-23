@@ -709,6 +709,8 @@ What it touches and what it does not:
   [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#the-check-connection).
 - A request that comes after the call waits again. A callback that asks for a connection
   again while it is being failed is not failed in the same call.
+- It logs one `info` line with the host of the node and how many requests it failed, also
+  when none waited, since 4.1.1. The meta has `nodeId`, `pool` and `failed`.
 
 It returns `0` for a node id that does not exist and for a node whose pool is not created
 yet. It throws a `TypeError` when `error` is not an `Error`. A waiting request that is called
