@@ -74,3 +74,35 @@ describe.each([
         expect(Redis.get).not.toHaveBeenCalled();
     });
 });
+// The check of the placeholders of an object of values runs before _formatSQL: what it throws
+// is a failed query too (#48)
+describe('an object of values that throws while its placeholders are checked', () => {
+    it.each([
+        ['a Proxy whose trap throws', () => {
+            const boom = new Error('trap');
+            return { boom, values: new Proxy({ a: 1 }, {
+                getOwnPropertyDescriptor() { throw boom; }
+            }) };
+        }],
+        ['a revoked Proxy', () => {
+            const { proxy, revoke } = Proxy.revocable({ a: 1 }, {});
+            revoke();
+            return { boom: undefined, values: proxy };
+        }]
+    ])('is recorded once as a failed query for %s, and the call rejects with its error',
+        async (_name, make) => {
+            const { boom, values } = make();
+            const pools = [node(1)];
+            const rejection = await makeCluster(pools).query('SELECT :a', values).then(
+                () => { throw new Error('the query passed'); },
+                (error: unknown) => error
+            );
+
+            if (boom) expect(rejection).toBe(boom);
+            else expect(rejection).toBeInstanceOf(TypeError);
+            expect(records()).toEqual([
+                expect.objectContaining({ source: undefined, error: rejection })
+            ]);
+            expect(pools[0].query).not.toHaveBeenCalled();
+        });
+});
