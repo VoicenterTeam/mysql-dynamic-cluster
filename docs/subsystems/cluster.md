@@ -462,9 +462,9 @@ error whose `errors` cannot be read, through a getter or a Proxy that
 throws, gets no list either, since 4.1.1. Each attempt is still logged with
 `Logger.error`:
 `Query failed in pool <name>: <message> (code <code>, errno <errno>)`.
-The code and the errno are there when the error has them, since 4.1.1. An
-error without a message, such as an `AggregateError`, is named by its
-text. The single `All pools have error` line that listed them all is gone.
+The code and the errno are there when the error has them, since 4.1.1. A
+rejection without a message, such as an `AggregateError`, `undefined` or
+`null`, is named by its text. The single `All pools have error` line that listed them all is gone.
 
 ### 10. `_queryRequest`
 
