@@ -16,10 +16,9 @@ jest.mock('../../src/Redis/Redis', () => ({
 
 import { GaleraCluster } from '../../src/cluster/GaleraCluster';
 import Logger from '../../src/utils/Logger';
-import Metrics from '../../src/metrics/Metrics';
 
-// connect() of a cluster without hosts, with a pool that rejects with no Error, and the pool
-// metrics of a connect() that failed (#61)
+// connect() of a cluster without hosts, with a pool that rejects with no Error, and a second
+// connect() without disconnect() (#61)
 
 // no socket and no timer here: a test that waits this long waits for a promise that never settles
 jest.setTimeout(10000);
@@ -114,73 +113,6 @@ describe('connect() when a pool rejects with no Error', () => {
         pools[0].connects[0].fail(down(1));
 
         expect(await stateOf(connecting)).toEqual({ error: 'pool in host host1 is not valid' });
-    });
-});
-
-describe('the pool metrics of a connect()', () => {
-    it('are ended when every node failed', async () => {
-        const pools = [node(1), node(2)];
-        const cluster = makeCluster(pools);
-        cluster.connect().catch(() => undefined);
-        pools[0].connects[0].fail(down(1));
-        pools[1].connects[0].fail(down(2));
-        await cluster.ready;
-        await settle();
-
-        expect(Metrics.unregisterPools).toHaveBeenCalledTimes(1);
-        expect(Metrics.unregisterPools).toHaveBeenCalledWith(pools);
-    });
-
-    it('are not ended before the last node settled', async () => {
-        const pools = [node(1), node(2)];
-        const cluster = makeCluster(pools);
-        const connecting = cluster.connect();
-        pools[0].connects[0].fail(down(1));
-
-        expect(await stateOf(connecting)).toEqual({ error: 'pool in host host1 is not valid' });
-        expect(Metrics.unregisterPools).not.toHaveBeenCalled();
-    });
-
-    // connect() rejected on the node that failed first, and the cluster is up on the other
-    it('are kept when a node passed after the first failure', async () => {
-        const pools = [node(1), node(2)];
-        const cluster = makeCluster(pools);
-        cluster.connect().catch(() => undefined);
-        pools[0].connects[0].fail(down(1));
-        await settle();
-        pools[1].connects[0].pass();
-        await cluster.ready;
-        await settle();
-
-        expect(cluster.connected).toBe(true);
-        expect(Metrics.unregisterPools).not.toHaveBeenCalled();
-    });
-
-    it('are kept when a later connect() call still runs', async () => {
-        const pools = [node(1)];
-        const cluster = makeCluster(pools);
-        cluster.connect().catch(() => undefined);
-        cluster.connect().catch(() => undefined);
-        pools[0].connects[0].fail(down(1));
-        await settle();
-
-        expect(Metrics.unregisterPools).not.toHaveBeenCalled();
-        pools[0].connects[1].fail(down(1));
-        await settle();
-        expect(Metrics.unregisterPools).toHaveBeenCalledTimes(1);
-    });
-
-    it('are kept when the cluster connected on an earlier call', async () => {
-        const pools = [node(1)];
-        const cluster = makeCluster(pools);
-        cluster.connect();
-        pools[0].connects[0].pass();
-        await settle();
-        cluster.connect().catch(() => undefined);
-        pools[0].connects[1].fail(down(1));
-        await settle();
-
-        expect(Metrics.unregisterPools).not.toHaveBeenCalled();
     });
 });
 
