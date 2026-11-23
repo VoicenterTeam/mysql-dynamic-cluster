@@ -92,7 +92,7 @@ describe('the node API of a cluster that has not connected yet', () => {
 
     it('firstReady and ready resolve with an empty list for a cluster without hosts', async () => {
         const cluster = makeCluster([]);
-        // connect() of a cluster without hosts never settles, so it is not awaited
+        // connect() of a cluster without hosts resolves at once, and so do ready and firstReady
         cluster.connect();
 
         expect(await cluster.firstReady).toStrictEqual([]);
