@@ -641,9 +641,9 @@ export class GaleraCluster {
 
     /**
      * Each :name of the text whose key the object has as its own, in order. The text is read as
-     * sql-escaper 1.7 reads it for a ? (skipSqlContext, without ANSI_QUOTES): a :name inside a
-     * comment is text and is left out, one inside /*! *\/ or /*+ *\/ is code, since the server
-     * runs those, and one inside quotes or backticks comes with quoted: true
+     * sql-escaper 1.7 reads it for a ?, see _contextEnd(): a :name inside a comment is text and
+     * is left out, one inside /*! *\/ or /*+ *\/ is code, as sql-escaper treats a ? there, and
+     * one inside quotes or backticks comes with quoted: true
      * @param sql MySQL query
      * @param values the named values
      * @private
@@ -661,58 +661,72 @@ export class GaleraCluster {
                 found.push({ key: match[1], start: at, end: at + match[0].length, quoted });
             }
         };
-        const length = sql.length;
         // where the code not looked at yet starts
         let code = 0;
-        for (let position = 0; position < length; position++) {
-            const char = sql[position];
-            const next = sql[position + 1];
-            // the end of the context that opens here, or -1 for code. Unterminated, a context
-            // runs to the end of the text
-            let end = -1;
-            if (char === "'" || char === '"') {
-                // a string, until the same quote. A backslash skips the next character
-                end = length;
-                for (let cursor = position + 1; cursor < length; cursor++) {
-                    if (sql[cursor] === '\\') {
-                        cursor++;
-                    } else if (sql[cursor] === char) {
-                        end = cursor + 1;
-                        break;
-                    }
-                }
-            } else if (char === '`') {
-                // an identifier, until a backtick that is not doubled
-                end = length;
-                for (let cursor = position + 1; cursor < length; cursor++) {
-                    if (sql[cursor] !== '`') continue;
-                    if (sql[cursor + 1] === '`') {
-                        cursor++;
-                        continue;
-                    }
-                    end = cursor + 1;
-                    break;
-                }
-            } else if (char === '#' || (char === '-' && next === '-'
-                && !(sql.charCodeAt(position + 2) > 32))) {
-                // a comment up to and including the line break: # or -- with a space, a
-                // control character or the end of the text after it
-                const lineBreak = sql.indexOf('\n', position + 1);
-                end = lineBreak === -1 ? length : lineBreak + 1;
-            } else if (char === '/' && next === '*' && sql[position + 2] !== '!'
-                && sql[position + 2] !== '+') {
-                // a comment until */. The server runs /*! */ and /*+ */: code
-                const commentEnd = sql.indexOf('*/', position + 2);
-                end = commentEnd === -1 ? length : commentEnd + 2;
-            }
+        for (let position = 0; position < sql.length; position++) {
+            const end = GaleraCluster._contextEnd(sql, position);
             if (end === -1) continue;
             collect(code, position, false);
-            if (char === "'" || char === '"' || char === '`') collect(position, end, true);
+            // a comment is text
+            if ("'\"`".includes(sql[position])) collect(position, end, true);
             code = end;
             position = end - 1;
         }
-        collect(code, length, false);
+        collect(code, sql.length, false);
         return found;
+    }
+
+    /**
+     * The end of the string, identifier or comment that opens at position, or -1 for code. A
+     * port of skipSqlContext of sql-escaper 1.7, without ANSI_QUOTES. Unterminated, a context
+     * runs to the end of the text
+     * @param sql MySQL query
+     * @param position where a context may open
+     * @private
+     */
+    private static _contextEnd(sql: string, position: number): number {
+        const length = sql.length;
+        // a comment up to and including the line break
+        const lineEnd = (start: number) => {
+            const lineBreak = sql.indexOf('\n', start);
+            return lineBreak === -1 ? length : lineBreak + 1;
+        };
+        const char = sql[position];
+        if (char === "'" || char === '"') {
+            // a string, until the same quote. A backslash skips the next character
+            for (let cursor = position + 1; cursor < length; cursor++) {
+                if (sql[cursor] === '\\') cursor++;
+                else if (sql[cursor] === char) return cursor + 1;
+            }
+            return length;
+        }
+        if (char === '`') {
+            // an identifier, until a backtick that is not doubled
+            for (let cursor = position + 1; cursor < length; cursor++) {
+                if (sql[cursor] !== '`') continue;
+                if (sql[cursor + 1] === '`') {
+                    cursor++;
+                    continue;
+                }
+                return cursor + 1;
+            }
+            return length;
+        }
+        if (char === '#') return lineEnd(position + 1);
+        const next = sql[position + 1];
+        if (char === '-' && next === '-') {
+            // -- with a space, a control character or the end of the text after it
+            const afterDash = sql.charCodeAt(position + 2);
+            return Number.isNaN(afterDash) || afterDash <= 32 ? lineEnd(position + 2) : -1;
+        }
+        if (char === '/' && next === '*') {
+            // /*! and /*+ are code, as for a ? in sql-escaper
+            const marker = sql[position + 2];
+            if (marker === '!' || marker === '+') return -1;
+            const commentEnd = sql.indexOf('*/', position + 2);
+            return commentEnd === -1 ? length : commentEnd + 2;
+        }
+        return -1;
     }
 
     /**
