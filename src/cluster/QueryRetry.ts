@@ -31,7 +31,17 @@ export function mayTryNextNode(
 ): boolean {
     // the caller gave up: no node gets the statement after that
     if (outcome.aborted || options.signal?.aborted) return false;
-    const { errno, code } = (typeof error === 'object' && error !== null ? error : {}) as any;
+    // read one at a time: a getter or a Proxy that throws counts as no value, so the error
+    // stays the one the call rejects with
+    const read = (name: 'errno' | 'code'): any => {
+        try {
+            return typeof error === 'object' && error !== null ? (error as any)[name] : undefined;
+        } catch {
+            return undefined;
+        }
+    };
+    const errno = read('errno');
+    const code = read('code');
     if (REFUSED_LOGIN.has(errno) || code === UNSAFE_SQL_MODE || code === OUT_OF_ORDER) {
         return false;
     }
