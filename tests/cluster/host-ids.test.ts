@@ -72,13 +72,17 @@ describe('host ids', () => {
     });
 });
 
-// The warnings about ids the cluster takes as they are, as the app's logger got them (#71)
+// The warnings about host ids, every one the app's logger got: one per host at most (#71)
 const idWarnings = (hosts: object[], useClusterHashing = false): string[] =>
-    build(hosts, useClusterHashing).logger.warn.mock.calls
-        .map(call => String(call[0]))
-        .filter(message => message.includes(' uses the id '));
+    build(hosts, useClusterHashing).logger.warn.mock.calls.map(call => String(call[0]));
 const uses = (host: string, id: number, which: string) =>
     `Host ${host} uses the id ${id}, which ${which}`;
+// an id the cluster gave, to a host without one or to one whose id 0 it replaced
+const got = (host: string, id: number, which: string) =>
+    `Host ${host} got the id ${id}, which ${which}`;
+const zeroGot = (host: string, id: number, which?: string) =>
+    `Host ${host} has id 0, which counts as not set: the node got the id ${id}`
+    + (which ? `, which ${which}` : '');
 const NEGATIVE = 'is negative';
 const FRACTION = 'is not an integer';
 const SHARED = 'is the id of another host too';
@@ -91,10 +95,13 @@ describe('host ids that are kept, with a warning', () => {
         ['an id that is not an integer', [{ id: 1.5 }, { id: 3 }], [1.5, 3],
             [uses('127.0.0.1:3306', 1.5, FRACTION)]],
         ['an id that two hosts have', [{ host: 'a', id: 2 }, { host: 'b', id: 2 }, { id: 0 }],
-            [2, 2, 3], [uses('a:3306', 2, SHARED), uses('b:3306', 2, SHARED)]],
-        // the id 0 got the next id after -3, which is negative too
-        ['an id given after a negative one', [{ id: -3 }, { id: 0 }], [-3, -2],
-            [uses('127.0.0.1:3306', -3, NEGATIVE), uses('127.0.0.1:3306', -2, NEGATIVE)]],
+            [2, 2, 3],
+            [uses('a:3306', 2, SHARED), uses('b:3306', 2, SHARED), zeroGot('127.0.0.1:3306', 3)]],
+        // the id 0 got the next id after -3, which is negative too: one line for that host
+        ['an id 0 replaced by a negative one', [{ id: -3 }, { id: 0 }], [-3, -2],
+            [uses('127.0.0.1:3306', -3, NEGATIVE), zeroGot('127.0.0.1:3306', -2, NEGATIVE)]],
+        ['an id given after one that is not an integer', [{ id: 1.5 }, {}], [1.5, 2.5],
+            [uses('127.0.0.1:3306', 1.5, FRACTION), got('127.0.0.1:3306', 2.5, FRACTION)]],
         ['an id that breaks several rules, in one line', [{ id: -1.5 }, { id: -1.5, port: 3307 }],
             [-1.5, -1.5], [
                 uses('127.0.0.1:3306', -1.5, `${NEGATIVE} and ${FRACTION} and ${SHARED}`),
@@ -107,7 +114,9 @@ describe('host ids that are kept, with a warning', () => {
 
     it.each([
         ['an id above 127', [{ id: 128 }], [uses('127.0.0.1:3306', 128, ABOVE)]],
-        ['an id given after 127', [{ id: 127 }, {}], [uses('127.0.0.1:3306', 128, ABOVE)]],
+        ['an id given after 127', [{ id: 127 }, {}], [got('127.0.0.1:3306', 128, ABOVE)]],
+        ['an id 0 replaced by one above 127', [{ id: 127 }, { id: 0 }],
+            [zeroGot('127.0.0.1:3306', 128, ABOVE)]],
         ['no id above 127', [{ id: 1 }, { id: 126 }, {}], []]
     ])('with cluster hashing on, warns for %s', (_name, hosts, warnings) => {
         expect(idWarnings(hosts, true)).toEqual(warnings);
@@ -122,8 +131,7 @@ describe('host ids that are kept, with a warning', () => {
         ['no host has an id', [{}, {}, {}]],
         ['every host has an id of its own', [{ id: 1 }, { id: 2 }, { id: 3 }]],
         ['ids and hosts without an id are mixed', [{ id: 3 }, {}, { id: 1 }, {}]],
-        ['the id 0 is replaced', [{ id: 5 }, { id: 0 }]],
-        ['two hosts have the id 0', [{ id: 0 }, { id: 0 }]],
+        ['the id 0 is kept', [{ id: 0 }, {}]],
         ['no host', []]
     ])('does not warn when %s', (_name, hosts) => {
         expect(idWarnings(hosts)).toEqual([]);
