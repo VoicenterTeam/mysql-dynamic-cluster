@@ -166,26 +166,44 @@ export class IdleConnectionReaper {
         if (!this._pool) return;
 
         let freeCount: number;
-        // the connections in the free list, read one at a time where it can be. Not for a
-        // node with the ping, see below
-        let free: Set<any> | undefined;
         try {
-            const list = this._pool._freeConnections;
-            freeCount = list.length;
-            if (!this._ping && typeof list.get === 'function') {
-                free = new Set();
-                for (let index = 0; index < freeCount; index++) free.add(list.get(index));
-            }
+            freeCount = this._pool._freeConnections.length;
         } catch {
             return; // degrade gracefully if mysql2 changes private API
         }
 
-        // A connection mysql2 took out of its free list by itself, as after the server
-        // closed it, is forgotten. The age rule stops at minConnections and would keep it.
-        // With the ping, the next ping fails on it and forgets it with its debug line
+        // The connections in the free list, read one at a time where it can be. Not for a
+        // node with the ping, see below. A list that cannot be read so leaves the age rule
+        // as it is
+        let free: Set<any> | undefined;
+        if (!this._ping) {
+            try {
+                const list = this._pool._freeConnections;
+                if (typeof list.get === 'function') {
+                    free = new Set();
+                    for (let index = 0; index < freeCount; index++) free.add(list.get(index));
+                }
+            } catch {
+                free = undefined;
+            }
+        }
+
+        // A connection mysql2 took out of its free list and its pool by itself, as after
+        // the server closed it, is forgotten. The age rule stops at minConnections and would
+        // keep it. It is dropped as well, which does nothing to one that is closed already.
+        // One that is in another mysql2 pool, as after a second connect(), is still open and
+        // is left to the age rule. With the ping, the next ping fails on a closed one and
+        // forgets it with its debug line
         if (free) {
             for (const connection of this._idleConnections.keys()) {
-                if (!free.has(connection)) this._forget(connection);
+                // mysql2 sets the pool of a connection to null when it takes it out
+                if (free.has(connection) || connection._pool !== null) continue;
+                this._forget(connection);
+                try {
+                    drop(connection);
+                } catch {
+                    // ignore errors from already-dead connections
+                }
             }
         }
 
