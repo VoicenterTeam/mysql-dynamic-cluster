@@ -104,12 +104,6 @@ Since 4.1.1 a cluster without hosts resolves `connect()` at once. It is not
 marked connected, and a query fails with `MDC_NO_NODE_AVAILABLE`, as with no
 valid node.
 
-Since 4.1.1 a call whose every pool failed hands the pools to
-`Metrics.unregisterPools` once the last one settled. The pools stay
-registered when a pool passed after the first failure, when the cluster was
-connected before, or when a later `connect()` call runs: that call has a
-`ready` of its own.
-
 Since 4.0.0 every `connect()` call also settles the `ready` promise. It
 resolves once every `pool.connect()` of that call ended, with one result per
 pool, and it never rejects. `connect()` itself resolves and rejects as
