@@ -7,7 +7,8 @@ import Logger from "../utils/Logger";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
 import {
-    IAbortOutcome, ICheckOutcome, IQueryOptions, IQueryOutcome, QueryResult, QueryValues
+    IAbortOutcome, IAttemptTiming, ICheckOutcome, IQueryOptions, IQueryOutcome, QueryResult,
+    QueryValues
 } from "../types/PoolInterfaces";
 import Events from "../utils/Events";
 import { IHealthCheck, IUserPoolSettings } from "../types/PoolSettingsInterfaces";
@@ -33,7 +34,10 @@ export interface IPoolCall {
     valuesInText?: boolean,
     // false for the health check of a node without a block only: it draws the connection
     // with no probe, see Borrow
-    probe?: boolean
+    probe?: boolean,
+    // filled by the pool for the onTiming option of the cluster: the step the call ended in
+    // and the time it waited for a connection
+    timing?: IAttemptTiming
 }
 
 // AKA galera node
@@ -306,15 +310,17 @@ export class Pool {
      * also writes it on its error, when the error can take it. Gets `aborted: true` when the
      * signal of the options ended the call, which then rejects with the reason of the signal
      * as it is: nothing is written on it, and passive health is not told
-     * @param call the values, valuesInText and probe, see IPoolCall
+     * @param call the values, valuesInText, probe and timing, see IPoolCall
      */
     public async query<T extends QueryResult>(
         sql: string, queryOptions?: IQueryOptions, outcome: IQueryOutcome = {},
         call: IPoolCall = {}
     ): Promise<T | T[]> {
-        const { values, valuesInText = false, probe = true } = call;
+        const { values, valuesInText = false, probe = true, timing = {} } = call;
         return new Promise((resolve, reject) => {
             outcome.sent = false;
+            timing.step = 'queue';
+            timing.queuedMs = 0;
             queryOptions = {
                 timeout: this._queryTimeout,
                 database: this._database,
@@ -398,7 +404,7 @@ export class Pool {
             const { database, execute } = queryOptions;
             const timeout = Pool._withinTimer(queryOptions.timeout);
             const target = { database, timeout, valuesInText: valuesInText && !execute };
-            this._borrow.take({ signal, target, probe }, asked).then(conn => {
+            this._borrow.take({ signal, target, probe }, asked, timing).then(conn => {
                 held = conn;
                 // the signal aborted after the borrow took its listener off
                 if (signal?.aborted) return onAbort();
@@ -414,6 +420,7 @@ export class Pool {
 
                 Logger.debug(`Query in pool by host ${this.host}`);
                 // from here on the statement can run on the server, whatever comes back
+                timing.step = 'statement';
                 outcome.sent = true;
                 const onReply = (error: mysql.QueryError | null, result: T) => {
                     this._session.observe(conn, error, result);

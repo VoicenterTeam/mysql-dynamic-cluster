@@ -4,7 +4,8 @@
 
 import { IUserSettings } from "../types/SettingsInterfaces";
 import {
-    IQueryOptions, IQueryOutcome, QueryValues, ClusterEvent, QueryResult
+    IAttemptTiming, IQueryOptions, IQueryOutcome, IQueryTiming, QueryValues, ClusterEvent,
+    QueryResult
 } from '../types/PoolInterfaces'
 import Logger from "../utils/Logger";
 
@@ -12,7 +13,7 @@ import { PoolConnection } from 'mysql2';
 // The format() and escape() mysql2 exports are these. Taken from the package's own dependency,
 // 1.6 or later, whatever copy mysql2 resolves (#121)
 import { escape as escapeValue, format as formatValues } from 'sql-escaper';
-import { Pool } from "../pool/Pool";
+import { IPoolCall, Pool } from "../pool/Pool";
 import { abortReason } from "../utils/Abort";
 import { ClusterHashing } from "./ClusterHashing";
 import { mayTryNextNode } from "./QueryRetry";
@@ -361,7 +362,11 @@ export class GaleraCluster {
         const queryTimer = new QueryTimer();
         queryTimer.start();
         const originalSql = sql;
-        // one metric record per cluster query, whatever way it ends
+        // each attempt of the node loop, as its pool filled it. Empty for a call that asked
+        // no node
+        const attempts: { nodeId: number, timing: IAttemptTiming }[] = [];
+        // one metric record per cluster query, whatever way it ends. So onTiming is called
+        // here too: once, before the call settles
         const record = (source?: QueryResultSource, error?: any) => {
             queryTimer.end();
             Metrics.recordQuery(queryTimer.get(), {
@@ -373,6 +378,7 @@ export class GaleraCluster {
                     ? queryOptions.serviceName ?? String(queryOptions.serviceId)
                     : undefined
             });
+            if (attempts.length) GaleraCluster._tellTiming(queryOptions.onTiming, attempts);
         }
 
         // null stands for no signal, as undefined does
@@ -385,6 +391,11 @@ export class GaleraCluster {
         // as queryTimeout in the settings: a negative one fired at once. 0 means none
         if (queryOptions.timeout < 0) {
             const error = new TypeError("query: options.timeout must not be negative");
+            record(undefined, error);
+            throw error;
+        }
+        if (queryOptions.onTiming !== undefined && typeof queryOptions.onTiming !== 'function') {
+            const error = new TypeError("query: options.onTiming must be a function");
             record(undefined, error);
             throw error;
         }
@@ -516,10 +527,13 @@ export class GaleraCluster {
             const pool = activePools[i];
             // the pool says in it whether the statement went to the node
             const outcome: IQueryOutcome = {};
+            // and in this one where the attempt ended and how long it waited for a connection
+            const timing: IAttemptTiming = {};
+            attempts.push({ nodeId: pool.id, timing });
             try {
                 Logger.debug("Query use host: " + pool.host);
                 const res = await this._queryRequest(
-                    sql, pool, queryOptions, outcome, values, valuesInText
+                    sql, pool, queryOptions, outcome, { values, valuesInText, timing }
                 ) as T;
                 record('pool');
                 return res;
@@ -569,15 +583,14 @@ export class GaleraCluster {
      * @param pool active pool
      * @param queryOptions options to configure query
      * @param outcome handed to the pool, which says in it whether the statement was sent
-     * @param values the values the server binds, with the option `execute`
-     * @param valuesInText the formatting wrote values into sql, see Pool.query()
+     * @param call the values, valuesInText and the timing the pool fills, see Pool.query()
      * @private
      */
     private async _queryRequest<T extends QueryResult>(
         sql: string, pool: Pool, queryOptions: IQueryOptions, outcome: IQueryOutcome,
-        values: QueryValues, valuesInText: boolean
+        call: IPoolCall
     ): Promise<T> {
-        const result = await pool.query(sql, queryOptions, outcome, { values, valuesInText }) as T;
+        const result = await pool.query(sql, queryOptions, outcome, call) as T;
 
         if (queryOptions?.serviceId && this._clusterHashing.connected) {
             // the statement ran: a failure from here on must not send it to another node
@@ -590,6 +603,32 @@ export class GaleraCluster {
             }
         }
         return result;
+    }
+
+    /**
+     * Call the onTiming of a query that asked a node: the step of the last attempt, its node,
+     * and the time every attempt waited for a connection. What onTiming throws is logged and
+     * changes nothing of the call
+     * @param onTiming the option of the query, or nothing
+     * @param attempts the attempts of the node loop, in the order they were made
+     * @private
+     */
+    private static _tellTiming(
+        onTiming: IQueryOptions['onTiming'], attempts: { nodeId: number, timing: IAttemptTiming }[]
+    ): void {
+        if (!onTiming) return;
+        const last = attempts[attempts.length - 1];
+        const timing: IQueryTiming = {
+            step: last.timing.step ?? 'queue',
+            queuedMs: attempts.reduce((sum, attempt) => sum + (attempt.timing.queuedMs ?? 0), 0),
+            nodeId: last.nodeId
+        };
+        try {
+            onTiming(timing);
+        } catch (thrown) {
+            Logger.warn("onTiming of a query threw, the call keeps its result: " +
+                (thrown?.message || thrown), { nodeId: last.nodeId });
+        }
     }
 
     /**

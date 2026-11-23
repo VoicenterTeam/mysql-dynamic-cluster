@@ -55,7 +55,26 @@ export interface IQueryOptions {
     retryNotReady?: boolean,
     // Ends the call when it aborts: the call rejects with the reason of the signal as it is,
     // and no other node is tried. A connection the call holds then is destroyed
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    // Called once when a call that asked a node settles, before its promise does: where its
+    // last attempt ended and how long it waited for connections. Not called for a Redis hit or
+    // a call refused before any node. A throw in it is logged and changes nothing
+    onTiming?: (timing: IQueryTiming) => void
+}
+
+// Where an attempt of a query ended: waiting for a connection of the pool, in mysql2's queue
+// or while a new connection opened (queue), the ping of an idle connection (probe), the reset,
+// USE or DO 0 before the statement (prepare), or after the statement was sent (statement)
+export type QueryStep = 'queue' | 'probe' | 'prepare' | 'statement';
+
+// What the onTiming option of a query gets
+export interface IQueryTiming {
+    // the step the last attempt ended in, also 'statement' for a call that resolved
+    step: QueryStep,
+    // time in ms the call waited for a connection, summed over every node it tried
+    queuedMs: number,
+    // the node of the last attempt
+    nodeId?: number
 }
 
 // How far one Pool.query() call got. The caller hands in an empty object and the pool fills
@@ -66,6 +85,15 @@ export interface IQueryOutcome extends IAbortOutcome {
     // from then on it may run on the server, whatever the call ends with. It stays false when
     // no connection came or the change of database failed. Not set by a pool that tells nothing
     sent?: boolean
+}
+
+// Where one Pool.query() call is, for the onTiming option of the query. The caller hands in an
+// empty object, and the borrow and then the pool fill it
+export interface IAttemptTiming {
+    // the step the call is in, and so the one it ended in once it settled
+    step?: QueryStep,
+    // time in ms the call waited for mysql2 to hand it a connection, over every request
+    queuedMs?: number
 }
 
 // How the health check of one connect() ended. The caller of Pool.connect() hands in an empty

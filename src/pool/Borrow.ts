@@ -1,6 +1,6 @@
 import mysql, { PoolConnection } from "mysql2";
 import Logger from "../utils/Logger";
-import { IAbortOutcome } from "../types/PoolInterfaces";
+import { IAbortOutcome, IAttemptTiming } from "../types/PoolInterfaces";
 import { PoolStatus } from "./PoolStatus";
 import { SessionState } from "./SessionState";
 import { IDrawn, IdleConnectionReaper } from "./IdleConnectionReaper";
@@ -83,21 +83,32 @@ export class Borrow {
      * then of what it hears of, and the statement was not sent
      * @param options the signal, the statement and whether to probe, see ITakeOptions
      * @param outcome gets `aborted: true` when the signal ended the call
+     * @param timing gets the step the take is in, and adds the time each request to mysql2
+     * waited for its connection
      */
     public async take(
-        options: ITakeOptions = {}, outcome: IAbortOutcome = {}
+        options: ITakeOptions = {}, outcome: IAbortOutcome = {}, timing: IAttemptTiming = {}
     ): Promise<PoolConnection> {
         const { signal, target, probe = true } = options;
         // a new connection needs no probe, so the loop ends with one. This bounds it besides.
         // A pool with no limit, connectionLimit 0, has a limited number of idle connections
         const most = this._pool.connectionLimit ? this._pool.connectionLimit + 1 : Infinity;
         for (let tries = 1; ; tries++) {
-            const connection = await this._request(signal, outcome);
+            timing.step = 'queue';
+            const asked = Date.now();
+            let connection: PoolConnection;
+            try {
+                connection = await this._request(signal, outcome);
+            } finally {
+                // until the connection came, the request failed or the signal aborted
+                timing.queuedMs = (timing.queuedMs ?? 0) + Date.now() - asked;
+            }
             const drawn = this._reaper.drawn(connection);
             // a ping of the reaper that is still out is waited for, within probeTimeout, also
             // on a connection used within probeIdle: mysql2 would queue the statement behind it
             // with no time limit
             if (probe && (drawn?.ping || this._idle(drawn))) {
+                timing.step = 'probe';
                 try {
                     await this._probe(connection, drawn, signal, outcome);
                 } catch (error) {
@@ -108,7 +119,9 @@ export class Borrow {
                     continue;
                 }
             }
-            return target ? this._prepare(connection, target, signal, outcome) : connection;
+            if (!target) return connection;
+            timing.step = 'prepare';
+            return this._prepare(connection, target, signal, outcome);
         }
     }
 
