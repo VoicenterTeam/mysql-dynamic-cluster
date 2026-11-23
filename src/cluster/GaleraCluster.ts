@@ -60,6 +60,9 @@ export class GaleraCluster {
     private _clusterConnect?: Promise<void>;
     // the connect() call that still runs, whose resolve a later call settles with too
     private _connecting?: Promise<void>;
+    // a new object at every disconnect(): a connect() called before it no longer changes the
+    // cluster
+    private _generation?: object;
 
     // the promise behind `ready`, and its resolver until a connect() call takes it
     private _ready: Promise<INodeReadyResult[]>;
@@ -178,6 +181,7 @@ export class GaleraCluster {
         // what an earlier call left: the connect of the cluster, or the call that still runs
         const clusterConnect = this._clusterConnect;
         const earlier = this._connecting;
+        const generation = this._generation;
 
         const call = new Promise<void>((resolve, reject) => {
             Logger.debug("Connecting all pools");
@@ -201,6 +205,9 @@ export class GaleraCluster {
                 const outcome: CheckOutcome = {};
                 const connecting = pool.connect(outcome);
                 connecting.then(async () => {
+                    // disconnect() came after this call: its pass resolves it and leaves the
+                    // cluster as disconnect() left it, with no hashing and no event
+                    if (generation !== this._generation) return resolve();
                     // another call connected the cluster: this one settles with that connect
                     if (this.connected) {
                         return withCluster(this._clusterConnect ?? Promise.resolve());
@@ -380,6 +387,7 @@ export class GaleraCluster {
     public async disconnect() {
         Logger.debug("disconnecting all pools");
         this.connected = false;
+        this._generation = {};
         this._clusterConnect = undefined;
         this._connecting = undefined;
         Metrics.unregisterPools(this._pools);
