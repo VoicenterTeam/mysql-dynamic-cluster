@@ -406,12 +406,17 @@ that was idle longer than `probeIdle` fails its probe, which costs the
 call nothing: the pool takes the next connection of the node (#93). One
 used more recently fails under the statement itself, with `sent: true`,
 and the next node is not tried.
-`query()` and `execute()` also reject with `sent: false` when they refuse a call before any node is asked: the `TypeError`s of the options and of the `execute` values, `MDC_QUOTED_PLACEHOLDER`, `MDC_UNSAFE_COMMENT_VALUE` and `MDC_NO_NODE_AVAILABLE`, also when Redis has no stale data. The reason of an aborted signal and an error the app's values throw carry no `sent`, and `getConnection()` writes none on its errors.
 The pool also writes `sent` on the error when the error can take it, but
 the loop reads the outcome: a frozen error, or one the app handed
 `failWaiting()` that many queries share, is decided the same way. So is an
 error whose `code` or `errno` throws when read: since 4.1.1 it counts as
 having none, and the call rejects with that error.
+A `query()` or `execute()` that refuses a call before any node is asked
+rejects with `sent: false`: the `TypeError`s of the options and of the
+`execute` values, `MDC_QUOTED_PLACEHOLDER`, `MDC_UNSAFE_COMMENT_VALUE` and
+`MDC_NO_NODE_AVAILABLE`, also when Redis has no stale data. The reason of
+an aborted signal and an error the app's values throw carry no `sent`, and
+`getConnection()` writes none on its errors.
 
 **What a cut-off node costs a query.** The probes of one node run one
 after another, and the `timeout` of the query does not cover the borrow:
