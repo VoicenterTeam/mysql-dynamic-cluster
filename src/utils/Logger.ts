@@ -40,7 +40,12 @@ export const consoleLogger: ILogger = {
 
 /**
  * Library logger. Writes to the console, or to the logger the app passed to createPoolCluster.
- * The library owns no log transport: sending logs anywhere else is up to the app's logger
+ * The library owns no log transport: sending logs anywhere else is up to the app's logger.
+ * The logger of each cluster is Object.create() of the module logger with init() called on it,
+ * see clusterContext in index.ts (#86): it has these methods, and only _logger and _level of
+ * its own. So the fields stay TS-private, never JS #private, which a method called on such a
+ * view could not read, and the class keeps no other state per instance: a view would share it
+ * with the module logger
  */
 class Logger {
   private _logger: ILogger = consoleLogger;
