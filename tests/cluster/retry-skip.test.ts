@@ -13,6 +13,7 @@ jest.mock('../../src/Redis/Redis', () => ({
 
 import { GaleraCluster } from '../../src/cluster/GaleraCluster';
 import Logger from '../../src/utils/Logger';
+import Metrics from '../../src/metrics/Metrics';
 import Redis from '../../src/Redis/Redis';
 
 const node = (id: number, loadScore: number): any => ({
@@ -44,6 +45,7 @@ describe('a retry skips the nodes that are no longer valid (#151)', () => {
     let A: any, B: any, C: any;
     beforeEach(() => {
         jest.clearAllMocks();
+        (Redis.get as jest.Mock).mockReset();
         // by load score the order is A, B, C
         A = node(1, 10); B = node(2, 20); C = node(3, 30);
     });
@@ -96,7 +98,10 @@ describe('a retry skips the nodes that are no longer valid (#151)', () => {
     it('asks a node that went invalid and came back valid before its turn', async () => {
         // valid when the call starts, invalid while A is asked, valid again before its turn
         B.query.mockResolvedValue('b');
-        failing(A, () => { B.status.isValid = false; B.status.isValid = true; });
+        failing(A, () => {
+            B.status.isValid = false;
+            queueMicrotask(() => { B.status.isValid = true; });
+        });
         expect(await makeCluster([A, B, C]).query('SELECT 1')).toBe('b');
     });
 
@@ -107,7 +112,6 @@ describe('a retry skips the nodes that are no longer valid (#151)', () => {
     });
 
     it('tells no step for a skipped node', async () => {
-        failing(A, () => { B.status.isValid = false; });
         C.query.mockImplementation((_s: string, _o: object, _out: any, call: any) => {
             call.timing.enter('connecting');
             return Promise.resolve('c');
@@ -142,6 +146,47 @@ describe('a retry skips the nodes that are no longer valid (#151)', () => {
 
         expect(res).toBe('stale');
         expect(B.query).not.toHaveBeenCalled();
+    });
+
+    it('records the query once, with the error of the last node tried', async () => {
+        failing(A, () => { B.status.isValid = false; C.status.isValid = false; });
+        await makeCluster([A, B, C]).query('SELECT 1').catch(() => undefined);
+
+        expect(Metrics.recordQuery).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify((Metrics.recordQuery as jest.Mock).mock.calls[0]))
+            .toContain('"code":"E1"');
+    });
+
+    it('reports the last node tried to onTiming when every node left is invalid', async () => {
+        failing(A, () => { B.status.isValid = false; C.status.isValid = false; });
+        const onTiming = jest.fn();
+        await makeCluster([A, B, C]).query('SELECT 1', undefined, { onTiming }).catch(() => undefined);
+
+        expect(onTiming).toHaveBeenCalledTimes(1);
+        expect(onTiming.mock.calls[0][0]).toMatchObject({ nodeId: 1 });
+    });
+
+    it('tells the hashing the node that succeeded, after a pinned node and a skipped one', async () => {
+        const hashing = {
+            connected: true, getNodeByService: () => 3, updateNodeForService: jest.fn()
+        };
+        // pinned C first, then A by load score, B skipped
+        failing(C, () => { B.status.isValid = false; });
+        A.query.mockResolvedValue('a');
+        const cluster = makeCluster([A, B, C]);
+        cluster._clusterHashing = hashing;
+        expect(await cluster.query('SELECT 1', undefined, { serviceId: 7 })).toBe('a');
+
+        expect(B.query).not.toHaveBeenCalled();
+        expect(hashing.updateNodeForService).toHaveBeenCalledWith(7, 1);
+    });
+
+    it('logs no retry when no node is left to ask', async () => {
+        failing(A, () => { B.status.isValid = false; C.status.isValid = false; });
+        await makeCluster([A, B, C]).query('SELECT 1').catch(() => undefined);
+
+        expect((Logger.debug as jest.Mock).mock.calls.map(c => c[0]))
+            .not.toContain('Retrying query...');
     });
 
     it('follows the same rule with execute: true', async () => {
