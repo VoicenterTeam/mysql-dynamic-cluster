@@ -26,9 +26,14 @@ jest.mock('mysql2', () => ({
     }
 }));
 
+import { readdirSync, readFileSync } from 'fs';
+import { join, relative } from 'path';
 import { Pool } from '../../src/pool/Pool';
+import { Borrow } from '../../src/pool/Borrow';
 import { Settings } from '../../src/utils/Settings';
 import Logger from '../../src/utils/Logger';
+import Metrics from '../../src/metrics/Metrics';
+import Events from '../../src/utils/Events';
 
 // #98: a node that goes from valid to down fails every request that waits for one of its
 // connections, each with an error of its own, as failWaiting() does but with no call of the
@@ -61,6 +66,9 @@ const connection = (rows: Rows) => ({
 });
 // a turn of the event loop, for the steps of a call that got its connection
 const turn = () => new Promise(resolve => setImmediate(resolve));
+// Events has no way to remove a listener, so one listener hands every call to this mock
+const checkFailed = jest.fn();
+Events.on('pool_check_failed', (...args: any[]) => checkFailed(...args));
 
 // every pool a test made, disconnected after it: connect() starts the interval of the reaper
 const made: any[] = [];
@@ -215,23 +223,62 @@ describe('a node that goes down fails the requests that wait for its connections
     });
 
     // mysql2 queues a wrapper of the callback while a subscriber listens on its tracing
-    // channel mysql2:pool:connect. The package cannot tell the request of the check then
-    it('a status query whose request mysql2 wrapped is failed: an empty checkError', async () => {
-        // a check that would wait for ten minutes before it gives up by itself
-        const long = { queryTimeout: 0, timerCheckRange: { start: 1000, end: 600000 } };
-        const { pool, queue } = await connected(undefined, [PASS], long);
-        delete pool.query;
-        const waiting = pool.status.checkStatus();
-        const deciding = pool.status.checkStatus();
-        const own = queue.shift();
-        queue.push((error: any, conn: any) => own(error, conn));
+    // channel mysql2:pool:connect. The package cannot tell the request of the check in the
+    // queue then: it is failed with the others, and asks mysql2 again
+    it('a status query whose request mysql2 wrapped asks again: the check is not failed',
+        async () => {
+            // a check that would wait for ten minutes before it gives up by itself
+            const long = { queryTimeout: 0, timerCheckRange: { start: 1000, end: 600000 } };
+            const { pool, queue } = await connected(undefined, [PASS], long);
+            delete pool.query;
+            const waiting = pool.status.checkStatus();
+            const deciding = pool.status.checkStatus();
+            const own = queue.shift();
+            queue.push((error: any, conn: any) => own(error, conn));
 
-        queue.shift()(null, connection(NO));
-        await deciding;
-        await waiting;
+            queue.shift()(null, connection(NO));
+            await deciding;
 
-        expect([pool.status.isValid, pool.status._failedChecks]).toEqual([false, 1]);
-        expect(pool.checkError).toEqual({});
+            // asked again, at the end of the queue, and counted on the line
+            expect(queue).toEqual([own]);
+            expect([pool.status.isValid, pool.status._failedChecks]).toEqual([false, 0]);
+            expect(failLines()).toEqual([[expect.stringContaining(HOST),
+                { nodeId: 4, pool: NAME, failed: 1 }]]);
+            queue.shift()(null, connection(PASS));
+            await waiting;
+
+            expect([pool.status.isValid, pool.status._failedChecks]).toEqual([true, 0]);
+            expect(pool.checkError).toBeUndefined();
+            expect(checkFailed).not.toHaveBeenCalled();
+            const results = (Metrics.recordHealthCheck as jest.Mock).mock.calls
+                .map(([, options]) => options.result);
+            // the check of connect(), the one that took the node down, the one that waited
+            expect(results).toEqual(['valid', 'invalid', 'valid']);
+            const failedCalls = (Metrics.recordOperation as jest.Mock).mock.calls
+                .filter(([, options]) => options.error);
+            expect(failedCalls).toEqual([]);
+        });
+
+    // known issue 16: a queue that is not the one mysql2 3 keeps
+    it.each<[string, () => object, 'warn' | 'error', string]>([
+        ['has no shift()', () => ({ length: 1, push: jest.fn() }), 'warn', 'cannot be read'],
+        ['throws in shift()', () => ({
+            length: 1, push: jest.fn(), shift: () => { throw new Error('queue broke'); }
+        }), 'error', 'queue broke']
+    ])('a queue that %s: the check goes on, and the node goes down', async (
+        _name, make, level, text
+    ) => {
+        const { pool } = await connected({}, [PASS, NO]);
+        pool._pool._connectionQueue = make();
+
+        await expect(pool.status.checkStatus()).resolves.toBeUndefined();
+
+        expect(pool.status.isValid).toBe(false);
+        // the check got its answer: no failure of its own
+        expect([pool.checkError, pool.status._failedChecks]).toEqual([undefined, 0]);
+        const lines = (Logger[level] as jest.Mock).mock.calls.map(([message]) => String(message));
+        expect(lines.filter(line => line.includes(text))).toHaveLength(1);
+        expect(failLines()).toEqual([]);
     });
 
     it('leaves a connection the app holds, and a statement that runs', async () => {
@@ -297,5 +344,39 @@ describe('a node that goes down fails the requests that wait for its connections
 
         expect(queue).toHaveLength(4);
         expect(failLines()).toEqual([]);
+    });
+});
+
+// isCheck() tells the request of the status query of the legacy check by probe: false, so no
+// other caller may pass it
+describe('probe: false marks the status query of the legacy check alone', () => {
+    it('only PoolStatus passes it to the pool', () => {
+        const src = join(__dirname, '../../src');
+        const files = (dir: string): string[] => readdirSync(dir, { withFileTypes: true })
+            .flatMap(entry => entry.isDirectory()
+                ? files(join(dir, entry.name)) : [join(dir, entry.name)]);
+        const passing = files(src)
+            .filter(file => /probe\s*:\s*false/.test(readFileSync(file, 'utf8')))
+            .map(file => relative(src, file));
+
+        expect(passing).toEqual([join('pool', 'PoolStatus.ts')]);
+    });
+
+    it('no call of the app takes a connection with it, the legacy check does', async () => {
+        const take = jest.spyOn(Borrow.prototype, 'take');
+        try {
+            const { pool, queue } = await connected(undefined, [PASS]);
+            delete pool.query;
+            waitFor(pool);
+            const checking = pool.status.checkStatus();
+
+            const probes = take.mock.calls.map(([options]) => options?.probe);
+            // getConnection(), query(), the bound statement, the transaction, the check
+            expect(probes).toEqual([undefined, true, true, undefined, false]);
+            queue.pop()(null, connection(PASS));
+            await checking;
+        } finally {
+            take.mockRestore();
+        }
     });
 });
