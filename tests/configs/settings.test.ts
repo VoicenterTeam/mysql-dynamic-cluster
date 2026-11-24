@@ -538,7 +538,7 @@ describe('createPoolCluster', () => {
         expect(config.current.clusterName).toBe('first');
     });
 
-    it('warns the logger of the first cluster when a second call replaces its settings', () => {
+    it('warns the logger of the first cluster when createPoolCluster is called again, saying what it keeps', () => {
         const { createPoolCluster, config } = loadPackage();
         const first = makeLogger();
         const second = makeLogger();
@@ -549,6 +549,8 @@ describe('createPoolCluster', () => {
 
         expect(config.current.clusterName).toBe('second');
         expect(first.warn).toHaveBeenCalledWith(expect.stringContaining('called again'));
+        expect(first.warn).toHaveBeenCalledWith(expect.stringContaining(
+            'the earlier cluster keeps its own hosts, logger and metrics name'));
         expect(second.warn).not.toHaveBeenCalled();
     });
 

@@ -23,8 +23,9 @@ class Config {
      */
     public load(settings: IParsedSettings): void {
         if (this._loaded) {
-            Logger.warn("createPoolCluster was called again: " +
-                "the settings of the earlier cluster are replaced");
+            Logger.warn("createPoolCluster was called again: the earlier cluster keeps its own " +
+                "hosts, logger and metrics name; the Redis client and the events are shared " +
+                "with the new one");
         }
         this._loaded = true;
         this._current = settings;
