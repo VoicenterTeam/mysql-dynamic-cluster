@@ -19,7 +19,9 @@ export default class ServiceNames {
     // the logger of the cluster (#86). The module logger when the cluster passes none
     private readonly _logger: ILogger;
 
-    constructor(cluster: GaleraCluster, options: IServiceMetricsSettings, logger: ILogger = Logger) {
+    constructor(
+        cluster: GaleraCluster, options: IServiceMetricsSettings, logger: ILogger = Logger
+    ) {
         this._cluster = cluster;
         this._database = options.database;
         this._table = options.table;

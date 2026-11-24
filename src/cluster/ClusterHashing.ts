@@ -218,7 +218,8 @@ export class ClusterHashing {
                     await this._cluster.query(sql, null, options);
                 }
             } catch (e) {
-                this._logger.error(`Upgrading hashing schema ${this._database} (${name}) failed: ${e.message}`);
+                this._logger.error(`Upgrading hashing schema ${this._database} (${name}) ` +
+                    `failed: ${e.message}`);
             }
         };
         const routine = (name: string, kind: 'FUNCTION' | 'PROCEDURE') => {
@@ -348,7 +349,8 @@ export class ClusterHashing {
             this._nextCheckHashing()
         } catch (err) {
             if (run !== this._checkRun) return;
-            this._logger.error("Something wrong while checking hashing status in cluster.\n Message: " + err.message);
+            this._logger.error("Something wrong while checking hashing status in cluster.\n" +
+                " Message: " + err.message);
             this.connected = false;
             this._nextCheckHashing()
         }

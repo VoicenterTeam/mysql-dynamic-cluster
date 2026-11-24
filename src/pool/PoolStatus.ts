@@ -200,13 +200,15 @@ export class PoolStatus {
     private _warnIgnoredKeys(settings: IUserPoolSettings) {
         const ignored = Settings.ignoredCheckKeys(settings);
         if (!ignored.length) return;
-        this._logger.warn("Pool " + this._pool.name + ": the settings hold a healthCheck block for " +
+        this._logger.warn("Pool " + this._pool.name +
+            ": the settings hold a healthCheck block for " +
             "this node, so " + ignored.join(" and ") + (ignored.length > 1 ? " are" : " is") +
             " ignored", { pool: this._pool.name, ignored });
     }
 
     private static _logDropped(host: string, logger: ILogger): void {
-        logger.debug("Dropped the result of a status check that outlived its connection in host: " + host);
+        logger.debug("Dropped the result of a status check that outlived its connection in " +
+            "host: " + host);
     }
 
     /**
@@ -284,7 +286,9 @@ export class PoolStatus {
                 clearTimeout(checkTimer);
                 clearImmediate(grace);
             }
-            if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host, this._logger);
+            if (run !== this._checkRun) {
+                return PoolStatus._logDropped(this._pool.host, this._logger);
+            }
 
             // the query ran: the error of an earlier check is over, whatever the validator says
             this._checkError = undefined;
@@ -302,14 +306,17 @@ export class PoolStatus {
             if (!this._healthCheck || !passed) this._setValid(passed, 'validator');
             if (this._healthCheck) {
                 // what this check found, which is not always the state of the node
-                this._logger.debug("Did the validators accept the status of host " + this._pool.host +
-                    "? -> " + passed.toString(), { pool: this._pool.name, passed });
+                this._logger.debug("Did the validators accept the status of host " +
+                    this._pool.host + "? -> " + passed.toString(),
+                    { pool: this._pool.name, passed });
             } else {
                 // the line as it was before 4.0.0: there the state is what the validators said
-                this._logger.debug("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())
+                this._logger.debug("Is status ok in host " + this._pool.host + "? -> " +
+                    this._isValid.toString())
             }
             this._loadScore = this._loadFactor.check(result);
-            this._logger.debug("Load score by checking status in host " + this._pool.host + " is " + this._loadScore);
+            this._logger.debug("Load score by checking status in host " + this._pool.host +
+                " is " + this._loadScore);
             this._failedChecks = 0;
             // the node answered: what a call of the app ran into before says nothing any more
             this._decides = undefined;
@@ -326,7 +333,9 @@ export class PoolStatus {
             // until the `rise`th pass
             this._recordCheck(passed ? 'valid' : 'invalid');
         } catch (err) {
-            if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host, this._logger);
+            if (run !== this._checkRun) {
+                return PoolStatus._logDropped(this._pool.host, this._logger);
+            }
             // an error thrown after the answer came is one of the package's own code
             this._checkError = asking ? PoolStatus._reduce(err) : {};
             // the caller gets an object of its own
@@ -457,8 +466,8 @@ export class PoolStatus {
         try {
             this._wentDown();
         } catch (thrown) {
-            this._logger.error("Pool " + this._pool.name + ": failing the requests that waited for " +
-                "a connection threw: " + PoolStatus._errorText(thrown));
+            this._logger.error("Pool " + this._pool.name + ": failing the requests that waited " +
+                "for a connection threw: " + PoolStatus._errorText(thrown));
         }
     }
 

@@ -32,7 +32,8 @@ export class LoadFactor {
         this._loadFactors.forEach(loadFactor => {
             const value = result.find(res => res.Variable_name === loadFactor.key)?.Value;
             if (isNaN(+value) || !value) {
-                this._logger.error("Value from db isn't number. Check if you set right key. Current key: " + loadFactor.key)
+                this._logger.error("Value from db isn't number. Check if you set right key. " +
+                    "Current key: " + loadFactor.key)
             } else {
                 score += +value * loadFactor.multiplier;
             }

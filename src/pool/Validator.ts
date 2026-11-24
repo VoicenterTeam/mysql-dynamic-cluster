@@ -51,7 +51,8 @@ export class Validator {
             }
 
             if (value === undefined) {
-                this._logger.error("Validator key " + validator.key + " isn't in the global status, validator fails");
+                this._logger.error("Validator key " + validator.key +
+                    " isn't in the global status, validator fails");
                 return;
             }
             if (Validator.checkValueIsValid(value, validator, this._logger)) validateCount++;
@@ -84,7 +85,8 @@ export class Validator {
                     return true;
                 }
             } else {
-                logger.error('Operator ' + validator.operator + ' doesn\'t support for another type except number')
+                logger.error('Operator ' + validator.operator +
+                    ' doesn\'t support for another type except number')
             }
         } else {
             // check values if value from db is number
@@ -92,7 +94,8 @@ export class Validator {
             const validatorVal = +validator.value as number;
 
             if (isNaN(validatorVal)) {
-                logger.error('Validator value isn\'t a type number like value from database. Check if you write correct data');
+                logger.error('Validator value isn\'t a type number like value from database. ' +
+                    'Check if you write correct data');
                 return false;
             }
 

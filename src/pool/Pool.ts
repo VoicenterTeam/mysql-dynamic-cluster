@@ -252,14 +252,17 @@ export class Pool {
         const pool = "Pool " + this.name + ": ";
 
         if (!greeting) {
-            this._logger.warn(pool + "could not read the server version, connecting with " + decision.flags, meta);
+            this._logger.warn(pool + "could not read the server version, connecting with " +
+                decision.flags, meta);
         } else if (decision.reason === 'version_unreadable') {
-            this._logger.warn(pool + "server version is not readable, connecting with " + decision.flags, meta);
+            this._logger.warn(pool + "server version is not readable, connecting with " +
+                decision.flags, meta);
         } else if (decision.flags) {
-            this._logger.info(pool + "server " + greeting.serverVersion + " needs " + decision.flags +
-                ", set flags in the settings to override", meta);
+            this._logger.info(pool + "server " + greeting.serverVersion + " needs " +
+                decision.flags + ", set flags in the settings to override", meta);
         } else {
-            this._logger.debug(pool + "server " + greeting.serverVersion + " keeps the default flags of mysql2", meta);
+            this._logger.debug(pool + "server " + greeting.serverVersion +
+                " keeps the default flags of mysql2", meta);
         }
         return decision.flags;
     }
@@ -442,8 +445,8 @@ export class Pool {
                 try {
                     this._borrow.drop(held);
                 } catch (thrown) {
-                    this._logger.warn("Pool " + this.name + ": could not destroy the connection of " +
-                        "an aborted query", { nodeId: this.id, pool: this.name,
+                    this._logger.warn("Pool " + this.name + ": could not destroy the " +
+                        "connection of an aborted query", { nodeId: this.id, pool: this.name,
                         error: thrown?.message || thrown });
                 }
                 abort(abortReason(signal));
@@ -573,7 +576,8 @@ export class Pool {
                 if (rollback && !isBroken(error)) {
                     send(conn, 'ROLLBACK', (errorR, resultR) => {
                         if (errorR) {
-                            this._logger.error("Rollback failed in pool by host " + this.host + ": " + errorR.message);
+                            this._logger.error("Rollback failed in pool by host " + this.host +
+                                ": " + errorR.message);
                             // the connection may have been lost under the rollback
                             this._status.realFailure(errorR, false);
                             this._borrow.giveBack(conn, true);
