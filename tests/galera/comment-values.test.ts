@@ -5,18 +5,33 @@ import { cleanUp, describeRig, logger, readEnv } from './support';
 
 // The contract test of #134 on the three-node Galera rig (tests/rig/galera.sh), MySQL 8.0.42.
 // Skipped unless MDC_TEST_GALERA is set. A server that reads /*+ */ or /*!NNNNN */ as a plain
-// comment ends it at the first */, also one inside the quotes of a value: the rest of the value
-// runs as SQL. The raw text is the one query() would send, written by sql-escaper's format()
+// comment ends it at a */ inside the quotes of a value, and a skipped /*!NNNNN */ nests a /* of a
+// value in it: the rest of the value runs as SQL. The raw text is the one query() would send,
+// written by sql-escaper's format()
 
-// the statement with a ? for the value, and a value that adds a column named injected there
-const CASES: [string, string, string][] = [
-    ['/*+ */ after a select item', 'SELECT 1 AS a /*+ ? */', '*/ , 2 AS injected -- '],
-    ['/*+ */ in a hint position', 'SELECT /*+ QB_NAME(?) */ 2 AS a', '*/ 1 AS injected, /*'],
+// the statement with a ? for each value, and values that add a column named injected
+const CASES: [string, string, string[]][] = [
+    ['/*+ */ after a select item', 'SELECT 1 AS a /*+ ? */', ['*/ , 2 AS injected -- ']],
+    ['/*+ */ in a hint position', 'SELECT /*+ QB_NAME(?) */ 2 AS a', ['*/ 1 AS injected, /*']],
     ['/*!99999 */, above the version of the server', 'SELECT 2 AS a /*!99999 ? */',
-        '*/ , 1 AS injected -- ']
+        ['*/ , 1 AS injected -- ']],
+    // the inputs of the review: no */ of a value is needed inside the comment
+    ['a comment nested in /*!99999 */', 'SELECT 2 AS a /*!99999 /* note */ , ? AS b */',
+        ['*/ , 1 AS injected -- ']],
+    ['a /* in /*!99999 */, a */ after it', 'SELECT 1 AS a /*!99999 ? */ FROM t WHERE name = ?',
+        ['/*', '*/ , 1 AS injected -- ']]
 ];
 
-describeRig('a value holding */ inside /*+ */ or /*!NNNNN */ on MySQL 8.0.42', () => {
+// the same statement with :v0, :v1 ... and an object of the values
+const named = (sql: string, values: string[]) => {
+    let k = 0;
+    return {
+        sql: sql.replace(/\?/g, () => ':v' + k++),
+        values: Object.fromEntries(values.map((value, i) => ['v' + i, value]))
+    };
+};
+
+describeRig('a value holding /* or */ with /*+ */ or /*!NNNNN */ on MySQL 8.0.42', () => {
     let cluster: any;
     let raw: mysql.Connection;
 
@@ -49,26 +64,26 @@ describeRig('a value holding */ inside /*+ */ or /*!NNNNN */ on MySQL 8.0.42', (
         () => raw?.end()
     ));
 
-    it.each(CASES)('%s: the raw text returns the injected column', async (_where, sql, value) => {
-        const [, fields] = await raw.query(format(sql, [value]));
+    it.each(CASES)('%s: the raw text returns the injected column', async (_where, sql, values) => {
+        const [, fields] = await raw.query(format(sql, values));
 
         expect(fields.map(field => field.name)).toContain('injected');
     });
 
-    it.each(CASES)('%s: query() refuses the value with a ?', async (_where, sql, value) => {
-        const error = await cluster.query(sql, [value]).catch((e: any) => e);
+    it.each(CASES)('%s: query() refuses the values with a ?', async (_where, sql, values) => {
+        const error = await cluster.query(sql, values).catch((e: any) => e);
 
         expect(error.code).toBe('MDC_UNSAFE_COMMENT_VALUE');
     });
 
-    it.each(CASES)('%s: query() refuses the value with a :name', async (_where, sql, value) => {
-        const error = await cluster.query(sql.replace('?', ':v'), { v: value })
-            .catch((e: any) => e);
+    it.each(CASES)('%s: query() refuses the values with a :name', async (_where, sql, values) => {
+        const call = named(sql, values);
+        const error = await cluster.query(call.sql, call.values).catch((e: any) => e);
 
         expect(error.code).toBe('MDC_UNSAFE_COMMENT_VALUE');
     });
 
-    it('a hint with a value that holds no */ still works', async () => {
+    it('a hint with a number still works', async () => {
         const rows = await cluster.query('SELECT /*+ MAX_EXECUTION_TIME(:ms) */ 1 AS a',
             { ms: 1000 });
 
