@@ -194,8 +194,8 @@ Signature:
   call are checked right after it. Then a `:name` of an object of values
   inside quotes or backticks rejects with `MDC_QUOTED_PLACEHOLDER`. Then an
   aborted signal rejects, then the values are written into the text (step 6),
-  and a value that adds a `/*` or a `*/` to a statement with `/*+` or
-  `/*!NNNNN` rejects with `MDC_UNSAFE_COMMENT_VALUE`, see
+  and values that can change how a server reads a comment it skips reject
+  with `MDC_UNSAFE_COMMENT_VALUE`, see
   [What values do in the SQL text](#what-values-do-in-the-sql-text).
 - `onTiming` gets no default. `null` counts as none, as `undefined` does.
   It is checked right after `timeout`, before the values: see
@@ -267,7 +267,7 @@ there, the call rejects with the reason of the signal instead.
 
 `this._formatSQL(sql, values)`, once, before step 3: right after the
 check of the signal that comes before it, before the first `await` of the
-call. The check of `/*+ */` and `/*!NNNNN */` reads that text, step 4 reads
+call. The check of the comments a server can skip reads that text, step 4 reads
 stale data of Redis with it, and after the `try`/`catch` of steps 3 to 5
 `sql` becomes it. So a `toSqlString()` runs once per call, and a change to
 the values after the call does not reach the text. Since 4.1.1. Before, the
@@ -314,8 +314,8 @@ more than put a quoted value in place of each `?` (#121):
 - An object with a `toSqlString()` function is written as raw SQL, a named value too.
 - A `?` inside `'...'`, `"..."`, backticks or a comment (`#`, `-- `, `/* */`) is left alone,
   since sql-escaper 1.6. The exception is `/*! ... */` and `/*+ ... */`: sql-escaper treats
-  those as code, so a `?` there is replaced. `query()` refuses a value that adds a `/*` or a
-  `*/` to a statement with `/*+ */` or `/*!NNNNN */`, see the next item. 1.5.x also replaced one inside `"..."` or after `#`, so every value
+  those as code, so a `?` there is replaced. `query()` refuses values that can change how
+  a server reads such a comment, see the next item. 1.5.x also replaced one inside `"..."` or after `#`, so every value
   after it moved one place. mysql2 3.24 allows 1.5.1, so the package depends on
   `sql-escaper ^1.6.0` and calls it itself: `query()` leaves such a `?` alone whatever copy
   mysql2 gets. npm usually resolves the fixed copy for mysql2 too. An app that depends on a
@@ -329,14 +329,23 @@ more than put a quoted value in place of each `?` (#121):
   a plain one: a `*/` inside a value ends it, and a skipped `/*!NNNNN */` can take a `/*` of
   a value as the start of a nested comment. Keep values out of comments. Since 4.1.1
   `query()` rejects with `MDC_UNSAFE_COMMENT_VALUE` before any node is asked, with one metric
-  record, when the text holds `/*+` or a `/*!` with a version anywhere (a plain search, also
-  inside a string) and the values add a `/*` or a `*/` to it: either count is higher in the
-  formatted text than in the text of the app (#134). Where the value stands does not matter:
-  text of the app inside a hint, such as a quote, a `-- ` or a `#`, can hide from sql-escaper
-  where the comment ends. MySQL 8.0.42 ended such a comment inside the value in every
-  position of `/*+ */` and in `/*!99999 */`. It runs `/*! */` and `/*!80000 */` as code and
-  keeps the quotes of the value there, so `/*! */` alone does not trigger the check. Neither
-  does `execute()`.
+  record, in two cases (`_hidesComment()`, #134). The text of the app is searched as it is,
+  also inside strings, for `/*+`, and for `/*!` or MariaDB's `/*M!` followed by a digit, or by
+  a `?` or a `:`, whose value can write the version.
+  - The text holds one and the values add a `/*` or a `*/` to it: either count is higher in
+    the formatted text than in the text of the app. Where the value stands does not matter:
+    text of the app inside a hint, such as a `-- ` or a `#`, can hide from sql-escaper where
+    the comment ends.
+  - Such a comment, from its start to the first `*/` after it or to the end of the text,
+    holds a `'`, a `"` or a backtick, and the values changed the text at all. sql-escaper
+    reads the quote and the server skips it, so a value can stand inside a string for one
+    and outside it for the other, with no `/*` or `*/` in it.
+
+  MySQL 8.0.42 ended such a comment inside the value in every position of `/*+ */` and in
+  `/*!99999 */`. It runs `/*! */` and `/*!80000 */` as code and keeps the quotes of the value
+  there, so `/*! */` alone does not trigger the check. MariaDB skips a `/*!NNNNN */` with a
+  version from 50700 to 99999, and runs its own `/*M!NNNNNN */` up to its version.
+  `execute()` is not checked.
 - Only `execute()` keeps the values out of the text.
 - Never pass an object from outside the app, such as a request body or parsed JSON, as a
   value: it can turn into column assignments or raw SQL.
