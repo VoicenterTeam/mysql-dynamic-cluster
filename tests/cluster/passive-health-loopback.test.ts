@@ -1103,3 +1103,68 @@ describe('the check connection of a healthCheck node', () => {
         expect([node(cluster), failedChecks, server.checks()]).toEqual([UP, [], 2]);
     });
 });
+
+// #98, the probe of the issue scaled down: two nodes behind proxies, pools that hold no
+// connection, as those of a node with the block do from connect() until their first query,
+// and the path of node 1 swallows new connections and says nothing on them. Two connections
+// per pool, a login of 300 ms and a check of 200 ms. Of twelve queries at once two log in at
+// node 1 and ten wait in its queue. Each login that runs out takes the next request of the
+// queue into a login of its own, and starts the check at once that takes node 1 down when
+// it runs out. Before #98 the queue went on, two logins of 300 ms at a time, after that
+describe('a node that goes down while queries wait for its connections', () => {
+    let createPool: jest.SpyInstance;
+    beforeEach(() => {
+        const real = mysql.createPool.bind(mysql);
+        createPool = jest.spyOn(mysql, 'createPool').mockImplementation(((options: any) => {
+            return real({ ...options, connectTimeout: CONNECT_TIMEOUT });
+        }) as any);
+    });
+    afterEach(() => createPool.mockRestore());
+
+    it('fails them, and the other node answers each soon after', async () => {
+        const proxies: IProxy[] = [];
+        for (let i = 0; i < 2; i++) proxies.push(await proxyTo((await listen('answers')).port));
+        // when the line of the node that went down was logged
+        let downAt: number | undefined;
+        const logger = {
+            debug: jest.fn(), info: jest.fn(), error: jest.fn(),
+            warn: jest.fn((_message: string, meta?: any) => {
+                if (meta?.reason && downAt === undefined) downAt = Date.now();
+            })
+        };
+        const cluster: any = createPoolCluster({
+            clusterName: 'test',
+            hosts: proxies.map(({ port }, i) => {
+                return { host: '127.0.0.1', port, id: i + 1, connectionLimit: 2 };
+            }),
+            defaultPoolSettings: {
+                user: 'u', password: 'p', database: 'd', flags: [],
+                healthCheck: { ...BLOCK, timeout: 200 }
+            },
+            useClusterHashing: false,
+            logger
+        } as any);
+        clusters.push(cluster);
+        await cluster.connect();
+        await cluster.ready;
+        proxies[0].onlyNew('swallows');
+
+        const answeredAt: number[] = [];
+        const rejected: string[] = [];
+        await Promise.all(Array.from({ length: 12 }, () => {
+            return cluster.query(APP_SQL, undefined, { timeout: 0 }).then(
+                () => { answeredAt.push(Date.now()); },
+                (error: any) => { rejected.push(error.code); });
+        }));
+        const failed = logger.info.mock.calls
+            .filter(([, meta]) => meta && meta.failed !== undefined).map(([, meta]) => meta);
+
+        expect([rejected, answeredAt.length, isUp(cluster)]).toEqual([[], 12, [false, true]]);
+        // none waited much past the moment node 1 went down: at most the login of 300 ms
+        // that was out then
+        expect(Math.max(...answeredAt) - downAt).toBeLessThan(CONNECT_TIMEOUT + 150);
+        // the queries that waited at node 1 were failed then
+        expect(failed).toEqual([{ nodeId: 1, pool: expect.any(String), failed: expect.any(Number) }]);
+        expect(failed[0].failed).toBeGreaterThan(0);
+    });
+});
