@@ -72,13 +72,15 @@ class Metrics {
     // not set when the provider could not make it
     private _connectionWaitTime: Histogram;
     private _nodeInstruments: INodeInstruments;
-    // pools of the connected clusters. A set, so a second connect() adds no pool twice
-    private readonly _pools: Set<IPoolMetricSource> = new Set();
+    // pools of the connected clusters, each with the name of its cluster, or undefined for the
+    // name of init(). A map, so a second connect() adds no pool twice
+    private readonly _pools: Map<IPoolMetricSource, string | undefined> = new Map();
     private _failureLogged: boolean = false;
 
     /**
      * Initialize metrics
-     * @param clusterName cluster name added to every metric as an attribute
+     * @param clusterName cluster name added to every metric as an attribute, unless the cluster
+     * that records it passes its own (#86)
      */
     public init(clusterName: string) {
         this.clusterName = clusterName;
@@ -104,7 +106,9 @@ class Metrics {
         if (options.waitSeconds === undefined) return;
         // on its own: an operation that could not be recorded still gets its wait
         this._safely(() => {
-            const attributes = this._nodeAttributes(options.poolName, options.host, options.port);
+            const attributes = this._nodeAttributes(
+                options.poolName, options.host, options.port, options.clusterName
+            );
             this._getInstruments();
             if (this._connectionWaitTime) {
                 this._connectionWaitTime.record(options.waitSeconds, attributes);
@@ -130,11 +134,12 @@ class Metrics {
      * Record one Redis cache lookup
      * @param seconds how long the lookup took
      * @param result was the key found and still fresh
+     * @param clusterName the name of the cluster that looked up. Left out: the name of init()
      */
-    public recordCacheLookup(seconds: number, result: CacheLookupResult) {
+    public recordCacheLookup(seconds: number, result: CacheLookupResult, clusterName?: string) {
         this._safely(() => {
             const attributes: Attributes = { [MetricAttributes.cacheResult]: result };
-            if (this.clusterName) attributes[MetricAttributes.clusterName] = this.clusterName;
+            this._addClusterName(attributes, clusterName);
 
             this._getInstruments().cacheLookupDuration.record(seconds, attributes);
         });
@@ -147,7 +152,9 @@ class Metrics {
      */
     public recordHealthCheck(seconds: number, options: IHealthCheckMetricOptions) {
         this._safely(() => {
-            const attributes = this._nodeAttributes(options.poolName, options.host, options.port);
+            const attributes = this._nodeAttributes(
+                options.poolName, options.host, options.port, options.clusterName
+            );
             attributes[MetricAttributes.healthCheckResult] = options.result;
             if (options.result === 'error') {
                 const { code, errno } = options.checkError || {};
@@ -165,11 +172,13 @@ class Metrics {
      * Report the connection metrics of these pools at every collection, until they are
      * unregistered. A pool that is registered already is not added again
      * @param pools pools of a cluster that connects
+     * @param clusterName the name of that cluster. Left out: the name of init(), read at each
+     * collection
      */
-    public registerPools(pools: IPoolMetricSource[]) {
+    public registerPools(pools: IPoolMetricSource[], clusterName?: string) {
         this._safely(() => {
             Metrics._mustBeList(pools, 'registerPools');
-            pools.forEach(pool => this._pools.add(pool));
+            pools.forEach(pool => this._pools.set(pool, clusterName));
             // the instruments are created here when the app registered its provider by now
             this._getInstruments();
         });
@@ -290,7 +299,7 @@ class Metrics {
         const { database, serviceName, sql, error } = options;
         const attributes: Attributes = { [MetricAttributes.dbSystem]: 'mysql' };
 
-        if (this.clusterName) attributes[MetricAttributes.clusterName] = this.clusterName;
+        this._addClusterName(attributes, options.clusterName);
         if (database) attributes[MetricAttributes.dbNamespace] = database;
         if (serviceName) attributes[MetricAttributes.serviceName] = serviceName;
 
@@ -437,8 +446,8 @@ class Metrics {
      * @private
      */
     private _observeNodes(result: BatchObservableResult, instruments: INodeInstruments) {
-        this._pools.forEach(pool => this._safely(() => {
-            const attributes = this._nodeAttributes(pool.name, pool.host, pool.port);
+        this._pools.forEach((clusterName, pool) => this._safely(() => {
+            const attributes = this._nodeAttributes(pool.name, pool.host, pool.port, clusterName);
             // read before the first observe, so a pool that throws reports nothing at all
             const { isValid, loadScore } = pool.status;
             result.observe(instruments.valid, isValid ? 1 : 0, attributes);
@@ -450,16 +459,28 @@ class Metrics {
      * Attributes that name a node, on the health-check metric and the node gauges
      * @private
      */
-    private _nodeAttributes(poolName: string, host: string, port: number): Attributes {
+    private _nodeAttributes(
+        poolName: string, host: string, port: number, clusterName: string | undefined
+    ): Attributes {
         const attributes: Attributes = {
             [MetricAttributes.dbSystem]: 'mysql',
             [MetricAttributes.poolName]: poolName,
             [MetricAttributes.serverAddress]: host,
             [MetricAttributes.serverPort]: port
         };
-        if (this.clusterName) attributes[MetricAttributes.clusterName] = this.clusterName;
+        this._addClusterName(attributes, clusterName);
 
         return attributes;
+    }
+
+    /**
+     * Add the cluster name: the one of the cluster that records, else the one of init(). Left
+     * out when the one it takes is not set or empty
+     * @private
+     */
+    private _addClusterName(attributes: Attributes, clusterName: string | undefined) {
+        const name = clusterName ?? this.clusterName;
+        if (name) attributes[MetricAttributes.clusterName] = name;
     }
 
     /**
@@ -478,14 +499,14 @@ class Metrics {
      * @private
      */
     private _observePools(result: BatchObservableResult, instruments: IPoolInstruments) {
-        this._pools.forEach(pool => this._safely(() => {
+        this._pools.forEach((clusterName, pool) => this._safely(() => {
             const attributes: Attributes = {
                 [MetricAttributes.dbSystem]: 'mysql',
                 [MetricAttributes.poolName]: pool.name,
                 [MetricAttributes.serverAddress]: pool.host,
                 [MetricAttributes.serverPort]: pool.port
             };
-            if (this.clusterName) attributes[MetricAttributes.clusterName] = this.clusterName;
+            this._addClusterName(attributes, clusterName);
             const state = (value: ConnectionState): Attributes => {
                 return { ...attributes, [MetricAttributes.connectionState]: value };
             };

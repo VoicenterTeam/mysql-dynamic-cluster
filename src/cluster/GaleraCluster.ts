@@ -182,7 +182,7 @@ export class GaleraCluster {
      */
     public async connect(): Promise<void> {
         // the connection metrics of the pools are reported from here until disconnect()
-        Metrics.registerPools(this._pools);
+        Metrics.registerPools(this._pools, this._context?.clusterName);
         // the first call resolves the promise `ready` already handed out, a later call a new one
         if (!this._resolveReady) this._newReady();
         const resolveReady = this._resolveReady;
@@ -484,7 +484,8 @@ export class GaleraCluster {
                 database: queryOptions.database,
                 serviceName: queryOptions.serviceId
                     ? queryOptions.serviceName ?? String(queryOptions.serviceId)
-                    : undefined
+                    : undefined,
+                clusterName: this._context?.clusterName
             });
             if (attempts.length) GaleraCluster._tellTiming(queryOptions.onTiming, attempts);
         }
@@ -647,6 +648,8 @@ export class GaleraCluster {
         let redisData: IRedisData = null;
         if (queryOptions.redis && !queryOptions.redisRefreshCache) {
             const redisLatency = new QueryTimer();
+            // the name of this cluster on the lookup metric (#86)
+            const clusterName = this._context?.clusterName;
             redisLatency.start();
 
             const redisResult = await Redis.get(sql);
@@ -658,19 +661,19 @@ export class GaleraCluster {
                 try {
                     redisData = JSON.parse(redisResult);
                 } catch (parseError) {
-                    Metrics.recordCacheLookup(redisLatency.get(), 'miss');
+                    Metrics.recordCacheLookup(redisLatency.get(), 'miss', clusterName);
                     record(undefined, parseError);
                     throw parseError;
                 }
                 if (redisData.expired > Date.now()) {
-                    Metrics.recordCacheLookup(redisLatency.get(), 'hit');
+                    Metrics.recordCacheLookup(redisLatency.get(), 'hit', clusterName);
                     record('cache');
                     return redisData.data;
                 }
 
-                Metrics.recordCacheLookup(redisLatency.get(), 'expired');
+                Metrics.recordCacheLookup(redisLatency.get(), 'expired', clusterName);
             } else {
-                Metrics.recordCacheLookup(redisLatency.get(), 'miss');
+                Metrics.recordCacheLookup(redisLatency.get(), 'miss', clusterName);
             }
         }
 

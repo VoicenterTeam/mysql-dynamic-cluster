@@ -25,7 +25,9 @@ export interface IOperationMetricOptions {
     step?: QueryStep,
     // how long an attempt of Pool.query waited for a connection, recorded apart. Not set by
     // the other callers, which then record no wait
-    waitSeconds?: number
+    waitSeconds?: number,
+    // the name of the cluster of the pool. Not set: the name of Metrics.init
+    clusterName?: string
 }
 
 // One cluster query, after cache and retries
@@ -35,7 +37,9 @@ export interface IQueryMetricOptions {
     database?: string,
     serviceName?: string,
     sql?: string,
-    error?: any
+    error?: any,
+    // the name of the cluster. Not set: the name of Metrics.init
+    clusterName?: string
 }
 
 // How one health check of a node ended. valid and invalid: the status query ran, and the
@@ -51,7 +55,9 @@ export interface IHealthCheckMetricOptions {
     result: HealthCheckResult,
     // what a check with the result error failed with, as PoolStatus reduced it. A code or an
     // errno is there only when it came from mysql2, the socket or the server
-    checkError?: INodeCheckError
+    checkError?: INodeCheckError,
+    // the name of the cluster of the node. Not set: the name of Metrics.init
+    clusterName?: string
 }
 
 // State of an open connection, the value of the db.client.connection.state attribute

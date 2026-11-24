@@ -642,7 +642,8 @@ export class Pool {
             poolName: this.name,
             host: this.host,
             port: this.port,
-            database
+            database,
+            clusterName: this._context.clusterName
         }
     }
 

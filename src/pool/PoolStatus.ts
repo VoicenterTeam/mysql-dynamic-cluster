@@ -746,7 +746,8 @@ export class PoolStatus {
             host: this._pool.host,
             port: this._pool.port,
             result,
-            checkError: this._checkError
+            checkError: this._checkError,
+            clusterName: this._context.clusterName
         });
     }
 
