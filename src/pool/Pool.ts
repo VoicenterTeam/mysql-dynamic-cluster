@@ -33,7 +33,8 @@ export interface IPoolCall {
     // connection with NO_BACKSLASH_ESCAPES: MDC_UNSAFE_SQL_MODE, `sent: false`
     valuesInText?: boolean,
     // false for the health check of a node without a block only: it draws the connection
-    // with no probe, see Borrow
+    // with no probe, and a node that goes down does not fail its request that waits for a
+    // connection, see Borrow
     probe?: boolean,
     // filled by the pool for the onTiming and onStep options of the cluster: the step the call
     // ended in and the time it waited for a connection
@@ -129,7 +130,7 @@ export class Pool {
         );
 
         this._checksApart = !!settings.healthCheck;
-        this._status = new PoolStatus(this, settings, false);
+        this._status = new PoolStatus(this, settings, false, () => this._nodeWentDown());
         this._borrow = new Borrow({
             id: this.id,
             name: this.name,
@@ -726,21 +727,74 @@ export class Pool {
         // server's
         PoolStatus.ownError(error);
 
+        const failed = this._failQueue(queue, () => error);
+        Logger.info("Pool " + this.name + ": failed " + failed + " requests that " +
+            "waited for a connection in host " + this.host,
+            { nodeId: this.id, pool: this.name, failed });
+        return failed;
+    }
+
+    /**
+     * The node went down: fail every request that waits for one of its connections, as
+     * failWaiting() does, each with an MDC_NODE_DOWN error of its own. The status query of the
+     * legacy check that waits keeps its place, so the check counts no failure for it.
+     * Connections in use and logins that are still running are left alone. PoolStatus calls it.
+     * One info line when a request was failed
+     * @private
+     */
+    private _nodeWentDown(): void {
+        const queue = (this._pool as any)?._connectionQueue;
+        if (!queue) return;
+        const failed = this._failQueue(
+            queue, () => this._nodeDownError(), callback => this._borrow.isCheck(callback)
+        );
+        if (!failed) return;
+        Logger.info("Pool " + this.name + " went down: failed " + failed + " requests that " +
+            "waited for a connection in host " + this.host,
+            { nodeId: this.id, pool: this.name, failed });
+    }
+
+    /**
+     * The error of a request that waited for a connection of this node when it went down: a
+     * new object for each request. No statement was sent. The package's own, so passive health
+     * and a check never count it
+     * @private
+     */
+    private _nodeDownError(): Error {
+        const error = new Error("The node " + this.host + ":" + this.port +
+            " went down while the request waited for a connection");
+        return Object.assign(PoolStatus.ownError(error), {
+            code: 'MDC_NODE_DOWN', sent: false, nodeId: this.id
+        });
+    }
+
+    /**
+     * Fail the requests that wait in the queue of mysql2, each with what errorFor() returns.
+     * A request that `spared` names keeps its place in the queue
+     * @param queue the queue of the mysql2 pool, with the callbacks of the waiting requests,
+     * called as (error, connection)
+     * @returns how many requests were failed
+     * @private
+     */
+    private _failQueue(
+        queue: any, errorFor: () => Error, spared: (callback: unknown) => boolean = () => false
+    ): number {
         // taken out first: a callback that asks again waits in the queue, it is not failed here
         const waiting: ((error: Error) => void)[] = [];
-        while (queue.length > 0) waiting.push(queue.shift());
+        for (let left = queue.length; left > 0; left--) {
+            const callback = queue.shift();
+            if (spared(callback)) queue.push(callback);
+            else waiting.push(callback);
+        }
         waiting.forEach(callback => {
             try {
-                callback(error);
+                callback(errorFor());
             } catch (thrown) {
                 // the requests behind it are already out of the queue and must still be failed
                 Logger.error("A request that waited in pool by host " + this.host +
                     " threw while it was failed: " + (thrown?.message || thrown));
             }
         });
-        Logger.info("Pool " + this.name + ": failed " + waiting.length + " requests that " +
-            "waited for a connection in host " + this.host,
-            { nodeId: this.id, pool: this.name, failed: waiting.length });
         return waiting.length;
     }
 

@@ -35,7 +35,8 @@ export interface ITakeOptions {
     // the statement the connection is for. Without it the connection is handed out as it is
     target?: IStatementTarget,
     // false for the health check of a node without a block only, which must draw the
-    // connections of the app as they are
+    // connections of the app as they are. A node that goes down leaves its request in the
+    // queue of mysql2, see isCheck()
     probe?: boolean
 }
 
@@ -64,6 +65,8 @@ export class Borrow {
     private readonly _watching = new WeakMap<object, (warning: any) => void>();
     // the mysql2 pools whose queue could not be searched, each reported once
     private readonly _unsearchable = new WeakSet<object>();
+    // the callbacks of the requests of the status queries of the legacy check, see isCheck()
+    private readonly _checks = new WeakSet<object>();
 
     /**
      * @param _probeIdle time in ms a connection may be idle before it is probed
@@ -102,7 +105,7 @@ export class Borrow {
             const asked = performance.now();
             let connection: PoolConnection;
             try {
-                connection = await this._request(signal, outcome);
+                connection = await this._request(signal, outcome, !probe);
             } finally {
                 // until the connection came, the request failed or the signal aborted
                 timing.queuedMs = (timing.queuedMs ?? 0) + performance.now() - asked;
@@ -196,13 +199,25 @@ export class Borrow {
     }
 
     /**
+     * Whether a callback in the queue of mysql2 is the request of a status query of the legacy
+     * check: a node that goes down leaves it there, see Pool. Not when mysql2 queued a wrapper
+     * of it, as it does while its pool is traced
+     * @param callback an entry of the queue
+     */
+    public isCheck(callback: unknown): boolean {
+        return typeof callback === 'function' && this._checks.has(callback);
+    }
+
+    /**
      * One request to mysql2, the queue and the abort while it waits there. With a signal the
      * wait ends when the signal aborts: the request leaves the queue of mysql2, and a
      * connection that still arrives for it goes back to the pool
+     * @param check the request is the one of a status query of the legacy check, the only
+     * call that takes no probe, see isCheck()
      * @private
      */
     private _request(
-        signal: AbortSignal | undefined, outcome: IAbortOutcome
+        signal: AbortSignal | undefined, outcome: IAbortOutcome, check: boolean
     ): Promise<PoolConnection> {
         return new Promise((resolve, reject) => {
             if (signal?.aborted) {
@@ -228,6 +243,7 @@ export class Borrow {
                 }
                 resolve(connection);
             };
+            if (check) this._checks.add(callback);
             const stopListening = whenAborted(signal, () => {
                 aborted = true;
                 outcome.aborted = true;

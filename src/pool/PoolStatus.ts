@@ -22,6 +22,8 @@ import { HealthCheckResult } from "../types/MetricsInterfaces";
 // why passive health took a node down, as the log names it
 type PassiveReason = 'passive_connect' | 'passive_lost' | 'passive_timeout'
     | 'passive_unreachable';
+// what moved a node, see _setValid()
+type StateReason = 'fall' | 'refusal' | 'validator' | 'first_pass' | 'rise' | PassiveReason;
 
 export class PoolStatus {
     public active: boolean;
@@ -111,14 +113,19 @@ export class PoolStatus {
     // queries of the app count too, see realFailure(). Without it the node keeps the legacy
     // check
     private readonly _healthCheck?: IHealthCheck;
+    // called when the node goes from valid to down
+    private readonly _wentDown?: () => void;
 
     /**
      * @param pool pool of what status to check
      * @param settings pool settings
      * @param active default pool active status before status check
+     * @param wentDown called when the node goes from valid to down, after the line that says
+     * so: the pool fails the requests that wait for one of its connections
      */
-    constructor(pool: Pool, settings: IUserPoolSettings, active: boolean) {
+    constructor(pool: Pool, settings: IUserPoolSettings, active: boolean, wentDown?: () => void) {
         this._pool = pool;
+        this._wentDown = wentDown;
 
         this.active = active;
 
@@ -367,7 +374,8 @@ export class PoolStatus {
     private _askNode(asked: { drop?: () => void }): Promise<GlobalStatusResult[]> {
         if (this._healthCheck) return this._askOnCheckConnection(asked);
         const options = { redis: false, timeout: this._checkTimeout };
-        // never probed: the check draws a connection of the app as it is, as before 4.0.0
+        // never probed: the check draws a connection of the app as it is, as before 4.0.0. A
+        // node that goes down while it waits for that connection does not fail it, see Borrow
         const answer = this._pool.query(`SHOW GLOBAL STATUS;`, options, {}, { probe: false });
         return answer as Promise<GlobalStatusResult[]>;
     }
@@ -415,7 +423,9 @@ export class PoolStatus {
     /**
      * Set the state of the node. With a healthCheck block a change of the state is logged,
      * one line each: a warn when the node goes down, an info when it comes back. A check
-     * that leaves the node as it was logs nothing here, and neither does the legacy check
+     * that leaves the node as it was logs nothing here, and neither does the legacy check.
+     * A node that goes from valid to down fails the requests that wait for one of its
+     * connections, in either mode, after that line
      * @param valid the state after this check
      * @param reason what moved the node: `fall` failed checks in a row, a login or account
      * the server refused, a validator that said no, the first pass since connect() or
@@ -424,14 +434,19 @@ export class PoolStatus {
      * route for. Never a check that found no route itself: it goes down by `fall`
      * @private
      */
-    private _setValid(
-        valid: boolean,
-        reason: 'fall' | 'refusal' | 'validator' | 'first_pass' | 'rise' | PassiveReason
-    ) {
+    private _setValid(valid: boolean, reason: StateReason) {
         const changed = valid !== this._isValid;
         this._isValid = valid;
-        if (!changed || !this._healthCheck) return;
+        if (!changed) return;
+        if (this._healthCheck) this._logState(valid, reason);
+        if (!valid) this._wentDown?.();
+    }
 
+    /**
+     * The line of a node with a healthCheck block whose state changed, see _setValid()
+     * @private
+     */
+    private _logState(valid: boolean, reason: StateReason) {
         const pool = "Pool " + this._pool.name;
         const meta = { pool: this._pool.name, valid, reason };
         if (reason === 'fall') {
