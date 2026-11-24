@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.1.1-rc.2 (2026-11-24)
+
+### Changed
+
+- **The refusals of `query()` and `execute()` before any node carry `sent: false`.** These are the `TypeError`s of the options and of the `execute()` values, `MDC_QUOTED_PLACEHOLDER`, `MDC_UNSAFE_COMMENT_VALUE` and `MDC_NO_NODE_AVAILABLE`, so a caller can tell that the statement never went out without knowing each code. The reason of an aborted signal and an error the app's own values throw stay as they are. The errors of `getConnection()` carry no `sent`.
+
 ## 4.1.1-rc.1 (2026-11-24)
 
 ### Fixed
