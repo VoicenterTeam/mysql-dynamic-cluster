@@ -678,6 +678,7 @@ export class GaleraCluster {
                 Logger.debug(`Query skips pool ${pool.name}: it is no longer valid`);
                 continue;
             }
+            if (tried > 0) Logger.debug("Retrying query...");
             tried++;
             // the pool says in it whether the statement went to the node
             const outcome: IQueryOutcome = {};
@@ -704,9 +705,6 @@ export class GaleraCluster {
                 // a statement that may have run on this node must not run on another one, and
                 // no node gets it once the signal aborted
                 if (!mayTryNextNode(e, outcome, queryOptions)) break;
-                if (tried < retryCount) {
-                    Logger.debug("Retrying query...");
-                }
                 continue;
             }
             // outside the try: what the bookkeeping throws is no failure of the node
