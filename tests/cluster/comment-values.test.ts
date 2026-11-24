@@ -54,10 +54,7 @@ beforeEach(() => jest.clearAllMocks());
 
 describe('a value that adds /* or */ to a statement with a skipped comment is refused', () => {
     it.each([
-        // the inputs of the review: a comment nested in a skipped one, and a /* that opens one
-        ['a */ after a comment nested in /*!99999 */',
-            'SELECT 2 AS a /*!99999 /* note */ , ? AS b */', [CLOSE]],
-        ['the same with a :name', 'SELECT 2 AS a /*!99999 /* note */ , :v AS b */', { v: CLOSE }],
+        // the inputs of the review: a /* value that opens a comment in a skipped one
         ['a /* in /*!99999 */, then a */ outside it',
             'SELECT 1 AS a /*!99999 ? */ FROM t WHERE name = ?', ['/*', CLOSE]],
         ['the same with :name', 'SELECT 1 AS a /*!99999 :x */ FROM t WHERE name = :y',
@@ -78,11 +75,7 @@ describe('a value that adds /* or */ to a statement with a skipped comment is re
         ['the key of a plain object after SET', 'UPDATE t /*+ BKA(t) */ SET ?', [{ '*/x': 1 }]],
         // a */ made of the value and the text around it
         ['a raw value next to the text', 'SELECT 1 /*+ ?/ */', [raw('*')]],
-        // MariaDB's versioned comment, also with a comment nested in it
-        ['a */ after a comment nested in /*M!999999 */',
-            'SELECT 2 AS a /*M!999999 /* note */ , ? AS b */', [CLOSE]],
-        ['the same with a :name', 'SELECT 2 AS a /*M!999999 /* note */ , :v AS b */',
-            { v: CLOSE }],
+        // MariaDB's versioned comment
         ['a */ after /*M!999999 */', 'SELECT 1 AS a /*M!999999 x */ FROM t WHERE name = ?',
             [CLOSE]],
         // a value that writes the version
@@ -154,6 +147,35 @@ describe('a value written where a skipped comment reads differently is refused',
         ['a -- in a hint', 'SELECT /*+ BKA(t) -- x */ 1 /*+\n ? */', [CLOSE]],
         ['a # in a hint', 'SELECT /*+ BKA(t) # x */ 1 /*+\n ? */', [CLOSE]],
         ['a -- in a hint, a value with no */', 'SELECT /*+ BKA(t) -- x */ 1\n, ?', [1]],
+        // a /* in a skipped comment opens a nested one: the comment ends at a later */
+        ['a */ after a comment nested in /*!99999 */',
+            'SELECT 2 AS a /*!99999 /* note */ , ? AS b */', [CLOSE]],
+        ['the same with a :name', 'SELECT 2 AS a /*!99999 /* note */ , :v AS b */', { v: CLOSE }],
+        ['a */ after a comment nested in /*M!999999 */',
+            'SELECT 2 AS a /*M!999999 /* note */ , ? AS b */', [CLOSE]],
+        ['the same with a :name', 'SELECT 2 AS a /*M!999999 /* note */ , :v AS b */',
+            { v: CLOSE }],
+        ['a comment nested in /*!99999 */, a value with no */',
+            'SELECT 2 AS a /*!99999 /* n */ , ? AS b */', [1]],
+        ['/*!99999 */ nested in /*!99999 */',
+            'SELECT 2 AS a /*!99999 /*!99999 n */ , ? AS b */', [1]],
+        ['a comment nested in a hint', 'SELECT /*+ BKA(t) /* x */ 1, ?', [1]],
+        ['/*/ in /*!99999 */', 'SELECT ? AS a /*!99999 /*/ x */ */', [1]],
+        // the /* in a string of the comment, the */ that ends it in a string of the app after it
+        ['a /* in a string in /*!99999 */',
+            "SELECT 'x' /*!99999 '/*' */ AS a, 'y */' AS b, ? AS c", [' , 2 AS INJ -- ']],
+        ['the same with a :name', "SELECT 'x' /*!99999 '/*' */ AS a, 'y */' AS b, :v AS c",
+            { v: ' , 2 AS INJ -- ' }],
+        ['the same with the */ in backticks, a value with a backtick',
+            "SELECT 'x' /*!99999 '/*' */ AS a, 1 AS `y */`, ? AS c", ['` , 2 AS INJ -- ']],
+        ['a /* in a string in /*M!999999 */',
+            "SELECT 'x' /*M!999999 '/*' */ AS a, 'y */' AS b, ? AS c", [' , 2 AS INJ -- ']],
+        ['the same with a :name', "SELECT 'x' /*M!999999 '/*' */ AS a, 'y */' AS b, :v AS c",
+            { v: ' , 2 AS INJ -- ' }],
+        // MariaDB runs a bare /*M! as code, sql-escaper reads it as a comment
+        ['a quote in a bare /*M!', "SELECT /*M! 'a */ , ? AS b, ' */ 'c'", [' , 2 AS INJ, ']],
+        // an opener inside a string with no */ after it
+        ['/*+ inside a LIKE pattern', "SELECT * FROM t WHERE a LIKE '%/*+%' AND id = ?", [1]],
         // the text is searched as it is: a /*+ inside a string counts too
         ['/*+ inside a string', "SELECT '/*+', ?", [CLOSE]]
     ])('%s', async (_where, sql, values) => {
@@ -186,8 +208,8 @@ describe('a value written where a skipped comment reads differently is refused',
         ['an apostrophe in /*!99999 */ closed in it',
             "SELECT 1 /*!99999 'it''s' */ AS a FROM t WHERE id = ?", [1],
             "SELECT 1 /*!99999 'it''s' */ AS a FROM t WHERE id = 1"],
-        ['a /* comment that ends with the hint', 'SELECT /*+ BKA(t) /* x */ 1, ?', [1],
-            'SELECT /*+ BKA(t) /* x */ 1, 1'],
+        ['a bare /*M! with balanced quotes', "SELECT /*M! 'a' */ 1, ?", [1],
+            "SELECT /*M! 'a' */ 1, 1"],
         ['a quote after the end of the hint', "SELECT /*+ BKA(t) */ 'x', ?", [1],
             "SELECT /*+ BKA(t) */ 'x', 1"]
     ])('%s is written', async (_where, sql, values, expected) => {

@@ -5,9 +5,9 @@ import { cleanUp, describeRig, logger, readEnv } from './support';
 
 // The contract test of #134 on the three-node Galera rig (tests/rig/galera.sh), MySQL 8.0.42.
 // Skipped unless MDC_TEST_GALERA is set. A server that reads /*+ */ or /*!NNNNN */ as a plain
-// comment ends it at a */ inside the quotes of a value, and a skipped /*!NNNNN */ nests a /* of a
-// value in it: the rest of the value runs as SQL. A value can write the version of /*! too. The
-// raw text is the one query() would send, written by sql-escaper's format()
+// comment ends it at a */ inside the quotes of a value, and a skipped /*!NNNNN */ nests a /* in
+// it, of a value or of the app: the rest of the value runs as SQL. A value can write the version
+// of /*! too. The raw text is the one query() would send, written by sql-escaper's format()
 
 // the statement with a ? for each value, and values that add a column named injected
 const CASES: [string, string, (string | number)[]][] = [
@@ -22,7 +22,11 @@ const CASES: [string, string, (string | number)[]][] = [
         ['/*', '*/ , 1 AS injected -- ']],
     // the version written by a value
     ['the version of /*! from a value', 'SELECT 2 AS a /*!? , ? AS b */',
-        [99999, '*/ , 1 AS injected -- ']]
+        [99999, '*/ , 1 AS injected -- ']],
+    // a /* in a string of /*!99999 */ opens a nested comment, a */ in a string of the app ends
+    // the comment: no /* or */ in the value
+    ['a /* in a string in /*!99999 */',
+        "SELECT 'x' /*!99999 '/*' */ AS a, 'y */' AS b, ? AS c", [' , 2 AS injected -- ']]
 ];
 
 // the same statement with :v0, :v1 ... and an object of the values
