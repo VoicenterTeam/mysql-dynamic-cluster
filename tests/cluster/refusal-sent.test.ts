@@ -44,7 +44,11 @@ describe('a refusal before any node has sent: false', () => {
         ['execute values that are not an array', (c: GaleraCluster) =>
             c.query('SELECT ?', { a: 1 } as any, { execute: true }), TypeError],
         ['execute values with undefined', (c: GaleraCluster) =>
-            c.query('SELECT ?', [undefined], { execute: true }), TypeError]
+            c.query('SELECT ?', [undefined], { execute: true }), TypeError],
+        ['execute values with a function', (c: GaleraCluster) =>
+            c.query('SELECT ?', [() => 1], { execute: true }), TypeError],
+        ['execute values that are a sparse array', (c: GaleraCluster) =>
+            c.query('SELECT ?, ?', [1, , 3] as any, { execute: true }), TypeError]
     ])('%s', async (_name, call, type) => {
         const { cluster, poolQuery } = makeCluster();
 
@@ -120,6 +124,15 @@ describe('errors that get no sent', () => {
         const error = await fail(cluster.query('SELECT ?', [{ toSqlString: () => { throw own; } }]));
 
         expect(error).toBe(own);
+        expect(Object.prototype.hasOwnProperty.call(error, 'sent')).toBe(false);
+    });
+
+    it('a TypeError of getConnection() has no sent', async () => {
+        const { cluster } = makeCluster();
+
+        const error = await fail(cluster.getConnection({ exclude: 'x' } as any));
+
+        expect(error).toBeInstanceOf(TypeError);
         expect(Object.prototype.hasOwnProperty.call(error, 'sent')).toBe(false);
     });
 
