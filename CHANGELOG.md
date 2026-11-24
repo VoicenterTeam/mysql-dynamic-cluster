@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.2.0-rc.3 (2026-11-24)
+
+### Changed
+
+- **Each cluster has its own logger and its own metrics `clusterName`** (#86).
+  - Each cluster logs through the `logger` and `logs.level` of its own settings, in every part of it: the cluster, its pools, health checks, validators, load factors, borrows, sessions, check connections, cluster hashing and service names.
+  - Each cluster stamps its own `clusterName` on every metric it records, including the connection metrics and node gauges read at collection.
+  - A second `createPoolCluster` in the same process no longer changes the first cluster's logger, level or metrics name.
+  - Still shared: the event emitter, the Redis client with its key prefix (any cluster's `disconnect()` disconnects it), `config.current`, and the module logger. The shared parts log through the module logger, which gets the settings of the last `createPoolCluster`. See `docs/architecture.md#singletons`.
+  - Calling `Logger.init` or `Metrics.init` directly after `createPoolCluster` now changes only those shared parts.
+  - A one-cluster app sees the same log lines and metric points as before. Exports, settings, event payloads, and metric names and attributes are unchanged.
+
 ## 4.2.0-rc.2 (2026-11-24)
 
 ### Fixed
