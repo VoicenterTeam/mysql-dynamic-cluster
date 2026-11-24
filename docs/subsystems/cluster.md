@@ -655,15 +655,17 @@ It is called synchronously, from inside the code that enters the step:
 
 | `step` | Called |
 | --- | --- |
-| `queue` | as the attempt asks its pool for a connection: in `Pool.query`, right before the borrow |
+| `queue` | as the attempt asks its pool for a connection: in `Pool.query` right before the borrow, and in the borrow at each request to mysql2, the one after a failed probe too |
 | `probe` | as the borrow starts the probe of an idle connection |
 | `prepare` | as the borrow starts the reset, the `USE` or the `DO 0` before the statement. Every attempt that got its connection enters it, also one whose connection needs none of them |
 | `statement` | right after mysql2's `query()` or `execute()` returned: the statement was handed to the connection and counts as sent. When mysql2 throws there, it is not called |
 
 It is called only when the step or the node differs from its last call in
-the same call. The borrow asks mysql2 again after a failed probe without a
-new `queue`, so several probes in a row are one `probe`. A new attempt on
-another node is `queue` with the new node. A call on a fresh connection
+the same call. After a failed probe the borrow asks mysql2 again: `queue`
+again, then `probe` if the next connection is probed. A new attempt on
+another node is `queue` with the new node. So when the call settles, the
+last step and node `onStep` gave are the ones `onTiming` reports. A call
+on a fresh connection
 gets `queue`, `prepare`, `statement`; one that probes an idle connection
 gets `queue`, `probe`, `prepare`, `statement`.
 
@@ -698,7 +700,6 @@ How it differs from `onTiming`:
 | Called | once, as the call settles | as each attempt enters a step, while the call runs |
 | Gets | the step the last attempt ended in, the time queued, the node | the step and the node |
 | `statement` | set right before the send, set back when mysql2 throws | called right after mysql2 took the statement |
-| A request after a failed probe | `queue` until the next probe | stays `probe` |
 
 Used together, `onTiming` is called once with the same values as without
 `onStep`.
