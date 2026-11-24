@@ -525,7 +525,11 @@ Borrow.ts, `{ signal?, target?, probe? }`, internal and in no public type;
 its `step` to `queue`, `probe` or `prepare` as it goes, and adds the
 wait of each request to mysql2 to its `queuedMs`, measured with the
 monotonic `performance.now()` of `perf_hooks`. See
-[cluster.md](./cluster.md#the-ontiming-option):
+[cluster.md](./cluster.md#the-ontiming-option). For a query with `onStep`
+it also holds `enter`, which `take()` calls as it enters `probe` and
+`prepare`, not as it asks mysql2 again after a failed probe. The pool
+calls it with `queue` right before `take()` and with `statement` right
+after the send, see [cluster.md](./cluster.md#the-onstep-option):
 
 1. **One request to mysql2** (`_request`), which waits in its queue while
    the pool is at its limit. An abort there takes the request out of the

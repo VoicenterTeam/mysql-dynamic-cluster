@@ -1160,6 +1160,11 @@ Used in each [query](#query)
             <td>function</td>
         </tr>
         <tr>
+            <td>onStep</td>
+            <td>Called while the query runs, each time an attempt enters a step, with <code>(step, nodeId)</code>: <code>queue</code> as it asks its pool for a connection, <code>probe</code>, <code>prepare</code>, and <code>statement</code> right after the statement was handed to the connection, so it counts as sent. Called synchronously and only when the step or the node changed, so an app that calls <code>abort()</code> knows the step at that moment. Not called for a Redis hit, a query refused before any node, or after the query settled. A throw in it, or the rejection of a promise it returns, is logged once and changes nothing. <code>null</code> counts as none. <code>query</code> and <code>execute</code> only</td>
+            <td>function</td>
+        </tr>
+        <tr>
             <td>redis</td>
             <td>Use redis for current query or not</td>
             <td>boolean</td>

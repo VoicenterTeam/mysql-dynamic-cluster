@@ -200,6 +200,8 @@ Signature:
 - `onTiming` gets no default. `null` counts as none, as `undefined` does.
   It is checked right after `timeout`, before the values: see
   [The `onTiming` option](#the-ontiming-option).
+- `onStep` gets no default. `null` counts as none. It is checked right
+  after `onTiming`: see [The `onStep` option](#the-onstep-option).
 
 ### 2. Metrics
 
@@ -577,7 +579,9 @@ block passes no signal, and its connection gets no probe. `multiStatementQuery()
 ### The `onTiming` option
 
 Since 4.1.0 (#122). `onTiming` tells a caller where the time of a call
-went: waiting for a connection, or on the node. It gets one object,
+went: waiting for a connection, or on the node, once the call settled. For
+the step while the call runs, see [The `onStep` option](#the-onstep-option).
+It gets one object,
 `IQueryTiming` of [src/types/PoolInterfaces.ts](../../src/types/PoolInterfaces.ts).
 The package exports `IQueryTiming` and `QueryStep` as types:
 
@@ -638,6 +642,66 @@ a failed query.
 
 `execute()` takes it as `query()` does. `multiStatementQuery()` and
 `getConnection()` do not take it.
+
+### The `onStep` option
+
+Since 4.2.0 (#140). `onStep(step, nodeId)` tells a caller the step a call
+is in while it runs, with the node of the attempt. A caller that calls
+`abort()` knows at that moment whether the statement may have been sent:
+`onTiming` only comes after the call settled, a few milliseconds after
+`abort()` returned. `step` is a `QueryStep`.
+
+It is called synchronously, from inside the code that enters the step:
+
+| `step` | Called |
+| --- | --- |
+| `queue` | as the attempt asks its pool for a connection: in `Pool.query`, right before the borrow |
+| `probe` | as the borrow starts the probe of an idle connection |
+| `prepare` | as the borrow starts the reset, the `USE` or the `DO 0` before the statement. Every attempt that got its connection enters it, also one whose connection needs none of them |
+| `statement` | right after mysql2's `query()` or `execute()` returned: the statement was handed to the connection and counts as sent. When mysql2 throws there, it is not called |
+
+It is called only when the step or the node differs from its last call in
+the same call. The borrow asks mysql2 again after a failed probe without a
+new `queue`, so several probes in a row are one `probe`. A new attempt on
+another node is `queue` with the new node. A call on a fresh connection
+gets `queue`, `prepare`, `statement`; one that probes an idle connection
+gets `queue`, `probe`, `prepare`, `statement`.
+
+It is not called for a Redis hit, for a call refused before any node, or
+after the call settled. `execute()` and `query()` with `execute: true`
+take it. `multiStatementQuery()` and `getConnection()` do not.
+
+An `abort()` of the signal from inside `onStep` is an abort at that
+moment: the call rejects with the reason as it is, and `onStep` is not
+called again. At `queue` the borrow ends before its request reaches
+mysql2, so no connection is taken. At `probe` and `prepare` the borrow
+destroys the connection, at `statement` the pool does, as for any abort
+there.
+
+A throw in `onStep` is caught and logged at `warn` once per call, with the
+node: `onStep of a query threw or rejected, the call keeps its result: ...`.
+So is the rejection of a promise it returns. Neither changes the call: no
+property goes on its error or on the reason of the signal. `null` counts
+as no `onStep`. Any other value that is not a function rejects with the
+`TypeError` `query: options.onStep must be a function` and `sent: false`,
+before any node, recorded as a failed query.
+
+A call without the option gets nothing made for it. For a call with it,
+`_stepTeller` keeps the last step and node and catches what `onStep`
+throws, and each attempt puts a function `enter` on its `IAttemptTiming`,
+which the pool and the borrow call as `timing.enter?.(step)`.
+
+How it differs from `onTiming`:
+
+| | `onTiming` | `onStep` |
+| --- | --- | --- |
+| Called | once, as the call settles | as each attempt enters a step, while the call runs |
+| Gets | the step the last attempt ended in, the time queued, the node | the step and the node |
+| `statement` | set right before the send, set back when mysql2 throws | called right after mysql2 took the statement |
+| A request after a failed probe | `queue` until the next probe | stays `probe` |
+
+Used together, `onTiming` is called once with the same values as without
+`onStep`.
 
 ### `execute()` and bound values
 
