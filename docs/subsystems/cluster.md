@@ -387,9 +387,15 @@ Runs before any pool query when `queryOptions.redis && !queryOptions.redisRefres
 
 The `for` loop.
 
-For `i` from `0` to `retryCount - 1`, calls
-`this._queryRequest(sql, activePools[i], queryOptions, outcome, { values, valuesInText, timing })`,
-with a new empty `outcome` and `timing` for each node. First success records the query with
+Walks `activePools` until `retryCount` nodes were tried, and calls
+`this._queryRequest(sql, pool, queryOptions, outcome, { values, valuesInText, timing })`,
+with a new empty `outcome` and `timing` for each node. The list was taken when the
+call started, so since 4.2.0-rc.2 (#151) every attempt after the first skips a node whose
+status is not valid when the attempt would start: it is not asked, has no step and no
+metric record, and gets one `debug` line. A skipped node is not a try, so it does not
+count toward `maxRetry` or `errorRetryCount`. When no node is left, the call rejects with
+the error of the last node tried, as before (not `MDC_NO_NODE_AVAILABLE`), and the stale
+Redis fallback works as before. The first attempt and the retry rule below are unchanged. First success records the query with
 source `pool` and returns. Each failure is kept as `{ nodeId, error }` in
 `errors`. The loop goes on to the next pool only when the statement cannot
 have run on the one that failed, so one call never writes twice.

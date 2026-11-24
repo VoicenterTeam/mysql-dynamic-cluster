@@ -34,6 +34,7 @@ tests/
     execute.test.ts              # execute() and the execute option on loopback: prepare, bound values, NO_BACKSLASH_ESCAPES
     host-ids.test.ts             # Host ids: which id each host gets, with and without an id in the settings
     query-pool-order.test.ts     # The order query() tries its pools in: load score, the pool of the service first
+    retry-skip.test.ts           # A retry skips a node that is no longer valid (#151), over fake pools: not asked, no step, a debug line, not a try for maxRetry, the last error when none is left, stale Redis, execute: true
     query-error.test.ts          # What a failed query() rejects with, real mysql2 on loopback: the mysql2 error, nodeId, errors, MDC_NO_NODE_AVAILABLE
     query-error-edges.test.ts    # The same over fake pools: one error from two nodes, a frozen error, a non-object, the stale cache
     query-error-log.test.ts      # The log line of a failed attempt (#106): one per node tried; an error whose message, errors, code or errno cannot be read, a Proxy that throws included, does not change what the call rejects with

@@ -1407,8 +1407,9 @@ see the measurement in [Passive health](#passive-health).
   `disconnect()`. mysql2 fails the queue of a pool it closes with
   `Pool is closed.`
 - A request that comes after the node went down waits in the queue again.
-  So does the retry of a call that took its list of nodes before the node
-  went down: within a call the cluster does not look at `isValid` again.
+  The retry of a call that took its list of nodes before the node went down
+  does not: since 4.2.0-rc.2 a retry skips a node that is not valid when its
+  turn comes (#151), see [the retry loop](cluster.md#8-retry-loop).
 - A second `connect()` without `disconnect()` makes a new mysql2 pool. A
   node that goes down after that fails the queue of the new pool only. The
   requests in the queue of the old one stay there, as with `failWaiting()`.
