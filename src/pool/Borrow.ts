@@ -95,9 +95,9 @@ export class Borrow {
         // A pool with no limit, connectionLimit 0, has a limited number of idle connections
         const most = this._pool.connectionLimit ? this._pool.connectionLimit + 1 : Infinity;
         for (let tries = 1; ; tries++) {
-            // Not told to onStep: the pool told it 'queue' as the attempt began, and a request
-            // after a failed probe stays 'probe' to it, so probes in a row are one 'probe'
             timing.step = 'queue';
+            // also after a failed probe: onStep follows the step onTiming reports
+            timing.enter?.('queue');
             // a monotonic clock: a change of the time of the system does not count
             const asked = performance.now();
             let connection: PoolConnection;

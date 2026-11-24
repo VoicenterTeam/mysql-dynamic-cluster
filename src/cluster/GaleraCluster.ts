@@ -788,10 +788,11 @@ export class GaleraCluster {
     }
 
     /**
-     * What the attempts of a query call as they enter a step, for its onStep option: onStep
-     * is called when the step or the node differs from what it was told last, so probes in a
-     * row are one 'probe'. It never throws: what onStep throws, and the rejection of a promise
-     * it returns, is logged once per call and changes nothing of the call
+     * What the attempts of a query call as they set the step onTiming reports, for its onStep
+     * option: onStep is called when the step or the node differs from what it was told last,
+     * so its last call gives the step and the node onTiming reports. It never throws: what
+     * onStep throws, and the rejection of a promise it returns, is logged once per call and
+     * changes nothing of the call
      * @param onStep the option of the query
      * @private
      */
