@@ -329,17 +329,20 @@ more than put a quoted value in place of each `?` (#121):
   a plain one: a `*/` inside a value ends it, and a skipped `/*!NNNNN */` can take a `/*` of
   a value as the start of a nested comment. Keep values out of comments. Since 4.1.1
   `query()` rejects with `MDC_UNSAFE_COMMENT_VALUE` before any node is asked, with one metric
-  record, in two cases (`_hidesComment()`, #134). The text of the app is searched as it is,
-  also inside strings, for `/*+`, and for `/*!` or MariaDB's `/*M!` followed by a digit, or by
-  a `?` or a `:`, whose value can write the version.
-  - The text holds one and the values add a `/*` or a `*/` to it: either count is higher in
-    the formatted text than in the text of the app. Where the value stands does not matter:
-    text of the app inside a hint, such as a `-- ` or a `#`, can hide from sql-escaper where
-    the comment ends.
-  - Such a comment, from its start to the first `*/` after it or to the end of the text,
-    holds a `'`, a `"` or a backtick, and the values changed the text at all. sql-escaper
-    reads the quote and the server skips it, so a value can stand inside a string for one
-    and outside it for the other, with no `/*` or `*/` in it.
+  record, in two cases (`_unsafeComment()`, #134), each with its own message. The text of the
+  app is searched as it is, also inside strings, for `/*+`, and for `/*!` or MariaDB's `/*M!`
+  followed by a digit, or by a `?` or a `:`, whose value can write the version. The server
+  ends such a comment at the first `*/` after it, or the end of the text.
+  - First: the values changed the text, and a string, identifier or comment that sql-escaper
+    reads as opening inside such a comment, its opener being code, ends after the server's
+    end of it, or never ends. sql-escaper and the server then read the rest of the text
+    differently, so a value can stand inside a string for one and outside it for the other,
+    with no `/*` or `*/` in it. A quote left open, a `-- ` or a `#` in a hint does that. The message
+    points to `execute()`. Balanced quotes, such as `SET_VAR(sql_mode = 'ANSI')` or
+    ``BKA(`t`)``, end inside the comment and are fine.
+  - Then: the text holds such a comment and the values add a `/*` or a `*/` to it: either
+    count is higher in the formatted text than in the text of the app, wherever the value
+    stands.
 
   MySQL 8.0.42 ended such a comment inside the value in every position of `/*+ */` and in
   `/*!99999 */`. It runs `/*! */` and `/*!80000 */` as code and keeps the quotes of the value
