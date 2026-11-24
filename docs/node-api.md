@@ -108,9 +108,10 @@ async function connectionOfAnyNode(cluster) {
 ### It waits without limit
 
 When the node already has `connectionLimit` connections and all are in use, the request waits
-in the queue of mysql2 until a connection is released. Nothing ends that wait by itself. The
-cluster sets no timeout and the package sets no queue limit. `getPoolStats()` shows such a
-request as `pending`.
+in the queue of mysql2 until a connection is released. While the node is up nothing ends that
+wait by itself. The cluster sets no timeout and the package sets no queue limit.
+`getPoolStats()` shows such a request as `pending`. When the node goes down the request fails
+with `MDC_NODE_DOWN`, since 4.2.0, see [Errors](#errors).
 
 A [`signal`](#give-up-the-wait-with-a-signal) ends the wait of one call and takes its
 request out of the queue. That is the way to put a time limit on the call.
@@ -248,6 +249,7 @@ releases the connection at once and the next waiter gets it. No connection is lo
 | `Error` with `code: 'MDC_NO_NODE_AVAILABLE'` | No node is left: none is valid, or every valid node is in `exclude`. This is also the answer before `connect()`. |
 | The error of mysql2, with `nodeId` added | The node gave no connection. It is the same object mysql2 made, so `code`, `errno` and `fatal` are as mysql2 set them. Examples: a refused login, a node that went down after its last check, `Pool is closed.` after `disconnect()`. Also the error of the last [probe](#the-probe-on-the-way-out) when `connectionLimit + 1` connections in a row failed theirs, `Probe timeout` with `code: 'PROTOCOL_SEQUENCE_TIMEOUT'` for one that got no answer. |
 | The error passed to `failWaiting()`, with `nodeId` added | The request waited and `failWaiting()` failed it. |
+| `Error` with `code: 'MDC_NODE_DOWN'`, `sent: false` and `nodeId` | The request waited in the queue of the node, and the node went down. The message names the host and the port: `The node <host>:<port> went down while the request waited for a connection`. Each call gets an error of its own. Since 4.2.0, see [subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#a-node-that-goes-down-fails-the-requests-that-wait). |
 | The reason of the `signal`, as it is, with no `nodeId` | The signal was aborted before the call, or it aborted while the call waited. See [The reason](#the-reason). |
 | `TypeError` | `exclude` is given and is not an array of numbers. No node is asked. |
 | `TypeError` with the message `getConnection: options.signal must be an AbortSignal` | `signal` is given and is not a signal. No node is asked. See [What counts as a signal](#what-counts-as-a-signal). |
@@ -265,9 +267,9 @@ call picks another node. The rejection itself is the same. A connect timeout, `E
 and a missing route, `EHOSTUNREACH` or `ENETUNREACH`, leave the node valid and start a
 health check at once, which takes the node out when it fails. A check that finds no route
 itself counts toward `fall` and takes no node out alone. A refused login does neither,
-nor does a name that does not resolve, an error passed to `failWaiting()` or the abort of a
-signal. A connection the node refuses after the signal ended the call still takes the node
-down. The package does not see what happens on a
+nor does a name that does not resolve, an error passed to `failWaiting()`, `MDC_NODE_DOWN` or
+the abort of a signal. A connection the node refuses after the signal ended the call still
+takes the node down. The package does not see what happens on a
 connection after it handed it to you. See
 [passive health](subsystems/health-and-scoring.md#passive-health).
 
@@ -711,6 +713,12 @@ What it touches and what it does not:
   again while it is being failed is not failed in the same call.
 - It logs one `info` line with the host of the node and how many requests it failed, also
   when none waited, since 4.1.1. The meta has `nodeId`, `pool` and `failed`.
+
+Since 4.2.0 the package does the same by itself when a node goes down: each waiting request
+fails with an `MDC_NODE_DOWN` error of its own, and the status query of a legacy check that
+waits keeps its place, see
+[subsystems/health-and-scoring.md](subsystems/health-and-scoring.md#a-node-that-goes-down-fails-the-requests-that-wait).
+`failWaiting()` does what it did before.
 
 It returns `0` for a node id that does not exist and for a node whose pool is not created
 yet. It throws a `TypeError` when `error` is not an `Error`. A waiting request that is called

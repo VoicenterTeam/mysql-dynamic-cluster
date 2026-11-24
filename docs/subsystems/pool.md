@@ -273,7 +273,8 @@ on the [check connection](#the-check-connection). For a node without the
 block it does run through `query()`, as before 4.0.0, and passive health does
 nothing for such a node. It passes `{ probe: false }`, the `IPoolCall`
 that is the last parameter of `query()`, which no other caller sets: the check draws a connection of the
-app as it is, with no probe, no retry and no signal.
+app as it is, with no probe, no retry and no signal. Since 4.2.0 a node that goes down leaves the
+request of that check in the queue of mysql2, see `_nodeWentDown()` below.
 
 `multiStatementQuery()` tells every failure the same way, and a `ROLLBACK`
 that failed as an error on a connection. `getConnection()` tells an error
@@ -535,7 +536,10 @@ it also holds `enter`, which `take()` calls each time it sets the step,
    the pool is at its limit. An abort there takes the request out of the
    queue, see [A signal on getConnection](#a-signal-on-getconnection). An
    error of mysql2 is told to passive health as one that came in place of
-   a connection.
+   a connection. A take with `probe: false`, the status query of the
+   legacy check, puts the callback of its request in a `WeakSet`:
+   `isCheck(callback)` names it, and a node that goes down leaves it in the
+   queue, since 4.2.0.
 2. **The probe** (`_probe`), when the connection was idle longer than
    `probeIdle` (1000 ms by default), or when a ping of the reaper is still
    out on it, idle or not. How long it was idle comes from the
@@ -902,6 +906,15 @@ not move. `GaleraCluster` calls them for the node API of
   Since 4.1.1 it logs one `info` line with the host and how many it
   failed, also when none waited, with the meta `nodeId`, `pool` and
   `failed`. Before the mysql2 pool exists it logs nothing.
+- `_nodeWentDown()`, private, since 4.2.0 (#98). `PoolStatus` calls it
+  when the node goes from valid to down, through the function the
+  constructor hands it. It fails the queue as `failWaiting()` does, with
+  the same `_failQueue()`, but each request with an error of its own from
+  `_nodeDownError()`: `code: 'MDC_NODE_DOWN'`, `sent: false`, `nodeId`.
+  A callback `Borrow.isCheck()` names goes back into the queue in its
+  place. One `info` line when it failed a request, with the meta
+  `nodeId`, `pool` and `failed`. See
+  [health-and-scoring.md](health-and-scoring.md#a-node-that-goes-down-fails-the-requests-that-wait).
 - `stats()` returns `{ used, idle, pending }` from mysql2's own lists:
   `_allConnections.length - _freeConnections.length`,
   `_freeConnections.length` and `_connectionQueue.length`. All zeros before
@@ -999,9 +1012,9 @@ an error ended the call.
 
 The errors `Pool` makes with a code of its own are marked with
 `PoolStatus.ownError()`, so a health check that fails with one reports an
-empty `checkError`: the `POOL_NOT_CONNECTED` error of `_notConnected()` and
+empty `checkError`: the `POOL_NOT_CONNECTED` error of `_notConnected()`,
 the `PROTOCOL_SEQUENCE_TIMEOUT` error of the time limit of a reset in
-`SessionState`.
+`SessionState` and the `MDC_NODE_DOWN` error of `_nodeDownError()`.
 `failWaiting(error)` marks the error of the app the same way. The mark
 changes nothing on the error object, and `query()`, `getConnection()` and
 the waiting requests reject with it as before.

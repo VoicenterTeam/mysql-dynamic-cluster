@@ -37,6 +37,7 @@ the cluster is created.
 | A refused login | A failed check like any other | Down at once and a slower next check, see [A login or account refusal](#a-login-or-account-refusal) |
 | A connection error of a query of the app | Changes nothing. Only a check moves the node | With `passive: true`, the default: a connection the node refuses takes the node down at once. One that was lost, was not there within the connect timeout or that no route led to starts a check at once, and that check decides. See [Passive health](#passive-health) |
 | Back | With one check that passes | With `rise` passes in a row, or with the first pass since `connect()` |
+| Requests that wait for a connection when the node goes down | Each fails with `MDC_NODE_DOWN`, but the status query of a check that waits there. Since 4.2.0, see [A node that goes down fails the requests that wait](#a-node-that-goes-down-fails-the-requests-that-wait) | Each fails with `MDC_NODE_DOWN`. Since 4.2.0 |
 | Over `disconnect()` and a new `connect()` | The count of failed checks and the wait are kept | Both runs start again |
 | A check that throws after its answer came | The node is already set to what the validators said | A failed check. A pass it held does not count, a no does |
 | `timerCheckRange` and `timerCheckMultiplier` | Used | Ignored. One `warn` per node when the app wrote one of them |
@@ -505,8 +506,8 @@ An error counts when all four hold:
 - It has no `errno` of a server. Node gives an error of a socket a negative
   `errno`, and a server sends a positive one.
 - Neither the package nor the app made it. The timeout around the change of
-  database, `POOL_NOT_CONNECTED` and an error passed to `failWaiting()` are
-  marked with `PoolStatus.ownError()` and never count.
+  database, `POOL_NOT_CONNECTED`, `MDC_NODE_DOWN` and an error passed to
+  `failWaiting()` are marked with `PoolStatus.ownError()` and never count.
 
 | Kind | `code` | What happened |
 | --- | --- | --- |
@@ -1084,10 +1085,19 @@ The queries wait in the queue of mysql2 at the node behind that path.
 Every query that was sent to the node in the 15 s before it went down
 needs a connection there, the pool opens `connectionLimit` of them at a
 time, and each attempt takes the 10 s of the connect timeout before the
-query moves to the other node. That goes on after the node is down. The
-package sets no limit on that wait, see
-[../node-api.md](../node-api.md#it-waits-without-limit), and
-`failWaiting()` is there for an app that will not wait.
+query moves to the other node. Before 4.2.0 that went on after the node
+was down. Since 4.2.0 the node fails the queries in its queue when it goes
+down, and they move to the other node at that moment, see
+[A node that goes down fails the requests that wait](#a-node-that-goes-down-fails-the-requests-that-wait).
+Only the `connectionLimit` logins that are out then still run into their
+connect timeout.
+
+The table above was measured before 4.2.0, and the probe has not run
+since. [tests/cluster/passive-health-loopback.test.ts](../../tests/cluster/passive-health-loopback.test.ts)
+runs it scaled down: a login of 300 ms, a check of 200 ms, two connections
+per pool and twelve queries at once. Without the change the last query was
+answered 1.3 s after the node went down, in 1 run. The test asks for less
+than 450 ms: the one login of 300 ms that was out then, and some slack.
 
 **The pool of a node with the block is in the state of the first column
 from `connect()` until its first query.** It holds no connection then.
@@ -1139,7 +1149,7 @@ after any pass, and the next failed check is the first of `fall`.
 | `HANDSHAKE_NO_SSL_SUPPORT`, `HANDSHAKE_SSL_ERROR`, `AUTH_SWITCH_PLUGIN_ERROR`, `PROTOCOL_ERROR` | `fatal` in mysql2, but about the settings of the connection or one packet. A check that runs into the same error counts it toward `fall` |
 | `Can't add new command when connection is in closed state` | `fatal`, with no code. The connection was closed on this side |
 | `Pool is closed.`, `Queue limit reached.`, `No connections available.` | The pool of mysql2 said no, not the node |
-| `POOL_NOT_CONNECTED`, the time limit of the package around a reset (`resetTimeout`), an error passed to `failWaiting()` | The package or the app made it, whatever `code` and `fatal` it carries |
+| `POOL_NOT_CONNECTED`, the time limit of the package around a reset (`resetTimeout`), `MDC_NODE_DOWN`, an error passed to `failWaiting()` | The package or the app made it, whatever `code` and `fatal` it carries |
 | The abort of a `getConnection()` | The app gave the call up, whatever the reason of the signal reads like. A connection that then cannot be opened still counts, as the attempt was made |
 | An error on a connection the app took with `getConnection()` | The app owns that connection. The package does not see what it runs into |
 
@@ -1346,6 +1356,56 @@ servers, with
 [`rise`](https://docs.haproxy.org/3.2/configuration.html#5.2-rise). There
 too the interval is the timeout of a check unless one is set. HAProxy
 defaults to 2000 ms, 3 and 2, the block to 5000 ms, 2 and 2.
+
+## A node that goes down fails the requests that wait
+
+Since 4.2.0 (#98). When a node goes from valid to down, its pool fails
+every request that waits in the queue of mysql2 for one of its
+connections, as `failWaiting()` does, with no call of the app. Every way
+down does it, in both modes: `fall` failed checks, a refused login,
+passive health, a validator that says no, and the legacy check. Before,
+such a request waited for a login of its own at the node that was down,
+see the measurement in [Passive health](#passive-health).
+
+- Each request gets an `Error` of its own, with `code: 'MDC_NODE_DOWN'`,
+  `sent: false`, `nodeId` and the message `The node <host>:<port> went
+  down while the request waited for a connection`.
+- `query()` and `execute()` try the next node, since the statement was
+  not sent, see [cluster.md](cluster.md#8-retry-loop). When no try is left
+  the call rejects with that error, with `nodeId` and `errors` as for any
+  other. `getConnection()` rejects with it and tries no other node, see
+  [../node-api.md](../node-api.md#errors).
+- Only the queue is failed. A call that holds a connection goes on, in its
+  probe, its reset, its `USE` or its statement, and so does a connection
+  the app took with `getConnection()`. A login that is still running ends
+  as it would have.
+- The status query of the legacy check that waits in the queue keeps its
+  place. It is not failed, so the check counts no failure for it. `Borrow`
+  knows that request by its callback, see `isCheck()`. While a subscriber
+  listens on the tracing channel `mysql2:pool:connect` of mysql2, the queue
+  holds a wrapper of the callback instead. The package cannot tell the
+  request of the check then: it fails it too, and the check counts a
+  failure with an empty `checkError`. A check with a `healthCheck` block
+  asks on its own connection and never waits in the queue.
+- The error is the package's own, marked with `PoolStatus.ownError()`.
+  Passive health does not count it, and it starts no check.
+- One `info` line when a request was failed, after the line of the node
+  that went down: `Pool <name> went down: failed <n> requests that waited
+  for a connection in host <host>`, with the meta `nodeId`, `pool` and
+  `failed`. No line when no request waited. `failWaiting()` keeps its own
+  line.
+- A node that is down and fails again does nothing more, and neither does
+  `disconnect()`. mysql2 fails the queue of a pool it closes with
+  `Pool is closed.`
+- A request that comes after the node went down waits in the queue again.
+
+`PoolStatus._setValid()` calls the function `Pool` hands its constructor
+when the node goes from valid to down. `Pool._nodeWentDown()` fails the
+queue with the code of `failWaiting()`, `_failQueue()`. The tests are
+[tests/pool/node-down-queue.test.ts](../../tests/pool/node-down-queue.test.ts),
+[tests/cluster/node-down-queue.test.ts](../../tests/cluster/node-down-queue.test.ts)
+and the last test of
+[tests/cluster/passive-health-loopback.test.ts](../../tests/cluster/passive-health-loopback.test.ts).
 
 ## `PoolStatus` state
 
@@ -1554,11 +1614,11 @@ value is an empty object in these cases:
 
 - The check ran into its own timer. That error has no code.
 - The error was marked with `PoolStatus.ownError(error)`. `Pool` marks the
-  errors it makes with a code of its own, `POOL_NOT_CONNECTED` and the
-  `PROTOCOL_SEQUENCE_TIMEOUT` of the time limit of a reset (`resetTimeout`),
-  and the error the app passes to `failWaiting()`. The mark is kept in a
-  `WeakSet`, so the error object is not changed and still has its code for
-  every other caller.
+  errors it makes with a code of its own, `POOL_NOT_CONNECTED`, the
+  `PROTOCOL_SEQUENCE_TIMEOUT` of the time limit of a reset (`resetTimeout`)
+  and `MDC_NODE_DOWN`, and the error the app passes to `failWaiting()`. The
+  mark is kept in a `WeakSet`, so the error object is not changed and still
+  has its code for every other caller.
 - The error was thrown after the answer came, by the code that reads the
   answer. Only what the status query is rejected with is reduced.
 - The error is not an object, or reading one of the three fields throws.

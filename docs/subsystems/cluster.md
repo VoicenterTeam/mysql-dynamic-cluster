@@ -399,7 +399,9 @@ have run on the one that failed, so one call never writes twice.
 and nothing else does. `Pool.query` fills `outcome.sent`: `false` from the
 start of the call, `true` once it hands the statement to the connection. It
 stays `false` when the borrow of the connection failed: there is no mysql2
-pool, mysql2 gave no connection, every connection failed its probe, or the
+pool, mysql2 gave no connection, the node went down while the request
+waited in its queue (`MDC_NODE_DOWN`, since 4.2.0), every connection
+failed its probe, or the
 session could not be got ready, as a reset of a dirty connection or a
 `USE` of another database that failed or timed out. See
 [pool.md](pool.md#borrow-taking-and-giving-back-a-connection). Since 4.0.0
@@ -437,14 +439,19 @@ took the node down ends the borrow with `sent: false`. With the block's
 default check `timeout` of 5 s that is after about 6 to 7 probes. A node
 on the legacy check, the default without a block, has no passive
 health: only the check of its timer can take it down, so a query there
-pays about the whole worst case. Only the `signal` option bounds the
-whole call.
+pays about the whole worst case. A query that waits in the queue of the
+node, behind the logins of `connectionLimit` new connections, moves on
+when the node goes down, since 4.2.0 (#98): the node fails it with
+`MDC_NODE_DOWN`. Before, it waited for a login of its own after them,
+see [health-and-scoring.md](health-and-scoring.md#a-node-that-goes-down-fails-the-requests-that-wait).
+Only the `signal` option bounds the whole call.
 
 | The node failed with | Next node |
 | --- | --- |
 | errno 1045, 1698, 1044, 3118, 3955 or 1130, a refused login | no, although `sent` is `false` |
 | `MDC_UNSAFE_SQL_MODE`, values in the text under `NO_BACKSLASH_ESCAPES` | no, although `sent` is `false` |
 | `MDC_PACKETS_OUT_OF_ORDER`, a reply whose packets came with a wrong sequence number (#94) | no: a defect of the client or the server, which another node would meet again |
+| `MDC_NODE_DOWN`, the node went down while the request waited for a connection (#98) | yes: `sent` is `false`. The attempt ends in the step `queue`, and the next node starts with `queue` |
 | any other error with `sent: false` | yes |
 | errno 1047, not ready, with `sent: true` | yes, unless `retryNotReady: false` |
 | an error reply, a timeout, a connection lost after the statement went out | no |
@@ -502,8 +509,10 @@ A frozen error, or a rejection that is no object, cannot take `nodeId`
 or `errors` and is thrown without them. An error that already has an
 `errors` array of its own keeps it and gets no list: Node's
 `AggregateError`, when every address of a host name refused, holds the
-error of each address there. An error that the app handed `failWaiting()`
-is one object that many queries can meet. An entry that would lead back
+error of each address there. `MDC_NODE_DOWN` is a new object for each
+request, so its `nodeId` and `errors` are those of its own call. An error
+that the app handed `failWaiting()` is one object that many queries can
+meet. An entry that would lead back
 to it, itself or through the list an earlier query set, is left out, so
 the errors never form a cycle and `JSON.stringify` works on them. An
 error whose `errors` cannot be read, through a getter or a Proxy that
@@ -663,7 +672,9 @@ It is called synchronously, from inside the code that enters the step:
 It is called only when the step or the node differs from its last call in
 the same call. After a failed probe the borrow asks mysql2 again: `queue`
 again, then `probe` if the next connection is probed. A new attempt on
-another node is `queue` with the new node. So when the call settles, the
+another node is `queue` with the new node. So is the attempt after one
+whose node went down while it waited in the queue, `MDC_NODE_DOWN`: that
+attempt ends in `queue`. So when the call settles, the
 last step and node `onStep` gave are the ones `onTiming` reports. A call
 on a fresh connection gets `queue`, `prepare`, `statement`; one that
 probes an idle connection gets `queue`, `probe`, `prepare`, `statement`.
