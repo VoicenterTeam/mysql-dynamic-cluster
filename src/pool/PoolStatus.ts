@@ -162,7 +162,7 @@ export class PoolStatus {
             this._warnIgnoredKeys(settings);
         }
         this._timer = new Timer(this.checkStatus.bind(this));
-        Logger.debug("Pool status configured");
+        this._logger.debug("Pool status configured");
     }
 
     /**
@@ -188,7 +188,7 @@ export class PoolStatus {
             this._decides = undefined;
         }
         this._timer.activate();
-        Logger.debug("Check status in pool started");
+        this._logger.debug("Check status in pool started");
     }
 
     /**
@@ -200,13 +200,13 @@ export class PoolStatus {
     private _warnIgnoredKeys(settings: IUserPoolSettings) {
         const ignored = Settings.ignoredCheckKeys(settings);
         if (!ignored.length) return;
-        Logger.warn("Pool " + this._pool.name + ": the settings hold a healthCheck block for " +
+        this._logger.warn("Pool " + this._pool.name + ": the settings hold a healthCheck block for " +
             "this node, so " + ignored.join(" and ") + (ignored.length > 1 ? " are" : " is") +
             " ignored", { pool: this._pool.name, ignored });
     }
 
-    private static _logDropped(host: string): void {
-        Logger.debug("Dropped the result of a status check that outlived its connection in host: " + host);
+    private static _logDropped(host: string, logger: ILogger): void {
+        logger.debug("Dropped the result of a status check that outlived its connection in host: " + host);
     }
 
     /**
@@ -217,7 +217,7 @@ export class PoolStatus {
         this._checkRun++;
         this._checksOut = 0;
         this._timer.dispose();
-        Logger.info("Check status in pool stopped");
+        this._logger.info("Check status in pool stopped");
     }
 
     /**
@@ -244,7 +244,7 @@ export class PoolStatus {
             out = true;
             if (this._holdOff > 0) this._holdOff--;
 
-            Logger.debug("checking pool status in host: " + this._pool.host);
+            this._logger.debug("checking pool status in host: " + this._pool.host);
             queryTimer.start();
 
             // One timer for the whole check. For the legacy check that includes waiting
@@ -284,7 +284,7 @@ export class PoolStatus {
                 clearTimeout(checkTimer);
                 clearImmediate(grace);
             }
-            if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host);
+            if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host, this._logger);
 
             // the query ran: the error of an earlier check is over, whatever the validator says
             this._checkError = undefined;
@@ -302,14 +302,14 @@ export class PoolStatus {
             if (!this._healthCheck || !passed) this._setValid(passed, 'validator');
             if (this._healthCheck) {
                 // what this check found, which is not always the state of the node
-                Logger.debug("Did the validators accept the status of host " + this._pool.host +
+                this._logger.debug("Did the validators accept the status of host " + this._pool.host +
                     "? -> " + passed.toString(), { pool: this._pool.name, passed });
             } else {
                 // the line as it was before 4.0.0: there the state is what the validators said
-                Logger.debug("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())
+                this._logger.debug("Is status ok in host " + this._pool.host + "? -> " + this._isValid.toString())
             }
             this._loadScore = this._loadFactor.check(result);
-            Logger.debug("Load score by checking status in host " + this._pool.host + " is " + this._loadScore);
+            this._logger.debug("Load score by checking status in host " + this._pool.host + " is " + this._loadScore);
             this._failedChecks = 0;
             // the node answered: what a call of the app ran into before says nothing any more
             this._decides = undefined;
@@ -326,12 +326,12 @@ export class PoolStatus {
             // until the `rise`th pass
             this._recordCheck(passed ? 'valid' : 'invalid');
         } catch (err) {
-            if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host);
+            if (run !== this._checkRun) return PoolStatus._logDropped(this._pool.host, this._logger);
             // an error thrown after the answer came is one of the package's own code
             this._checkError = asking ? PoolStatus._reduce(err) : {};
             // the caller gets an object of its own
             Object.assign(outcome, { recorded: true, checkError: { ...this._checkError } });
-            Logger.error("Something wrong while checking status in host: " + this._pool.host +
+            this._logger.error("Something wrong while checking status in host: " + this._pool.host +
                 ".\n Message: " + PoolStatus._errorText(err));
             this._passedChecks = 0;
             // With a healthCheck block a refused login takes the node down with this one
@@ -424,7 +424,7 @@ export class PoolStatus {
             const code = PoolStatus._reduce(error).code;
             const lost = held && PoolStatus._lostCodes.has(code) && run === this._checkRun;
             if (!lost) throw error;
-            Logger.debug("Pool " + this._pool.name + ": the connection of the check was " +
+            this._logger.debug("Pool " + this._pool.name + ": the connection of the check was " +
                 "lost, the check opens a new one and asks again",
                 { pool: this._pool.name, code });
             // the lost one is dropped by now: such an error is fatal for mysql2
@@ -457,7 +457,7 @@ export class PoolStatus {
         try {
             this._wentDown();
         } catch (thrown) {
-            Logger.error("Pool " + this._pool.name + ": failing the requests that waited for " +
+            this._logger.error("Pool " + this._pool.name + ": failing the requests that waited for " +
                 "a connection threw: " + PoolStatus._errorText(thrown));
         }
     }
@@ -470,35 +470,35 @@ export class PoolStatus {
         const pool = "Pool " + this._pool.name;
         const meta = { pool: this._pool.name, valid, reason };
         if (reason === 'fall') {
-            Logger.warn(pool + " went down: " + this._fall +
+            this._logger.warn(pool + " went down: " + this._fall +
                 (this._fall > 1 ? " failed checks in a row" : " failed check"), meta);
         } else if (reason === 'refusal') {
             // the errno says which refusal it was, retryIn how many ms the next check is
             // away. The message of the server stays out
-            Logger.warn(pool + " went down: the server refused the login of its check", {
+            this._logger.warn(pool + " went down: the server refused the login of its check", {
                 ...meta, errno: this._checkError.errno,
                 retryIn: this._healthCheck.authRetryInterval
             });
         } else if (reason === 'validator') {
-            Logger.warn(pool + " went down: a validator said no", meta);
+            this._logger.warn(pool + " went down: a validator said no", meta);
         } else if (reason === 'passive_connect') {
             // the code says which connection error it was. Its message stays out
-            Logger.warn(pool + " went down: the app could not open a connection to it",
+            this._logger.warn(pool + " went down: the app could not open a connection to it",
                 { ...meta, code: this._passiveCode });
         } else if (reason === 'passive_lost') {
-            Logger.warn(pool + " went down: the app lost a connection to it and the check " +
+            this._logger.warn(pool + " went down: the app lost a connection to it and the check " +
                 "after that failed", { ...meta, code: this._passiveCode });
         } else if (reason === 'passive_timeout') {
-            Logger.warn(pool + " went down: the app got no connection to it in time and " +
+            this._logger.warn(pool + " went down: the app got no connection to it in time and " +
                 "the check after that failed", { ...meta, code: this._passiveCode });
         } else if (reason === 'passive_unreachable') {
-            Logger.warn(pool + " went down: the app found no route to it and the check " +
+            this._logger.warn(pool + " went down: the app found no route to it and the check " +
                 "after that failed", { ...meta, code: this._passiveCode });
         } else if (reason === 'first_pass') {
-            Logger.info(pool + " is up: its first check since connect() passed", meta);
+            this._logger.info(pool + " is up: its first check since connect() passed", meta);
         } else {
             const rise = this._healthCheck.rise;
-            Logger.info(pool + " is back up: " + rise +
+            this._logger.info(pool + " is back up: " + rise +
                 (rise > 1 ? " checks passed in a row" : " check passed"), meta);
         }
     }
@@ -655,7 +655,7 @@ export class PoolStatus {
         if (this._checksOut > 0 || this._holdOff > 0) return;
         // the check this starts, and the next one of the timer
         this._holdOff = 2;
-        Logger.debug("Pool " + this._pool.name + ": the app " + PoolStatus._ranInto[kind] +
+        this._logger.debug("Pool " + this._pool.name + ": the app " + PoolStatus._ranInto[kind] +
             ", the next check starts now", { pool: this._pool.name, passive: kind, code });
         // In place of the pending check. It does nothing once stopTimerCheck() ran
         this._timer.start(0);
@@ -692,7 +692,7 @@ export class PoolStatus {
      * @private
      */
     private _logUndecided() {
-        Logger.warn("Pool " + this._pool.name + ": the check after a failed call of the " +
+        this._logger.warn("Pool " + this._pool.name + ": the check after a failed call of the " +
             "app found no route to the node. That is no proof the node is gone, so the " +
             "check counts toward fall as any failed check", {
             pool: this._pool.name, passive: this._decides, code: this._passiveCode,
@@ -765,7 +765,7 @@ export class PoolStatus {
         try {
             Events.emit('pool_check_failed', err, this._pool.id);
         } catch (listenerError) {
-            Logger.error("A pool_check_failed listener threw in host: " + this._pool.host +
+            this._logger.error("A pool_check_failed listener threw in host: " + this._pool.host +
                 ".\n Message: " + PoolStatus._errorText(listenerError, true));
         }
     }

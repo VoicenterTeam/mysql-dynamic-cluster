@@ -51,10 +51,10 @@ export class Validator {
             }
 
             if (value === undefined) {
-                Logger.error("Validator key " + validator.key + " isn't in the global status, validator fails");
+                this._logger.error("Validator key " + validator.key + " isn't in the global status, validator fails");
                 return;
             }
-            if (Validator.checkValueIsValid(value, validator)) validateCount++;
+            if (Validator.checkValueIsValid(value, validator, this._logger)) validateCount++;
         })
 
         return validateCount === this._validators.length;
@@ -64,9 +64,12 @@ export class Validator {
      * Check if value from db is valid with value from validator parameters
      * @param value value from result of db global status
      * @param validator validator parameters to check value
+     * @param logger the logger of the cluster of the pool
      * @private
      */
-    private static checkValueIsValid(value: string, validator: IValidatorParams): boolean {
+    private static checkValueIsValid(
+        value: string, validator: IValidatorParams, logger: ILogger
+    ): boolean {
         if (isNaN(+value)) {
             // check values if value from db is string
             const val = value as string;
@@ -81,7 +84,7 @@ export class Validator {
                     return true;
                 }
             } else {
-                Logger.error('Operator ' + validator.operator + ' doesn\'t support for another type except number')
+                logger.error('Operator ' + validator.operator + ' doesn\'t support for another type except number')
             }
         } else {
             // check values if value from db is number
@@ -89,7 +92,7 @@ export class Validator {
             const validatorVal = +validator.value as number;
 
             if (isNaN(validatorVal)) {
-                Logger.error('Validator value isn\'t a type number like value from database. Check if you write correct data');
+                logger.error('Validator value isn\'t a type number like value from database. Check if you write correct data');
                 return false;
             }
 

@@ -275,7 +275,7 @@ export class Borrow {
                 try {
                     this._leaveQueue(mysqlPool, callback);
                 } catch (thrown) {
-                    Logger.warn("Pool " + this._pool.name + ": could not take an aborted " +
+                    this._logger.warn("Pool " + this._pool.name + ": could not take an aborted " +
                         "request out of the queue, its connection is released when it arrives",
                         { nodeId: this._pool.id, pool: this._pool.name,
                             error: thrown?.message || thrown });
@@ -406,7 +406,7 @@ export class Borrow {
         try {
             this.drop(connection);
         } catch (thrown) {
-            Logger.warn("Pool " + this._pool.name + ": could not destroy a connection",
+            this._logger.warn("Pool " + this._pool.name + ": could not destroy a connection",
                 { nodeId: this._pool.id, pool: this._pool.name, error: thrown?.message || thrown });
         }
     }
@@ -460,7 +460,7 @@ export class Borrow {
         try {
             this.giveBack(connection);
         } catch (thrown) {
-            Logger.warn("Pool " + this._pool.name + ": the release of a connection that " +
+            this._logger.warn("Pool " + this._pool.name + ": the release of a connection that " +
                 "arrived for an aborted request threw",
                 { nodeId: this._pool.id, pool: this._pool.name, error: thrown?.message || thrown });
         }
@@ -481,7 +481,7 @@ export class Borrow {
         if (typeof queue?.get !== 'function' || typeof queue.removeOne !== 'function') {
             if (this._unsearchable.has(mysqlPool)) return;
             this._unsearchable.add(mysqlPool);
-            Logger.warn("Pool " + this._pool.name + ": the queue of this mysql2 cannot be " +
+            this._logger.warn("Pool " + this._pool.name + ": the queue of this mysql2 cannot be " +
                 "searched. An aborted request stays in it and its connection is released on " +
                 "its turn", { nodeId: this._pool.id, pool: this._pool.name });
             return;

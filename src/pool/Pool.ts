@@ -116,7 +116,7 @@ export class Pool {
         this.host = settings.host;
         this.port = settings.port;
         this.name = settings.name ? settings.name : `${this.host}:${this.port}`
-        Logger.debug(`Configure pool named ${this.name} ${this.host}:${this.port}`);
+        this._logger.debug(`Configure pool named ${this.name} ${this.host}:${this.port}`);
 
         this._user = settings.user;
         this._password = settings.password;
@@ -154,7 +154,7 @@ export class Pool {
         }, this._session, this._reaper, settings.probeIdle ?? 1000, settings.probeTimeout ?? 1000,
             this._logger);
 
-        Logger.info("configuration pool finished in host: " + this.host);
+        this._logger.info("configuration pool finished in host: " + this.host);
     }
 
     /**
@@ -169,7 +169,7 @@ export class Pool {
         }
 
         const flagsMeta = flags === undefined ? undefined : { flags };
-        Logger.debug("Creating pool in host: " + this.host, flagsMeta);
+        this._logger.debug("Creating pool in host: " + this.host, flagsMeta);
         // left out when unset, so mysql2 keeps its default flags. mysql2 takes a string too
         const flagsOption = flags === undefined ? {} : { flags: flags as string[] };
         this._pool = mysql.createPool({
@@ -198,7 +198,7 @@ export class Pool {
             // A disconnect() or a later connect() came during the check: this connect()
             // tells nothing, so no pool_connected comes after a pool_disconnected
             if (attempt !== this._connectAttempt) return;
-            Logger.info('Pool is connected');
+            this._logger.info('Pool is connected');
             this._emitToApp('pool_connected', this.id);
         } else {
             throw new Error("pool in host " + this.host + " is not valid");
@@ -252,14 +252,14 @@ export class Pool {
         const pool = "Pool " + this.name + ": ";
 
         if (!greeting) {
-            Logger.warn(pool + "could not read the server version, connecting with " + decision.flags, meta);
+            this._logger.warn(pool + "could not read the server version, connecting with " + decision.flags, meta);
         } else if (decision.reason === 'version_unreadable') {
-            Logger.warn(pool + "server version is not readable, connecting with " + decision.flags, meta);
+            this._logger.warn(pool + "server version is not readable, connecting with " + decision.flags, meta);
         } else if (decision.flags) {
-            Logger.info(pool + "server " + greeting.serverVersion + " needs " + decision.flags +
+            this._logger.info(pool + "server " + greeting.serverVersion + " needs " + decision.flags +
                 ", set flags in the settings to override", meta);
         } else {
-            Logger.debug(pool + "server " + greeting.serverVersion + " keeps the default flags of mysql2", meta);
+            this._logger.debug(pool + "server " + greeting.serverVersion + " keeps the default flags of mysql2", meta);
         }
         return decision.flags;
     }
@@ -281,19 +281,19 @@ export class Pool {
      */
     private _connectEvents() {
         this._pool.on("connection", (connection) => {
-            Logger.debug("Open connection");
+            this._logger.debug("Open connection");
             this._emitToApp('connection', connection, this.id);
         })
 
         this._pool.on("release", (connection) => {
             this._reaper.onRelease(connection);
-            Logger.debug("Connection closed");
+            this._logger.debug("Connection closed");
             this._emitToApp('release', connection, this.id);
         })
 
         this._pool.on('acquire', (connection) => {
             this._reaper.onAcquire(connection);
-            Logger.debug("Connection is acquire");
+            this._logger.debug("Connection is acquire");
             this._emitToApp('acquire', connection, this.id);
         })
     }
@@ -321,7 +321,7 @@ export class Pool {
                 // a revoked proxy, a message getter that throws
                 error = 'unreadable error';
             }
-            Logger.warn("Pool " + this.name + ": a listener of the " + event + " event threw",
+            this._logger.warn("Pool " + this.name + ": a listener of the " + event + " event threw",
                 { nodeId: this.id, pool: this.name, error });
         }
     }
@@ -330,7 +330,7 @@ export class Pool {
      * Close pool connection
      */
     public disconnect() {
-        Logger.debug("closing pool in host: " + this.host);
+        this._logger.debug("closing pool in host: " + this.host);
         // a connect() that still asks the server must not open a pool after this
         this._connectAttempt++;
         this._probe?.cancel();
@@ -339,7 +339,7 @@ export class Pool {
         this._check = undefined;
         this._pool?.end((error) => {
             if (error) {
-                Logger.error(error.message);
+                this._logger.error(error.message);
             }
         });
         this.status.active = false;
@@ -347,7 +347,7 @@ export class Pool {
         this._reaper.stop();
         this._emitToApp('pool_disconnected', this.id);
 
-        Logger.info("pool named " + this.name + " closed");
+        this._logger.info("pool named " + this.name + " closed");
     }
 
     /**
@@ -442,7 +442,7 @@ export class Pool {
                 try {
                     this._borrow.drop(held);
                 } catch (thrown) {
-                    Logger.warn("Pool " + this.name + ": could not destroy the connection of " +
+                    this._logger.warn("Pool " + this.name + ": could not destroy the connection of " +
                         "an aborted query", { nodeId: this.id, pool: this.name,
                         error: thrown?.message || thrown });
                 }
@@ -470,7 +470,7 @@ export class Pool {
                     return fail(Pool._unsafeSqlMode(), conn);
                 }
 
-                Logger.debug(`Query in pool by host ${this.host}`);
+                this._logger.debug(`Query in pool by host ${this.host}`);
                 // from here on the statement can run on the server, whatever comes back
                 const before = timing.step;
                 timing.step = 'statement';
@@ -488,7 +488,7 @@ export class Pool {
                         ...poolMetricOption, step: timing.step, waitSeconds: timing.queuedMs / 1000
                     });
                     if (queryTimer.get() >= this._slowQueryTime) {
-                        Logger.warn(`Query in pool named ${this.name} takes ` +
+                        this._logger.warn(`Query in pool named ${this.name} takes ` +
                             `${queryTimer.get()} sec`);
                     }
 
@@ -573,7 +573,7 @@ export class Pool {
                 if (rollback && !isBroken(error)) {
                     send(conn, 'ROLLBACK', (errorR, resultR) => {
                         if (errorR) {
-                            Logger.error("Rollback failed in pool by host " + this.host + ": " + errorR.message);
+                            this._logger.error("Rollback failed in pool by host " + this.host + ": " + errorR.message);
                             // the connection may have been lost under the rollback
                             this._status.realFailure(errorR, false);
                             this._borrow.giveBack(conn, true);
@@ -598,7 +598,7 @@ export class Pool {
                 // queries run one after another; commit only after the last one succeeded
                 const runQuery = (index: number) => {
                     if (index >= sqls.length) {
-                        Logger.debug("Commit transaction in pool by host " + this.host);
+                        this._logger.debug("Commit transaction in pool by host " + this.host);
                         send(conn, 'COMMIT', (errorC, resultC) => {
                             if (errorC) return fail(errorC, conn, true);
                             if (settled) return;
@@ -623,7 +623,7 @@ export class Pool {
                     });
                 }
 
-                Logger.debug("Start transaction in pool by host " + this.host);
+                this._logger.debug("Start transaction in pool by host " + this.host);
                 send(conn, 'START TRANSACTION', errorT => {
                     if (errorT) return fail(errorT, conn);
                     runQuery(0);
@@ -744,7 +744,7 @@ export class Pool {
         PoolStatus.ownError(error);
 
         const failed = this._failQueue(queue, () => error);
-        Logger.info("Pool " + this.name + ": failed " + failed + " requests that " +
+        this._logger.info("Pool " + this.name + ": failed " + failed + " requests that " +
             "waited for a connection in host " + this.host,
             { nodeId: this.id, pool: this.name, failed });
         return failed;
@@ -763,7 +763,7 @@ export class Pool {
         const queue = (this._pool as any)?._connectionQueue;
         if (!queue) return;
         if (typeof queue.shift !== 'function' || typeof queue.push !== 'function') {
-            Logger.warn("Pool " + this.name + " went down, but the queue of this mysql2 " +
+            this._logger.warn("Pool " + this.name + " went down, but the queue of this mysql2 " +
                 "cannot be read: the requests that wait for a connection stay in it",
                 { nodeId: this.id, pool: this.name });
             return;
@@ -772,7 +772,7 @@ export class Pool {
             queue, () => this._nodeDownError(), callback => this._borrow.isCheck(callback)
         );
         if (!failed) return;
-        Logger.info("Pool " + this.name + " went down: failed " + failed + " requests that " +
+        this._logger.info("Pool " + this.name + " went down: failed " + failed + " requests that " +
             "waited for a connection in host " + this.host,
             { nodeId: this.id, pool: this.name, failed });
     }
@@ -814,7 +814,7 @@ export class Pool {
                 callback(errorFor());
             } catch (thrown) {
                 // the requests behind it are already out of the queue and must still be failed
-                Logger.error("A request that waited in pool by host " + this.host +
+                this._logger.error("A request that waited in pool by host " + this.host +
                     " threw while it was failed: " + (thrown?.message || thrown));
             }
         });
@@ -956,7 +956,7 @@ export class Pool {
         return {
             timeout: block.timeout,
             // the code names the cause. A connection mysql2 dropped before has none
-            removed: error => Logger.debug(
+            removed: error => this._logger.debug(
                 "Pool " + this.name + ": an idle connection failed its ping and was closed",
                 { pool: this.name, idlePing: 'failed', code: error?.code }
             )

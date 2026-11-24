@@ -45,13 +45,13 @@ export class ClusterHashing {
         logger: ILogger = Logger
     ) {
         this._logger = logger;
-        Logger.debug("Configuring hashing in cluster...");
+        this._logger.debug("Configuring hashing in cluster...");
         this._cluster = cluster;
         this._nextCheckTime = options.nextCheckTime;
         this._database = `${clusterName}_${options.dbName}`;
 
         this._timer = new Timer(this._checkHashing.bind(this));
-        Logger.debug("Cluster hashing configured");
+        this._logger.debug("Cluster hashing configured");
     }
 
     /**
@@ -100,7 +100,7 @@ export class ClusterHashing {
             } else {
                 await this._upgradeInPlace();
             }
-            Logger.info(`Database ${this._database} created for hashing`);
+            this._logger.info(`Database ${this._database} created for hashing`);
 
             await this._insertNodes();
         } finally {
@@ -120,7 +120,7 @@ export class ClusterHashing {
         this._connecting = undefined;
         this._timer.dispose();
         this.connected = false;
-        Logger.info("Checking hashing in the cluster stopped");
+        this._logger.info("Checking hashing in the cluster stopped");
     }
 
     /**
@@ -138,7 +138,7 @@ export class ClusterHashing {
 
             this._serviceNodeMap.set(serviceId, nodeId);
         } catch (e) {
-            Logger.error(e.message);
+            this._logger.error(e.message);
         }
     }
 
@@ -164,7 +164,7 @@ export class ClusterHashing {
                 metadata: extraPath + '../../assets/sql/create_hashing_database/metadata/'
             }
 
-            Logger.debug(`Creating database ${this._database} and procedures for hashing...`);
+            this._logger.debug(`Creating database ${this._database} and procedures for hashing...`);
             await this._cluster.query(`CREATE SCHEMA IF NOT EXISTS \`${this._database}\` COLLATE utf8_general_ci;`, null, { maxRetry: 1, redis: false });
 
             const sqls: string[] = [];
@@ -213,12 +213,12 @@ export class ClusterHashing {
         const step = async (name: string, needed: () => Promise<boolean>, sqls: () => string[]) => {
             try {
                 if (!await needed()) return;
-                Logger.info(`Upgrading hashing schema ${this._database}: ${name}`);
+                this._logger.info(`Upgrading hashing schema ${this._database}: ${name}`);
                 for (const sql of sqls()) {
                     await this._cluster.query(sql, null, options);
                 }
             } catch (e) {
-                Logger.error(`Upgrading hashing schema ${this._database} (${name}) failed: ${e.message}`);
+                this._logger.error(`Upgrading hashing schema ${this._database} (${name}) failed: ${e.message}`);
             }
         };
         const routine = (name: string, kind: 'FUNCTION' | 'PROCEDURE') => {
@@ -280,7 +280,7 @@ export class ClusterHashing {
             const serverVersion: number = res[0]?.version;
             return serverVersion === this._databaseVersion;
         } catch (e) {
-            Logger.error(e.message);
+            this._logger.error(e.message);
             return false;
         }
     }
@@ -316,7 +316,7 @@ export class ClusterHashing {
                     redis: false
                 });
             } catch (e) {
-                Logger.error(e.message);
+                this._logger.error(e.message);
             }
         }
     }
@@ -329,7 +329,7 @@ export class ClusterHashing {
         try {
             if (!this._timer.active) return;
 
-            Logger.debug("checking async status in cluster");
+            this._logger.debug("checking async status in cluster");
             const result = await this._cluster.query(`SELECT FN_GetServiceNodeMapping() AS Result;`, null,
             {
                 maxRetry: 1,
@@ -348,7 +348,7 @@ export class ClusterHashing {
             this._nextCheckHashing()
         } catch (err) {
             if (run !== this._checkRun) return;
-            Logger.error("Something wrong while checking hashing status in cluster.\n Message: " + err.message);
+            this._logger.error("Something wrong while checking hashing status in cluster.\n Message: " + err.message);
             this.connected = false;
             this._nextCheckHashing()
         }

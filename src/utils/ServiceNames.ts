@@ -46,14 +46,14 @@ export default class ServiceNames {
             ) as ServiceNameResult[];
 
             if (res.length <= 0) {
-                Logger.error(`Didn't find service id by name ${serviceName}`);
+                this._logger.error(`Didn't find service id by name ${serviceName}`);
                 return undefined;
             }
 
             this._serviceIds.set(serviceName, res[0].Result);
             return this._serviceIds.get(serviceName);
         } catch (e) {
-            Logger.error(e);
+            this._logger.error(e);
             return undefined;
         }
     }

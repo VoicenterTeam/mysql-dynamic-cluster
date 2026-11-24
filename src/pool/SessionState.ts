@@ -288,7 +288,7 @@ export class SessionState {
         this._reset(connection, session, error => {
             if (!error) return putBack();
             const pool = this._poolName;
-            Logger.warn("Pool " + pool + ": the reset of a connection before its release " +
+            this._logger.warn("Pool " + pool + ": the reset of a connection before its release " +
                 "failed, the connection was closed", { pool, code: error?.code });
             gone();
         });

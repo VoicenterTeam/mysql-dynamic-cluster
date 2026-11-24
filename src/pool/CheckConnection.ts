@@ -111,9 +111,9 @@ export class CheckConnection {
             const handOff = "Pool " + this._name + ": a check asked on a new connection, as " +
                 "the node held no open one, and that one ";
             this._held?.ready.then(
-                () => Logger.debug(handOff + "logged in",
+                () => this._logger.debug(handOff + "logged in",
                     { pool: this._name, newConnection: 'logged_in' }),
-                (error: any) => Logger.debug(handOff + "failed",
+                (error: any) => this._logger.debug(handOff + "failed",
                     { pool: this._name, newConnection: 'failed', code: error?.code })
             );
             return answer;
@@ -135,7 +135,7 @@ export class CheckConnection {
             const old = this._kept;
             this._settle(keeps(error));
             const kept = !!old && this._held === old;
-            Logger.debug(pool + "failed. " + (!old ? closed
+            this._logger.debug(pool + "failed. " + (!old ? closed
                 : kept ? "The old one stays" : "The old one is logged out of as well"),
                 { pool: this._name, newConnection: 'failed', code: error?.code, kept });
             throw error;
@@ -143,7 +143,7 @@ export class CheckConnection {
         // the new one is the connection that is held now
         const old = this._kept;
         this._settle(false);
-        Logger.debug(pool + "logged in. " + (old ? "The old one is logged out of" : closed),
+        this._logger.debug(pool + "logged in. " + (old ? "The old one is logged out of" : closed),
             { pool: this._name, newConnection: 'logged_in' });
         return this.query<T>(sql, asked);
     }

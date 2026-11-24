@@ -106,7 +106,7 @@ export class GaleraCluster {
      */
     constructor(context?: IClusterContext) {
         this._context = context;
-        Logger.debug("Configuring cluster...");
+        this._logger.debug("Configuring cluster...");
 
         this._useClusterHashing = config.current.useClusterHashing
         this._clusterName = config.current.clusterName
@@ -147,10 +147,10 @@ export class GaleraCluster {
             const host = `Host ${poolSettings.host}:${poolSettings.port}`;
             const which = broken.length ? `, which ${broken.join(' and ')}` : '';
             if (wroteZero[index] && id !== 0) {
-                Logger.warn(`${host} has id 0, which counts as not set: the node got the id ${id}`
-                    + which);
+                this._logger.warn(`${host} has id 0, which counts as not set: the node got ` +
+                    `the id ${id}` + which);
             } else if (broken.length) {
-                Logger.warn(`${host} ${given[index] ? 'got' : 'uses'} the id ${id}${which}`);
+                this._logger.warn(`${host} ${given[index] ? 'got' : 'uses'} the id ${id}${which}`);
             }
         })
 
@@ -160,7 +160,7 @@ export class GaleraCluster {
             this, this._clusterName, hashingSettings, this._logger
         );
 
-        Logger.info("Cluster configuration finished");
+        this._logger.info("Cluster configuration finished");
     }
 
     /**
@@ -197,7 +197,7 @@ export class GaleraCluster {
         const generation = this._generation;
 
         const call = new Promise<void>((resolve, reject) => {
-            Logger.debug("Connecting all pools");
+            this._logger.debug("Connecting all pools");
             // settles this call with the connect of the cluster that another call started
             const withCluster = (connect: Promise<void>) => connect.then(
                 () => resolve(), err => reject(GaleraCluster._reasonText(err))
@@ -233,17 +233,17 @@ export class GaleraCluster {
                         if (generation !== this._generation) return;
 
                         Events.emit('connected');
-                        Logger.info('Cluster connected');
+                        this._logger.info('Cluster connected');
                     })();
                     await this._clusterConnect;
 
                     resolve();
                 }).catch(err => {
                     const reason = GaleraCluster._reasonText(err);
-                    Logger.error(reason);
+                    this._logger.error(reason);
                     reject(reason);
                 });
-                const result = GaleraCluster._readyResult(pool, connecting, outcome);
+                const result = GaleraCluster._readyResult(pool, connecting, outcome, this._logger);
                 result.then(ended => {
                     settled[index] = ended;
                     // only the first pass resolves it. filter leaves out the nodes not in yet
@@ -291,10 +291,11 @@ export class GaleraCluster {
      * @param pool the pool
      * @param connecting the connect() of the pool
      * @param outcome the object that connect() fills with how its own health check ended
+     * @param logger the logger of the cluster
      * @private
      */
     private static _readyResult(
-        pool: Pool, connecting: Promise<void>, outcome: CheckOutcome
+        pool: Pool, connecting: Promise<void>, outcome: CheckOutcome, logger: ILogger
     ): Promise<INodeReadyResult> {
         const nodeId = pool.id;
         // The outcome is read when the connect settled. A result carries the error of the check
@@ -311,7 +312,7 @@ export class GaleraCluster {
                 ok: false,
                 error: GaleraCluster._isError(reason)
                     ? reason : new Error(GaleraCluster._reasonText(reason)),
-                ...GaleraCluster._failedCheckError(pool, outcome)
+                ...GaleraCluster._failedCheckError(pool, outcome, logger)
             })
         );
     }
@@ -325,15 +326,16 @@ export class GaleraCluster {
      * not tell it from a check that ran into its own timeout
      * @param pool the pool
      * @param outcome what connect() filled in
+     * @param logger the logger of the cluster
      * @private
      */
     private static _failedCheckError(
-        pool: Pool, outcome: CheckOutcome
+        pool: Pool, outcome: CheckOutcome, logger: ILogger
     ): Pick<INodeInfo, 'checkError'> {
         if (outcome.recorded) return GaleraCluster._withCheckError(outcome.checkError);
         // a pool that tells nothing about its check has nothing to report here
         if (outcome.recorded === undefined) return {};
-        Logger.debug("The connect of a node ended without a recorded health check, " +
+        logger.debug("The connect of a node ended without a recorded health check, " +
             "its result gets an empty checkError", { nodeId: pool.id, pool: pool.name });
         return { checkError: {} };
     }
@@ -398,9 +400,9 @@ export class GaleraCluster {
             // disconnect() came meanwhile: no event after its own
             if (generation !== this._generation) return;
             Events.emit('hashing_created');
-            Logger.info("Cluster hashing enabled");
+            this._logger.info("Cluster hashing enabled");
         } catch (e) {
-            Logger.error(e.message);
+            this._logger.error(e.message);
         }
     }
 
@@ -408,7 +410,7 @@ export class GaleraCluster {
      * Disconnect all cluster pools
      */
     public async disconnect() {
-        Logger.debug("disconnecting all pools");
+        this._logger.debug("disconnecting all pools");
         this.connected = false;
         this._generation = {};
         this._clusterConnect = undefined;
@@ -487,7 +489,9 @@ export class GaleraCluster {
                     : undefined,
                 clusterName: this._context?.clusterName
             });
-            if (attempts.length) GaleraCluster._tellTiming(queryOptions.onTiming, attempts);
+            if (attempts.length) {
+                GaleraCluster._tellTiming(queryOptions.onTiming, attempts, this._logger);
+            }
         }
         // What _formatSQL throws, such as the error of a toSqlString() of a value, is a failed
         // query too. A falsy one as well
@@ -613,7 +617,7 @@ export class GaleraCluster {
                 // or while Redis was read
                 stopIfAborted();
                 if (redisResult) {
-                    Logger.warn("No valid pool. Use old data from Redis");
+                    this._logger.warn("No valid pool. Use old data from Redis");
                     // parsed before the record: a cached value that doesn't parse is a failed query
                     let cached: IRedisData;
                     try {
@@ -639,7 +643,7 @@ export class GaleraCluster {
         // bound values stay apart from the text
         if (!queryOptions.execute) {
             sql = formatted;
-            Logger.debug("formatSQL", {sql, values})
+            this._logger.debug("formatSQL", {sql, values})
         }
         // The one rule for values in the text: the formatting changed it. The pool refuses
         // such a statement under NO_BACKSLASH_ESCAPES. [] and {}, or a :name the object does
@@ -657,7 +661,7 @@ export class GaleraCluster {
             redisLatency.end();
 
             if (redisResult) {
-                Logger.debug("Get result of query from redis");
+                this._logger.debug("Get result of query from redis");
                 try {
                     redisData = JSON.parse(redisResult);
                 } catch (parseError) {
@@ -682,7 +686,7 @@ export class GaleraCluster {
         // what a pool rejected with when the signal aborted in its call
         let aborted: { reason: unknown } | undefined;
         // made only for a call with onStep
-        const tellStep = onStep && GaleraCluster._stepTeller(onStep);
+        const tellStep = onStep && GaleraCluster._stepTeller(onStep, this._logger);
 
         // the nodes asked: a node left out because it is no longer valid is not a try
         let tried = 0;
@@ -691,10 +695,10 @@ export class GaleraCluster {
             // the list was taken when the call started: a retry asks only a node that is
             // still valid when its turn comes (#151)
             if (tried > 0 && !pool.status.isValid) {
-                Logger.debug(`Query skips pool ${pool.name}: it is no longer valid`);
+                this._logger.debug(`Query skips pool ${pool.name}: it is no longer valid`);
                 continue;
             }
-            if (tried > 0) Logger.debug("Retrying query...");
+            if (tried > 0) this._logger.debug("Retrying query...");
             tried++;
             // the pool says in it whether the statement went to the node
             const outcome: IQueryOutcome = {};
@@ -704,7 +708,7 @@ export class GaleraCluster {
             attempts.push({ nodeId: pool.id, timing });
             let res: T;
             try {
-                Logger.debug("Query use host: " + pool.host);
+                this._logger.debug("Query use host: " + pool.host);
                 res = await this._queryRequest(
                     sql, pool, queryOptions, outcome, { values, valuesInText, timing }
                 ) as T;
@@ -712,10 +716,10 @@ export class GaleraCluster {
                 if (outcome.aborted) {
                     // the reason of the signal is the app's: no node id goes on it
                     aborted = { reason: e };
-                    Logger.debug(`Query in pool ${pool.name} was aborted`);
+                    this._logger.debug(`Query in pool ${pool.name} was aborted`);
                 } else {
                     errors.push({ nodeId: pool.id, error: GaleraCluster._fromNode(e, pool.id) });
-                    Logger.error(`Query failed in pool ${pool.name}: ` +
+                    this._logger.error(`Query failed in pool ${pool.name}: ` +
                         GaleraCluster._failureText(e));
                 }
                 // a statement that may have run on this node must not run on another one, and
@@ -736,7 +740,7 @@ export class GaleraCluster {
         stopIfAborted();
 
         if (redisData) {
-            Logger.warn("The query failed. Use old data from Redis");
+            this._logger.warn("The query failed. Use old data from Redis");
             record('stale_cache');
             return redisData.data;
         }
@@ -770,7 +774,7 @@ export class GaleraCluster {
             try {
                 await this._clusterHashing?.updateNodeForService(queryOptions?.serviceId, pool.id);
             } catch (error) {
-                Logger.warn("Query passed in pool " + pool.name + ", but the hashing table " +
+                this._logger.warn("Query passed in pool " + pool.name + ", but the hashing table " +
                     "was not updated: " + (error?.message || error),
                     { nodeId: pool.id, serviceId: queryOptions.serviceId });
             }
@@ -785,16 +789,19 @@ export class GaleraCluster {
      * of the call
      * @param onTiming the option of the query, or nothing
      * @param attempts the attempts of the node loop, in the order they were made
+     * @param logger the logger of the cluster
      * @private
      */
-    private static _tellTiming(onTiming: IQueryOptions['onTiming'], attempts: Attempts): void {
+    private static _tellTiming(
+        onTiming: IQueryOptions['onTiming'], attempts: Attempts, logger: ILogger
+    ): void {
         if (!onTiming) return;
         const last = attempts[attempts.length - 1];
         let warned = false;
         const failed = (thrown: unknown) => {
             if (warned) return;
             warned = true;
-            GaleraCluster._optionFailed(thrown, last.nodeId);
+            GaleraCluster._optionFailed(thrown, last.nodeId, 'onTiming', logger);
         };
         try {
             const queuedMs = attempts.reduce(
@@ -817,10 +824,11 @@ export class GaleraCluster {
      * onStep throws, and the rejection of a promise it returns, is logged once per call and
      * changes nothing of the call
      * @param onStep the option of the query
+     * @param logger the logger of the cluster
      * @private
      */
     private static _stepTeller(
-        onStep: IQueryOptions['onStep']
+        onStep: IQueryOptions['onStep'], logger: ILogger
     ): (step: QueryStep, nodeId: number) => void {
         let toldStep: QueryStep | undefined;
         let toldNode: number | undefined;
@@ -828,7 +836,7 @@ export class GaleraCluster {
         const failed = (thrown: unknown, nodeId: number) => {
             if (warned) return;
             warned = true;
-            GaleraCluster._optionFailed(thrown, nodeId, 'onStep');
+            GaleraCluster._optionFailed(thrown, nodeId, 'onStep', logger);
         };
         return (step, nodeId) => {
             if (step === toldStep && nodeId === toldNode) return;
@@ -852,10 +860,11 @@ export class GaleraCluster {
      * @param thrown what the option threw, or what the promise it returned rejected with
      * @param nodeId the node of the last attempt, or of the step onStep was told
      * @param option the name of the option
+     * @param logger the logger of the cluster
      * @private
      */
     private static _optionFailed(
-        thrown: unknown, nodeId: number, option: 'onTiming' | 'onStep' = 'onTiming'
+        thrown: unknown, nodeId: number, option: 'onTiming' | 'onStep', logger: ILogger
     ): void {
         let text: string;
         try {
@@ -864,7 +873,7 @@ export class GaleraCluster {
             text = 'a value that is not text';
         }
         // the logger catches what the logger of the app throws
-        Logger.warn(option + " of a query threw or rejected, the call keeps its result: " + text,
+        logger.warn(option + " of a query threw or rejected, the call keeps its result: " + text,
             { nodeId });
     }
 
@@ -877,7 +886,7 @@ export class GaleraCluster {
     private _maxRetryCount(maxRetry: number, activePoolsLength: number): number {
         let retryCount = maxRetry && maxRetry > 0 ? maxRetry : this._errorRetryCount;
         if (retryCount > activePoolsLength) {
-            Logger.warn("Active pools less than error retry count");
+            this._logger.warn("Active pools less than error retry count");
         }
         // one node at least: a query that tries none has no error of a node to reject with
         retryCount = Math.max(1, Math.min(retryCount, activePoolsLength));
