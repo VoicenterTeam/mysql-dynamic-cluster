@@ -67,7 +67,9 @@ const listen = (): Promise<number> => {
         connection.on('quit', () => connection.close());
     });
     return new Promise(resolve => {
-        server.listen(0, '127.0.0.1', () => resolve((server._server.address() as AddressInfo).port));
+        server.listen(0, '127.0.0.1', () => {
+            resolve((server._server.address() as AddressInfo).port);
+        });
     });
 };
 
@@ -82,8 +84,11 @@ const appLogger = () => ({ debug: jest.fn(), info: jest.fn(), warn: jest.fn(), e
 type AppLogger = ReturnType<typeof appLogger>;
 
 // A cluster of one node. flags are set, so connect() asks no server first, and the next
-// health check is ten minutes away: connect() runs the only one
-const makeCluster = (clusterName: string, port: number, level: string, logger: AppLogger): any => {
+// health check is ten minutes away: connect() runs the only one. `more` goes on top of the
+// settings
+const makeCluster = (
+    clusterName: string, port: number, level: string, logger: AppLogger, more: object = {}
+): any => {
     const cluster: any = createPoolCluster({
         clusterName,
         hosts: [{ host: '127.0.0.1', port }],
@@ -93,7 +98,8 @@ const makeCluster = (clusterName: string, port: number, level: string, logger: A
         },
         useClusterHashing: false,
         logs: { level },
-        logger
+        logger,
+        ...more
     } as any);
     clusters.push(cluster);
     return cluster;
@@ -128,6 +134,24 @@ const registeredSdk = () => {
         return collected;
     };
 };
+
+// A Redis client of the app: createPoolCluster looks at the name of its constructor. It is
+// ready at once, and answers each get with the next of its answers, then with nothing
+class Redis {
+    answers: string[] = [];
+    on(event: string, listener: () => void) {
+        if (event === 'ready') listener();
+    }
+    async get(): Promise<string | null> {
+        return this.answers.shift() ?? null;
+    }
+    async set(): Promise<string> {
+        return 'OK';
+    }
+    disconnect() {
+        return undefined;
+    }
+}
 
 const CLUSTER = 'mysql_dynamic_cluster.cluster.name';
 const PORT = 'server.port';
@@ -197,7 +221,80 @@ describe('two clusters made in one process', () => {
             expect(lines(loggerA.debug)).toContain('Check status in pool started');
         });
 
-    it('each stamps its own clusterName on its query, check, connection and node metrics',
+    it('the error of a validator of A whose key is not in the status goes to the logger of A only',
+        async () => {
+            const [portA, portB] = await Promise.all([listen(), listen()]);
+            const loggerA = appLogger();
+            const loggerB = appLogger();
+            // added to the default validators: the node of A is not valid
+            const missing = { key: 'no_such_status', operator: '=', value: 'ON' };
+            const a = makeCluster('A', portA, 'info', loggerA, {
+                hosts: [{ host: '127.0.0.1', port: portA, validators: [missing] }]
+            });
+            const b = makeCluster('B', portB, 'info', loggerB);
+
+            await a.connect().catch(() => undefined);
+            await b.connect();
+
+            const line = "Validator key no_such_status isn't in the global status, validator fails";
+            expect(count(loggerA.error, line)).toBe(1);
+            expect(lines(loggerB.error)).toEqual([]);
+        });
+
+    it('the disconnect() of A logs to the logger of A, the shared Redis to the module logger',
+        async () => {
+            const [portA, portB] = await Promise.all([listen(), listen()]);
+            const loggerA = appLogger();
+            const loggerB = appLogger();
+            const a = makeCluster('A', portA, 'info', loggerA);
+            const b = makeCluster('B', portB, 'info', loggerB);
+            await a.connect();
+            await b.connect();
+
+            await a.disconnect();
+            clusters.splice(clusters.indexOf(a), 1);
+
+            for (const line of [
+                'Checking hashing in the cluster stopped',
+                'Check status in pool stopped',
+                'pool named 127.0.0.1:' + portA + ' closed'
+            ]) {
+                expect([line, count(loggerA.info, line), count(loggerB.info, line)])
+                    .toEqual([line, 1, 0]);
+            }
+            // Redis is one for the process: its line goes to the module logger, B's settings
+            expect(count(loggerB.info, 'Redis disconnected')).toBe(1);
+            expect(count(loggerA.info, 'Redis disconnected')).toBe(0);
+        });
+
+    it('each stamps its own clusterName on its cache lookups, through one shared Redis client',
+        async () => {
+            const collect = registeredSdk();
+            const [portA, portB] = await Promise.all([listen(), listen()]);
+            const client = new Redis();
+            const more = { redis: { enabled: true }, redisInstant: client };
+            const a = makeCluster('A', portA, 'silent', appLogger(), more);
+            const b = makeCluster('B', portB, 'silent', appLogger(), more);
+            await a.connect();
+            await b.connect();
+
+            // the query of A finds fresh data, that of B finds nothing
+            client.answers.push(JSON.stringify({ data: [{ a: 1 }], expired: Date.now() + 600000 }));
+            expect(await a.query('SELECT 1')).toEqual([{ a: 1 }]);
+            await b.query('SELECT 1');
+            const collected = await collect();
+
+            expect(namesBy(
+                collected['mysql_dynamic_cluster.cache.lookup.duration'],
+                'mysql_dynamic_cluster.cache.result'
+            )).toEqual({ hit: ['A'], miss: ['B'] });
+            expect(namesBy(
+                collected['mysql_dynamic_cluster.query.duration'],
+                'mysql_dynamic_cluster.result.source'
+            )).toEqual({ cache: ['A'], pool: ['B'] });
+        });
+
+    it('each stamps its own clusterName on its query, wait, check, connection and node metrics',
         async () => {
             const collect = registeredSdk();
             const [portA, portB] = await Promise.all([listen(), listen()]);
@@ -215,6 +312,7 @@ describe('two clusters made in one process', () => {
                 .toEqual({ SELECT: ['A'], SHOW: ['B'] });
             for (const name of [
                 'mysql_dynamic_cluster.operation.duration',
+                'mysql_dynamic_cluster.connection.wait_time',
                 'mysql_dynamic_cluster.health_check.duration',
                 'mysql_dynamic_cluster.connection.count',
                 'mysql_dynamic_cluster.connection.pending_requests',
@@ -282,7 +380,8 @@ describe('one cluster alone', () => {
             { ...node, 'db.client.connection.state': 'idle' },
             { ...node, 'db.client.connection.state': 'used' }
         ]);
-        expect(attributes('mysql_dynamic_cluster.connection.pending_requests')).toStrictEqual([node]);
+        expect(attributes('mysql_dynamic_cluster.connection.pending_requests'))
+            .toStrictEqual([node]);
         expect(attributes('mysql_dynamic_cluster.connection.limit')).toStrictEqual([node]);
         expect(attributes('mysql_dynamic_cluster.node.valid')).toStrictEqual([node]);
         expect(attributes('mysql_dynamic_cluster.node.load_score')).toStrictEqual([node]);
