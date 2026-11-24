@@ -668,8 +668,17 @@ export class GaleraCluster {
         // made only for a call with onStep
         const tellStep = onStep && GaleraCluster._stepTeller(onStep);
 
-        for (let i = 0; i < retryCount; i++) {
+        // the nodes asked: a node left out because it is no longer valid is not a try
+        let tried = 0;
+        for (let i = 0; i < activePools.length && tried < retryCount; i++) {
             const pool = activePools[i];
+            // the list was taken when the call started: a retry asks only a node that is
+            // still valid when its turn comes (#151)
+            if (tried > 0 && !pool.status.isValid) {
+                Logger.debug(`Query skips pool ${pool.name}: it is no longer valid`);
+                continue;
+            }
+            tried++;
             // the pool says in it whether the statement went to the node
             const outcome: IQueryOutcome = {};
             // and in this one where the attempt ended and how long it waited for a connection
@@ -695,7 +704,7 @@ export class GaleraCluster {
                 // a statement that may have run on this node must not run on another one, and
                 // no node gets it once the signal aborted
                 if (!mayTryNextNode(e, outcome, queryOptions)) break;
-                if (i + 1 < retryCount) {
+                if (tried < retryCount) {
                     Logger.debug("Retrying query...");
                 }
                 continue;
