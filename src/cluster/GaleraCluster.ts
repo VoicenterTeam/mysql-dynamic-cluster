@@ -490,12 +490,14 @@ export class GaleraCluster {
         const signal = queryOptions.signal ?? undefined;
         if (signal !== undefined && !GaleraCluster._isAbortSignal(signal)) {
             const error = new TypeError("query: options.signal must be an AbortSignal");
+            Object.assign(error, { sent: false });
             record(undefined, error);
             throw error;
         }
         // as queryTimeout in the settings: a negative one fired at once. 0 means none
         if (queryOptions.timeout < 0) {
             const error = new TypeError("query: options.timeout must not be negative");
+            Object.assign(error, { sent: false });
             record(undefined, error);
             throw error;
         }
@@ -503,6 +505,7 @@ export class GaleraCluster {
         const onTiming = queryOptions.onTiming ?? undefined;
         if (onTiming !== undefined && typeof onTiming !== 'function') {
             const error = new TypeError("query: options.onTiming must be a function");
+            Object.assign(error, { sent: false });
             record(undefined, error);
             throw error;
         }
@@ -514,6 +517,7 @@ export class GaleraCluster {
         if (unbindable) {
             const error = new TypeError("execute: values must be an array, with no undefined " +
                 "and no function in it");
+            Object.assign(error, { sent: false });
             record(undefined, error);
             throw error;
         }
@@ -534,7 +538,7 @@ export class GaleraCluster {
         if (quoted) {
             const error = Object.assign(new Error(`query: the placeholder :${quoted.key} is ` +
                 `inside quotes or backticks. Write it bare, as = :${quoted.key}`),
-                { code: 'MDC_QUOTED_PLACEHOLDER' });
+                { code: 'MDC_QUOTED_PLACEHOLDER', sent: false });
             record(undefined, error);
             throw error;
         }
@@ -561,7 +565,7 @@ export class GaleraCluster {
             ? undefined : GaleraCluster._unsafeComment(sql, formatted);
         if (unsafeComment) {
             const error = Object.assign(new Error(unsafeComment),
-                { code: 'MDC_UNSAFE_COMMENT_VALUE' });
+                { code: 'MDC_UNSAFE_COMMENT_VALUE', sent: false });
             record(undefined, error);
             throw error;
         }
@@ -600,8 +604,9 @@ export class GaleraCluster {
                     return cached.data;
                 }
             }
-            // MDC_NO_NODE_AVAILABLE of _getActivePools(). The lookup of a service name catches
-            // its own errors
+            // MDC_NO_NODE_AVAILABLE of _getActivePools(): no node was asked. The lookup of a
+            // service name catches its own errors. getConnection() leaves sent off its own
+            if (e?.code === 'MDC_NO_NODE_AVAILABLE') Object.assign(e, { sent: false });
             record(undefined, e);
             throw e;
         }
