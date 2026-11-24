@@ -82,6 +82,8 @@ interface INode {
     holdLogins: () => void,
     // let every login held in, and every later one at once
     letIn: () => void,
+    // answer every statement of the app with 1047, not ready, from now on
+    notReady: () => void,
     seen: (what: Seen) => number,
     // resolves when the count of what went past the count it has now
     next: (what: Seen) => Promise<void>
@@ -101,7 +103,9 @@ const listen = async (connections: number): Promise<INode> => {
             w.resolve();
         });
     };
-    const modes = { holding: false, ignoreUse: false, pingsToIgnore: 0, holdingLogins: false };
+    const modes = {
+        holding: false, ignoreUse: false, pingsToIgnore: 0, holdingLogins: false, notReady: false
+    };
     closers.push(() => {
         open.forEach(connection => connection.stream.destroy());
         server.close();
@@ -143,6 +147,10 @@ const listen = async (connections: number): Promise<INode> => {
         });
         const statement = () => {
             count('statements');
+            if (modes.notReady) {
+                connection.sequenceId = 1;
+                return connection.writeError({ message: 'WSREP not ready', code: 1047 });
+            }
             if (modes.holding) return held.push(() => ok(connection, 1));
             ok(connection, 1);
         };
@@ -176,6 +184,7 @@ const listen = async (connections: number): Promise<INode> => {
         },
         ignoreUse: () => { modes.ignoreUse = true; },
         ignorePings: (count: number) => { modes.pingsToIgnore = count; },
+        notReady: () => { modes.notReady = true; },
         holdLogins: () => { modes.holdingLogins = true; },
         letIn: () => {
             modes.holdingLogins = false;
@@ -308,8 +317,24 @@ describe('the steps of a call', () => {
         expect([n1.seen('statements'), n2.seen('statements')]).toEqual([0, 1]);
     });
 
-    // The pool and the borrow both set queue as the attempt starts: one call. After a failed
-    // probe the borrow asks mysql2 again, which is queue again
+    it('that node 1 answers with 1047: statement on node 1, then queue on node 2', async () => {
+        const [n1, n2] = [await listen(1), await listen(9)];
+        const { cluster } = await connect([n1, n2]);
+        n1.notReady();
+        const { steps, onStep } = recorder();
+
+        const { result } = await call(cluster, { onStep });
+        await pause(50);
+
+        expect(result.affectedRows).toBe(1);
+        expect(steps).toEqual([
+            ['queue', 1], ['prepare', 1], ['statement', 1],
+            ['queue', 2], ['prepare', 2], ['statement', 2]
+        ]);
+        expect([n1.seen('statements'), n2.seen('statements')]).toEqual([1, 1]);
+    });
+
+    // after a failed probe the borrow asks mysql2 again, which is queue again
     it('two failed probes then a good one: queue and probe for each connection', async () => {
         const node = await listen(1);
         // connectionLimit 2: the borrow tries up to three connections
@@ -397,6 +422,35 @@ describe('an abort inside onStep', () => {
             expect([n1.seen('statements'), n2.seen('statements')]).toEqual([1, 0]);
         });
 
+    it('at the queue of the borrow after a failed probe: no new request, nothing pending',
+        async () => {
+            const node = await listen(1);
+            const { cluster } = await connect([node], {
+                connectionLimit: 2, probeTimeout: 100, idleCheckInterval: LONG
+            });
+            probeEvery(cluster);
+            node.ignorePings(1);
+            const controller = new AbortController();
+            const reason = reasonOf();
+            const timings: unknown[] = [];
+            const onTiming = (timing: unknown) => timings.push(timing);
+            const { steps, onStep } = recorder(() => {
+                if (steps.length === 3) controller.abort(reason);
+            });
+            const logins = node.seen('logins');
+
+            const { error } = await call(cluster, { signal: controller.signal, onStep, onTiming });
+            await pause(50);
+
+            expect(error).toBe(reason);
+            expect(steps).toEqual([['queue', 1], ['probe', 1], ['queue', 1]]);
+            expect(timings).toEqual([{ step: 'queue', queuedMs: expect.any(Number), nodeId: 1 }]);
+            // the connection that failed its probe was destroyed, and no other was asked for
+            expect(node.seen('logins') - logins).toBe(1);
+            expect(stats(cluster, 1)).toMatchObject({ used: 0, idle: 0, pending: 0 });
+            expect(listeners(controller.signal)).toBe(0);
+        });
+
     it.each<[string, Step[], number]>([
         ['probe', [['queue', 1], ['probe', 1]], 0],
         ['prepare', [['queue', 1], ['probe', 1], ['prepare', 1]], 0],
@@ -452,6 +506,21 @@ describe('what onStep throws or rejects with', () => {
         expect(warnings(logger)).toEqual([[THREW + 'bad step', { nodeId: 1 }]]);
     });
 
+    it('two calls that throw: one warning each', async () => {
+        const node = await listen(1);
+        const { cluster, logger } = await connect([node]);
+        const onStep = jest.fn(() => { throw new Error('bad step'); });
+
+        await call(cluster, { onStep });
+        await call(cluster, { onStep });
+        await pause(50);
+
+        expect(onStep).toHaveBeenCalledTimes(6);
+        expect(warnings(logger)).toEqual([
+            [THREW + 'bad step', { nodeId: 1 }], [THREW + 'bad step', { nodeId: 1 }]
+        ]);
+    });
+
     it('a throw, and a call that fails on its node: the same error as without onStep',
         async () => {
             const node = await listen(1);
@@ -505,6 +574,45 @@ describe('what onStep throws or rejects with', () => {
 });
 
 describe('the option itself', () => {
+    // what a call ends with, as call() gives it
+    const ended = (asked: Promise<unknown>) => asked.then(
+        (result: unknown) => ({ result, error: undefined as any }),
+        (error: any) => ({ result: undefined, error })
+    );
+    it.each<[string, (cluster: any, options: object) => Promise<{ error?: any }>, string]>([
+        ['a signal already aborted', (cluster, options) =>
+            call(cluster, { ...options, signal: AbortSignal.abort(reasonOf()) }), 'APP_GAVE_UP'],
+        ['a signal that is no AbortSignal', (cluster, options) =>
+            call(cluster, { ...options, signal: { aborted: false } }), 'TypeError'],
+        ['a negative timeout', (cluster, options) =>
+            call(cluster, { ...options, timeout: -1 }), 'TypeError'],
+        ['an onTiming that is not a function', (cluster, options) =>
+            call(cluster, { ...options, onTiming: 1 }), 'TypeError'],
+        ['values execute() cannot bind', (cluster, options) =>
+            ended(cluster.execute(APP_SQL, [undefined], options)), 'TypeError'],
+        ['a :name inside quotes', (cluster, options) =>
+            ended(cluster.query("UPDATE t SET a = ':a'", { a: 1 }, options)),
+        'MDC_QUOTED_PLACEHOLDER'],
+        ['a value that adds */ to a statement with /*+', (cluster, options) =>
+            ended(cluster.query('SELECT /*+ MAX_EXECUTION_TIME(?) */ 1', ['*/'], options)),
+        'MDC_UNSAFE_COMMENT_VALUE'],
+        ['no valid node', (cluster, options) => {
+            cluster.pools[0].status._isValid = false;
+            return call(cluster, options);
+        }, 'MDC_NO_NODE_AVAILABLE']
+    ])('%s: refused before any node, a valid onStep is not called', async (_name, start, code) => {
+        const node = await listen(1);
+        const { cluster } = await connect([node]);
+        const asked = jest.spyOn(cluster.pools[0], 'query');
+        const onStep = jest.fn();
+
+        const { error } = await start(cluster, { redis: false, onStep });
+
+        expect(error instanceof TypeError ? 'TypeError' : error.code).toBe(code);
+        expect(onStep).not.toHaveBeenCalled();
+        expect(asked).not.toHaveBeenCalled();
+    });
+
     it.each([
         ['a number', 1, 'query'],
         ['a string', 'onStep', 'query'],
@@ -704,6 +812,27 @@ const scenarios: Scenario[] = [
         const ended = await pending;
         node.letIn();
         return ended;
+    }],
+    ['an abort inside onStep at the queue after a failed probe', 'queue', 1, async both => {
+        const node = await listen(1);
+        const { cluster } = await connect([node], {
+            connectionLimit: 2, probeTimeout: 100, idleCheckInterval: LONG
+        });
+        probeEvery(cluster);
+        node.ignorePings(1);
+        const controller = new AbortController();
+        let queues = 0;
+        const onStep = (step: string, nodeId: number) => {
+            both.onStep(step, nodeId);
+            if (step === 'queue' && ++queues === 2) controller.abort(reasonOf());
+        };
+        return call(cluster, { ...both, onStep, signal: controller.signal });
+    }],
+    ['a call that node 1 answers with 1047, run on node 2', 'statement', 2, async both => {
+        const [n1, n2] = [await listen(1), await listen(9)];
+        const { cluster } = await connect([n1, n2]);
+        n1.notReady();
+        return call(cluster, both);
     }],
     ...['queue', 'probe', 'prepare', 'statement'].map(abortInside)
 ];
