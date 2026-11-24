@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.2.0-rc.2 (2026-11-24)
+
+### Fixed
+
+- **A retry skips the nodes that are no longer valid** (#151).
+  - `query()` and `execute()` take their list of nodes when the call starts. From the second attempt on, a node that is no longer valid when its turn comes is skipped. It is not asked, it gives no step and no metric record, and one debug line names it.
+  - A skipped node does not count as a try. When no node is left, the call rejects with the error of the last node tried, as before.
+  - The first attempt, the cluster-hashing order and the retry rule are unchanged.
+  - So a call that got `MDC_NODE_DOWN` no longer joins the queue of another node that went down while it waited, the case 4.2.0-rc.1 left open.
+  - "Retrying query..." is logged only when a node is asked.
+
 ## 4.2.0-rc.1 (2026-11-24)
 
 ### Added
