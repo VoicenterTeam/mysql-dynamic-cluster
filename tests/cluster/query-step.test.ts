@@ -78,6 +78,10 @@ interface INode {
     ignoreUse: () => void,
     // answer none of the next count pings
     ignorePings: (count: number) => void,
+    // keep each new login waiting from now on, until letIn()
+    holdLogins: () => void,
+    // let every login held in, and every later one at once
+    letIn: () => void,
     seen: (what: Seen) => number,
     // resolves when the count of what went past the count it has now
     next: (what: Seen) => Promise<void>
@@ -87,6 +91,7 @@ const listen = async (connections: number): Promise<INode> => {
     const server: any = (mysql as any).createServer();
     const open: any[] = [];
     const held: (() => void)[] = [];
+    const heldLogins: (() => void)[] = [];
     const counts: Record<Seen, number> = { logins: 0, statements: 0, pings: 0, uses: 0, closed: 0 };
     const waiters: { what: Seen, after: number, resolve: () => void }[] = [];
     const count = (what: Seen) => {
@@ -96,7 +101,7 @@ const listen = async (connections: number): Promise<INode> => {
             w.resolve();
         });
     };
-    const modes = { holding: false, ignoreUse: false, pingsToIgnore: 0 };
+    const modes = { holding: false, ignoreUse: false, pingsToIgnore: 0, holdingLogins: false };
     closers.push(() => {
         open.forEach(connection => connection.stream.destroy());
         server.close();
@@ -118,7 +123,8 @@ const listen = async (connections: number): Promise<INode> => {
             capabilityFlags: 0x00ffffff,
             authCallback: (_params: object, done: (err: null) => void) => {
                 count('logins');
-                done(null);
+                if (!modes.holdingLogins) return done(null);
+                heldLogins.push(() => done(null));
             }
         });
         // the check connection changes the user before its status query, and a connection
@@ -170,6 +176,11 @@ const listen = async (connections: number): Promise<INode> => {
         },
         ignoreUse: () => { modes.ignoreUse = true; },
         ignorePings: (count: number) => { modes.pingsToIgnore = count; },
+        holdLogins: () => { modes.holdingLogins = true; },
+        letIn: () => {
+            modes.holdingLogins = false;
+            heldLogins.splice(0).forEach(done => done());
+        },
         seen: (what: Seen) => counts[what],
         next: (what: Seen) => new Promise<void>(resolve => {
             waiters.push({ what, after: counts[what], resolve });
@@ -297,7 +308,9 @@ describe('the steps of a call', () => {
         expect([n1.seen('statements'), n2.seen('statements')]).toEqual([0, 1]);
     });
 
-    it('fire on change: two failed probes then a good one are one probe', async () => {
+    // The pool and the borrow both set queue as the attempt starts: one call. After a failed
+    // probe the borrow asks mysql2 again, which is queue again
+    it('two failed probes then a good one: queue and probe for each connection', async () => {
         const node = await listen(1);
         // connectionLimit 2: the borrow tries up to three connections
         const { cluster } = await connect([node], {
@@ -313,7 +326,10 @@ describe('the steps of a call', () => {
 
         expect(result.affectedRows).toBe(1);
         expect(node.seen('pings') - pings).toBe(3);
-        expect(steps).toEqual([['queue', 1], ['probe', 1], ['prepare', 1], ['statement', 1]]);
+        expect(steps).toEqual([
+            ['queue', 1], ['probe', 1], ['queue', 1], ['probe', 1], ['queue', 1], ['probe', 1],
+            ['prepare', 1], ['statement', 1]
+        ]);
     });
 
     it.each([
@@ -606,4 +622,109 @@ describe('onStep beside onTiming', () => {
                 ['queue', 1], ['prepare', 1], ['queue', 2], ['prepare', 2], ['statement', 2]
             ]);
         });
+});
+
+// Each scenario runs one call with the options it is handed, and says the step and the node
+// onTiming should report, so the scenario is known to reach that case
+type Scenario = [string, string, number, (both: any) => Promise<unknown>];
+const abortInside = (at: string): Scenario => [`an abort inside onStep at ${at}`, at, 1,
+    async both => {
+        const [n1, n2] = [await listen(1), await listen(9)];
+        const { cluster } = await connect([n1, n2]);
+        probeEvery(cluster);
+        const controller = new AbortController();
+        const onStep = (step: string, nodeId: number) => {
+            both.onStep(step, nodeId);
+            if (step === at) controller.abort(reasonOf());
+        };
+        return call(cluster, { ...both, onStep, signal: controller.signal, database: OTHER });
+    }];
+const scenarios: Scenario[] = [
+    ['a call on a fresh connection', 'statement', 1, async both => {
+        const node = await listen(1);
+        const { cluster } = await connect([node]);
+        return call(cluster, both);
+    }],
+    ['a call that waits in the queue, probes, prepares and runs', 'statement', 1, async both => {
+        const node = await listen(1);
+        const { cluster } = await connect([node]);
+        node.holdStatements();
+        const sent = node.next('statements');
+        const first = cluster.query(APP_SQL, undefined, { redis: false });
+        await sent;
+        probeEvery(cluster);
+        const pending = call(cluster, { ...both, database: OTHER });
+        await turns(() => stats(cluster, 1).pending === 1);
+        node.answer();
+        await first;
+        return pending;
+    }],
+    ['a call that fails without sending on node 1 and runs on node 2', 'statement', 2,
+        async both => {
+            const [n1, n2] = [await listen(1), await listen(9)];
+            const { cluster } = await connect([n1, n2]);
+            n1.ignoreUse();
+            return call(cluster, { ...both, database: OTHER, timeout: 200 });
+        }],
+    ['a call whose only node answers no USE', 'prepare', 1, async both => {
+        const node = await listen(1);
+        const { cluster } = await connect([node]);
+        node.ignoreUse();
+        return call(cluster, { ...both, database: OTHER, timeout: 200 });
+    }],
+    ['two failed probes then a good one', 'statement', 1, async both => {
+        const node = await listen(1);
+        const { cluster } = await connect([node], {
+            connectionLimit: 2, probeTimeout: 100, idleCheckInterval: LONG
+        });
+        probeEvery(cluster);
+        node.ignorePings(2);
+        return call(cluster, both);
+    }],
+    ['every connection fails its probe', 'probe', 1, async both => {
+        const node = await listen(1);
+        const { cluster } = await connect([node], { probeTimeout: 100, idleCheckInterval: LONG });
+        probeEvery(cluster);
+        node.ignorePings(2);
+        return call(cluster, both);
+    }],
+    ['an abort while a new connection logs in after a failed probe', 'queue', 1, async both => {
+        const node = await listen(1);
+        const { cluster } = await connect([node], { probeTimeout: 100, idleCheckInterval: LONG });
+        probeEvery(cluster);
+        node.ignorePings(1);
+        const controller = new AbortController();
+        const pinged = node.next('pings');
+        const pending = call(cluster, { ...both, signal: controller.signal });
+        await pinged;
+        // the probe runs out, and the borrow asks mysql2 for a new connection
+        node.holdLogins();
+        await node.next('logins');
+        controller.abort(reasonOf());
+        const ended = await pending;
+        node.letIn();
+        return ended;
+    }],
+    ...['queue', 'probe', 'prepare', 'statement'].map(abortInside)
+];
+
+describe('the last onStep of a call is the step and the node onTiming reports', () => {
+    it.each(scenarios)('%s: %s on node %i', async (_name, step, nodeId, run) => {
+        const steps: Step[] = [];
+        const timings: any[] = [];
+        const both = {
+            onStep: (told: string, node: number) => { steps.push([told, node]); },
+            onTiming: (timing: unknown) => { timings.push(timing); }
+        };
+
+        await run(both);
+        await pause(50);
+
+        expect(timings).toEqual([{ step, queuedMs: expect.any(Number), nodeId }]);
+        expect(steps[steps.length - 1]).toEqual([step, nodeId]);
+        // never the same step on the same node twice in a row
+        const repeated = steps.filter((told, index) => index > 0
+            && told[0] === steps[index - 1][0] && told[1] === steps[index - 1][1]);
+        expect(repeated).toEqual([]);
+    });
 });
