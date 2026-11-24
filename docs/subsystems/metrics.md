@@ -362,7 +362,9 @@ Notes on cardinality and content:
   `MDC_QUOTED_PLACEHOLDER` when a `:name` of the object stood inside
   quotes or backticks, and `MDC_UNSAFE_COMMENT_VALUE` when values
   could change how the server reads a comment it skips, such as `/*+ */`
-  or `/*!NNNNN */`, before any node. The per-attempt
+  or `/*!NNNNN */`, before any node. `MDC_NODE_DOWN` when the node tried
+  last went down while the call waited for one of its connections, since
+  4.2.0. The per-attempt
   `mysql_dynamic_cluster.operation.duration` carries the code of each
   attempt.
 - **`stale_cache` shows outages hidden by the cache.** Those queries succeed

@@ -1379,14 +1379,23 @@ see the measurement in [Passive health](#passive-health).
   probe, its reset, its `USE` or its statement, and so does a connection
   the app took with `getConnection()`. A login that is still running ends
   as it would have.
+- With the legacy check, a validator that says no takes the node down
+  after the check got its answer and gave its connection back. When
+  requests wait, mysql2 hands that connection to the first of them before
+  the node goes down, so that one request runs on the node that was just
+  taken down. A node the validators call not ready usually answers it with
+  1047, and `query()` then tries the next node. With another validator the
+  statement runs there.
 - The status query of the legacy check that waits in the queue keeps its
   place. It is not failed, so the check counts no failure for it. `Borrow`
   knows that request by its callback, see `isCheck()`. While a subscriber
   listens on the tracing channel `mysql2:pool:connect` of mysql2, the queue
-  holds a wrapper of the callback instead. The package cannot tell the
-  request of the check then: it fails it too, and the check counts a
-  failure with an empty `checkError`. A check with a `healthCheck` block
-  asks on its own connection and never waits in the queue.
+  holds a wrapper of the callback instead, and the package cannot tell the
+  request of the check there. It fails it with the others, and the
+  request, given `MDC_NODE_DOWN`, asks mysql2 again at once, at the end of
+  the queue. The check is not failed either way, but the `info` line below
+  counts that request among the failed ones. A check with a `healthCheck`
+  block asks on its own connection and never waits in the queue.
 - The error is the package's own, marked with `PoolStatus.ownError()`.
   Passive health does not count it, and it starts no check.
 - One `info` line when a request was failed, after the line of the node
@@ -1398,6 +1407,16 @@ see the measurement in [Passive health](#passive-health).
   `disconnect()`. mysql2 fails the queue of a pool it closes with
   `Pool is closed.`
 - A request that comes after the node went down waits in the queue again.
+  So does the retry of a call that took its list of nodes before the node
+  went down: within a call the cluster does not look at `isValid` again.
+- A second `connect()` without `disconnect()` makes a new mysql2 pool. A
+  node that goes down after that fails the queue of the new pool only. The
+  requests in the queue of the old one stay there, as with `failWaiting()`.
+- A queue with no callable `shift()` or `push()`, which is not the one
+  mysql2 3 keeps, is left as it is, with one `warn` line, see
+  [known issue 16](../known-issues.md#16-borrow_leavequeue-reads-mysql2s-private-_connectionqueue).
+  A throw while the queue is failed is logged at `error`, and the check
+  that took the node down goes on.
 
 `PoolStatus._setValid()` calls the function `Pool` hands its constructor
 when the node goes from valid to down. `Pool._nodeWentDown()` fails the

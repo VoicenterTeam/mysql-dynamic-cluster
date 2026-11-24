@@ -281,7 +281,8 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
 ### 16. `Borrow._leaveQueue` reads mysql2's private `_connectionQueue`
 
 - **Severity:** **low**
-- **Location:** `_leaveQueue()` in [src/pool/Borrow.ts](../src/pool/Borrow.ts)
+- **Location:** `_leaveQueue()` in [src/pool/Borrow.ts](../src/pool/Borrow.ts),
+  `_nodeWentDown()` in [src/pool/Pool.ts](../src/pool/Pool.ts)
 - **Description:** a request whose signal aborts while it waits for a
   connection has to leave mysql2's queue, and mysql2 has no public call for
   that. `_leaveQueue()` searches the private `_connectionQueue` of the mysql2
@@ -293,11 +294,16 @@ Sibling docs: [architecture.md](architecture.md), [configuration.md](configurati
   of the mysql2 pool too. If mysql2 renames the field or changes its shape,
   nothing throws: `_leaveQueue()` logs one warning per mysql2 pool, the
   aborted request stays in the queue, and the connection that arrives for it
-  on its turn goes straight back to the pool.
+  on its turn goes straight back to the pool. Since 4.2.0 `_nodeWentDown()`
+  reads the same queue when a node goes down. When the queue has no
+  callable `shift()` or `push()` it logs one warning each time a node goes
+  down and fails no request: they wait as they did before 4.2.0.
 - **Suggested fix:** none while mysql2 3 keeps the field. After a mysql2
   upgrade, run
   [tests/pool/get-connection-signal.test.ts](../tests/pool/get-connection-signal.test.ts),
-  which covers the abort of a waiting request and the warning. Use a public
+  which covers the abort of a waiting request and the warning, and
+  [tests/pool/node-down-queue.test.ts](../tests/pool/node-down-queue.test.ts),
+  which covers a node that goes down with waiting requests. Use a public
   call of mysql2 if one is added.
 
 ## Data model & SQL constraints

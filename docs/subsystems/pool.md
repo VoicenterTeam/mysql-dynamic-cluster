@@ -539,7 +539,8 @@ it also holds `enter`, which `take()` calls each time it sets the step,
    a connection. A take with `probe: false`, the status query of the
    legacy check, puts the callback of its request in a `WeakSet`:
    `isCheck(callback)` names it, and a node that goes down leaves it in the
-   queue, since 4.2.0.
+   queue, since 4.2.0. When it gets an error `markNodeDown()` marked all
+   the same, through a wrapper mysql2 queued, it asks mysql2 again.
 2. **The probe** (`_probe`), when the connection was idle longer than
    `probeIdle` (1000 ms by default), or when a ping of the reaper is still
    out on it, idle or not. How long it was idle comes from the
@@ -912,8 +913,12 @@ not move. `GaleraCluster` calls them for the node API of
   the same `_failQueue()`, but each request with an error of its own from
   `_nodeDownError()`: `code: 'MDC_NODE_DOWN'`, `sent: false`, `nodeId`.
   A callback `Borrow.isCheck()` names goes back into the queue in its
-  place. One `info` line when it failed a request, with the meta
-  `nodeId`, `pool` and `failed`. See
+  place. `_nodeDownError()` marks each error with `Borrow.markNodeDown()`:
+  the request of the legacy check that gets one all the same, through a
+  wrapper mysql2 queued, asks mysql2 again. One `info` line when it failed
+  a request, with the meta `nodeId`, `pool` and `failed`. A queue with no
+  callable `shift()` or `push()` is left alone, with one `warn` line.
+  `PoolStatus._setValid()` logs what it throws at `error`. See
   [health-and-scoring.md](health-and-scoring.md#a-node-that-goes-down-fails-the-requests-that-wait).
 - `stats()` returns `{ used, idle, pending }` from mysql2's own lists:
   `_allConnections.length - _freeConnections.length`,
