@@ -45,7 +45,7 @@ There is **no** `lint`, `typecheck`, or `test:load` script, and no linter is ins
 
 ## Footguns
 
-- **Singletons everywhere.** `Logger`, `Redis`, `Metrics`, `config`, `Events` are module-level singletons — effectively one cluster per process. See [docs/architecture.md](docs/architecture.md).
+- **Singletons, with a logger and metrics name per cluster.** Since 4.2.0-rc.3 (#86) each cluster logs through its own logger and level and stamps its own `clusterName` on its metrics, through the `IClusterContext` it hands to its parts. `Events`, `Redis` and `config` are still module level (one emitter, one Redis client and key prefix, the settings of the last `createPoolCluster`), and so are the module `Logger` and the shared `Metrics` instruments. See [docs/architecture.md](docs/architecture.md#singletons).
 - **`Events.emit` wraps args in an array.** Listeners get `(allArgsArray, undefined)` instead of spread args — see [docs/known-issues.md#5-eventsemit-wraps-args-in-an-array](docs/known-issues.md#5-eventsemit-wraps-args-in-an-array).
 - **`Validator` / `LoadFactor` missing status key** was a crash before 3.2.2; now it's logged by name (validator fails, load factor skipped) — see [docs/known-issues.md#3-validatorcheck-crashes-on-missing-status-key](docs/known-issues.md#3-validatorcheck-crashes-on-missing-status-key) and [#4](docs/known-issues.md#4-loadfactorcheck-crashes-on-missing-status-key).
 - **`Pool.query` error handling was fixed in 3.2.2** (returns after reject, destroys connections after fatal errors/timeouts) — see [docs/known-issues.md#1-poolquery-does-not-return-after-reject](docs/known-issues.md#1-poolquery-does-not-return-after-reject).

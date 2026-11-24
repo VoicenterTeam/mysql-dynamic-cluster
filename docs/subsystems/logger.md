@@ -1,8 +1,10 @@
 # Subsystem: Logger
 
 The `Logger` singleton is the one place the library logs through. It writes
-to the console, or to a logger the app passes to `createPoolCluster`. The
-library owns no log transport and has no logging dependency.
+to the console, or to a logger the app passes to `createPoolCluster`. Since
+4.2.0-rc.3 each cluster logs through a logger of its own, see
+[One logger per cluster](#one-logger-per-cluster). The library owns no log
+transport and has no logging dependency.
 
 Before 4.0.0 the logger was built on winston with an optional AMQP transport
 from `@voicenter-team/failover-amqp-pool`. Both are gone, see
@@ -77,12 +79,38 @@ with its stack, so that entry spans several lines.
 ## Initialisation
 
 `createPoolCluster` takes `logger` off the settings object, then calls
-`Logger.init(level, logger)` ([index.ts](../../index.ts)). Before that call,
-for example in a unit test that builds a `Pool` directly, the logger is the
-console at level `info`.
+`Logger.init(level, logger)` ([index.ts](../../index.ts)) on the module
+logger, and gives the new cluster a logger of its own with the same level
+and logger. Before that call, for example in a unit test that builds a
+`Pool` directly, the logger is the console at level `info`.
 
-Like the other singletons there is one logger per process: a second
-`createPoolCluster` replaces the logger and level of the first.
+## One logger per cluster
+
+Since 4.2.0-rc.3 (#86) every cluster logs through the `logger` and the
+`logs.level` of its own settings: the cluster, its pools, their health
+checks, validators and load factors, the connections they take and give
+back, the check connection, cluster hashing and the service names. A
+second `createPoolCluster` leaves the logger and the level of the first
+cluster as they are. With one cluster nothing changes: the same lines go
+to the same logger.
+
+The logger of a cluster is a view of the module logger, made by
+`clusterContext` in [index.ts](../../index.ts): it has the methods of the
+module logger, looked up at each call, and only the level and the logger
+of the app are its own. A part built without a cluster, such as a `Pool`
+a unit test makes directly, logs through the module logger.
+
+The module logger is still one per process, with the level and the logger
+of the last `createPoolCluster`. It logs what no cluster owns:
+
+- `Initialized app`, and the lines of the Redis cache, which every
+  cluster shares, see [redis-cache.md](./redis-cache.md).
+- The warning that `createPoolCluster` was called again. It is logged
+  before the module logger takes the new settings, so it goes to the
+  logger of the call before.
+- A listener of an event that threw after another one of the same event
+  had thrown, see [../events.md](../events.md).
+- The first metric that failed to record, see [metrics.md](./metrics.md).
 
 ## Migrating from the winston logger
 

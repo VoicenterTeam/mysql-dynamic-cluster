@@ -204,7 +204,10 @@ Because `init()` builds its own prefix,
 different `clusterName` values cannot collide on keys, even if their
 SQL hashes happen to match. The combined prefix is also what
 `clearAll()` matches against (see below), so each cluster's clear is
-scoped to its own keys.
+scoped to its own keys. That holds for clusters in separate processes. In
+one process the clusters share the singleton: its client and its prefix
+are those of the last `createPoolCluster` that passed a `redisInstant`,
+see [../architecture.md](../architecture.md#singletons).
 
 The prefix lives on a copy of the settings that the singleton keeps.
 `config.current.redis.keyPrefix` stays as the app set it, so calling

@@ -14,10 +14,19 @@ The references below name the function or the field to look in.
 
 ## Construction
 
-The constructor takes no arguments. Every configuration value is read
-off the `config` singleton via `config.current`; `createPoolCluster` has
-already validated the user settings and loaded them into it before
-`new GaleraCluster()` is called.
+Since 4.2.0-rc.3 (#86) the constructor takes the context of the cluster,
+`IClusterContext` in
+[src/types/ClusterContextInterfaces.ts](../../src/types/ClusterContextInterfaces.ts):
+its logger and the `clusterName` its metrics carry. `createPoolCluster`
+builds it, see [../architecture.md](../architecture.md#singletons). The
+cluster logs through that logger and passes the name with every metric it
+records.
+Without a context, as on a cluster a unit test builds, it logs through the
+module logger and its metrics carry the name of `Metrics.init`. Every
+configuration value is read off the `config` singleton via
+`config.current`; `createPoolCluster` has already validated the user
+settings and loaded them into it before `new GaleraCluster(context)` is
+called.
 
 Fields populated from `config.current`, at the top of the constructor:
 
@@ -39,7 +48,7 @@ Pool construction, in the constructor:
    `last + 1`, and the new id is pushed back into the list so subsequent
    gaps still increment from the highest assigned id.
 3. Every host gets a `Pool`, constructed with `(poolSettings,
-   clusterName)`. A host without `host` never gets here: the settings
+   clusterName, context)`. A host without `host` never gets here: the settings
    schema rejects it.
 4. Since 4.1.1 the constructor logs a `warn` for a host whose id is
    negative, not an integer, the id of another host too, or above 127 with
@@ -48,9 +57,9 @@ Pool construction, in the constructor:
    too. See [`hosts`](../configuration.md#hosts).
 
 After the pool array is built, the constructor instantiates
-`ServiceNames(this, config.current.serviceMetrics)` and
-`ClusterHashing(this, clusterName, config.current.clusterHashing)`,
-the last step of the constructor.
+`ServiceNames(this, config.current.serviceMetrics, logger)` and
+`ClusterHashing(this, clusterName, config.current.clusterHashing, logger)`,
+with the logger of the cluster, the last step of the constructor.
 Note: `ClusterHashing` is constructed unconditionally — the
 `_useClusterHashing` flag only gates `connect()` calling `_enableHashing`.
 
@@ -58,8 +67,9 @@ Note: `ClusterHashing` is constructed unconditionally — the
 
 `connect` in [src/cluster/GaleraCluster.ts](../../src/cluster/GaleraCluster.ts).
 
-`connect` first hands its pools to `Metrics.registerPools`, which reports
-their connection counts from then on, see
+`connect` first hands its pools and the `clusterName` of its context to
+`Metrics.registerPools`, which reports their connection counts from then
+on, see
 [metrics.md](./metrics.md#pool-connection-metrics).
 
 `connect` returns a `Promise<void>` that wraps a `forEach` loop firing

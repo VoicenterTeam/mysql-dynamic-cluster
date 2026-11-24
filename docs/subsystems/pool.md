@@ -22,9 +22,16 @@ Source: [src/pool/Pool.ts](../../src/pool/Pool.ts),
 The constructor of `Pool` in [src/pool/Pool.ts](../../src/pool/Pool.ts).
 
 The constructor takes `(settings: IUserPoolSettings, clusterName:
-string)`. The `clusterName` argument is currently unused inside `Pool`
-itself; `GaleraCluster` still passes it through for symmetry with other
-subsystems. Fields populated from `settings`:
+string, context?: IClusterContext)`. The `clusterName` argument is
+currently unused inside `Pool` itself; `GaleraCluster` still passes it
+through for symmetry with other subsystems. The `context` holds, since
+4.2.0-rc.3 (#86), the logger of the cluster and the `clusterName` its
+metrics carry. The pool logs through that logger and hands it on to its
+`PoolStatus`, `SessionState`, `Borrow` and check connection, and passes
+the name with every metric it records. Without a context, as in a unit
+test that builds a `Pool` directly, it logs through the module logger and
+its metrics carry the name of `Metrics.init`. Fields populated from
+`settings`:
 
 - `id` ← `settings.id`.
 - `host` ← `settings.host`.

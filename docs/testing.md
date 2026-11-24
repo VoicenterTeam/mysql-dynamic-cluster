@@ -34,6 +34,7 @@ tests/
     execute.test.ts              # execute() and the execute option on loopback: prepare, bound values, NO_BACKSLASH_ESCAPES
     host-ids.test.ts             # Host ids: which id each host gets, with and without an id in the settings
     query-pool-order.test.ts     # The order query() tries its pools in: load score, the pool of the service first
+    two-clusters.test.ts         # Two clusters of createPoolCluster in one process, real mysql2 on loopback (#86): the pool, check and query lines of each go to its own logger at its own level, also after the second was made; the module logger follows the last call; the query, operation, health-check, connection and node-gauge points of each carry its own clusterName; one cluster alone logs and records what it did before
     retry-skip.test.ts           # A retry skips a node that is no longer valid (#151), over fake pools: not asked, no step, a debug line, not a try for maxRetry, the last error when none is left, stale Redis, execute: true
     query-error.test.ts          # What a failed query() rejects with, real mysql2 on loopback: the mysql2 error, nodeId, errors, MDC_NO_NODE_AVAILABLE
     query-error-edges.test.ts    # The same over fake pools: one error from two nodes, a frozen error, a non-object, the stale cache
@@ -219,7 +220,7 @@ The integration suites (`tests/pool/query.test.ts`, `tests/cluster/query.test.ts
 
 ### `tests/cluster/hashing.test.ts`
 
-- [tests/cluster/hashing.test.ts:53](../tests/cluster/hashing.test.ts#L53) calls `new ClusterHashing(cluster, null, database)` passing a database name string in slot 3. The V3 signature is `constructor(cluster: GaleraCluster, clusterName: string, options: IClusterHashingSettings)` — see [src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts). The actual database name is now derived as `${clusterName}_${options.dbName}` ([src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)), so passing a raw schema name is silently wrong even if the call compiled.
+- [tests/cluster/hashing.test.ts:53](../tests/cluster/hashing.test.ts#L53) calls `new ClusterHashing(cluster, null, database)` passing a database name string in slot 3. The V3 signature is `constructor(cluster: GaleraCluster, clusterName: string, options: IClusterHashingSettings, logger?: ILogger)` — see [src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts). The actual database name is now derived as `${clusterName}_${options.dbName}` ([src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)), so passing a raw schema name is silently wrong even if the call compiled.
 - [tests/cluster/hashing.test.ts:72](../tests/cluster/hashing.test.ts#L72) calls `new ClusterHashing(cluster)` with a single argument — V3 requires three.
 - [tests/cluster/hashing.test.ts:73](../tests/cluster/hashing.test.ts#L73) and [tests/cluster/hashing.test.ts:74](../tests/cluster/hashing.test.ts#L74) reach into private members: `clusterHashing._checkHashing()` and `clusterHashing.serviceNodeMap`. In V3 `_checkHashing` is `private` ([src/cluster/ClusterHashing.ts](../src/cluster/ClusterHashing.ts)) and the map is stored as `_serviceNodeMap` with no public getter; both accesses fail typecheck.
 - The cluster fixture itself uses the dev-branch top-level shape (see next section).
@@ -231,7 +232,7 @@ The integration suites (`tests/pool/query.test.ts`, `tests/cluster/query.test.ts
 
 ### `tests/pool/query.test.ts`
 
-- [tests/pool/query.test.ts:11](../tests/pool/query.test.ts#L11) calls `new Pool({...})` with a single argument. The V3 `Pool` constructor signature is `constructor(settings: IUserPoolSettings, clusterName: string)` ([src/pool/Pool.ts:46](../src/pool/Pool.ts#L46)) — the second arg is required because the pool's logger and metric names are scoped by cluster.
+- [tests/pool/query.test.ts:11](../tests/pool/query.test.ts#L11) calls `new Pool({...})` with a single argument. The V3 `Pool` constructor signature is `constructor(settings: IUserPoolSettings, clusterName: string, context?: IClusterContext)` ([src/pool/Pool.ts](../src/pool/Pool.ts)). The second arg is required, though `Pool` does not use it. Since 4.2.0-rc.3 the logger and the metrics cluster name of the pool come in the optional `context` (#86); without it the pool logs through the module logger and records the name of `Metrics.init`.
 - The settings object passed in is the dev-branch per-host shape (with `validators`/`loadFactors` and no `defaultPoolSettings` resolution). In V3, a bare `Pool` is rarely instantiated directly outside the cluster — the supported entry point is `createPoolCluster()` (see [architecture.md](./architecture.md)).
 
 ---

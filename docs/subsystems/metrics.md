@@ -332,7 +332,7 @@ to look.
 | `server.address`, `server.port` | Host and port of the pool | operation, connection, wait, health check, node |
 | `db.client.connection.pool.name` | Pool `name` setting, `host:port` by default | operation, connection, wait, health check, node |
 | `db.client.connection.state` | `idle` or `used` | connection count |
-| `mysql_dynamic_cluster.cluster.name` | `clusterName` setting | all ten |
+| `mysql_dynamic_cluster.cluster.name` | `clusterName` setting of the cluster that records, see [Two clusters in one process](#two-clusters-in-one-process) | all ten |
 | `mysql_dynamic_cluster.attempt.step` | `queue`, `probe`, `prepare` or `statement`: where an attempt of `Pool.query` ended. Left out for the other attempts. | operation |
 | `mysql_dynamic_cluster.health_check.result` | `valid`, `invalid` or `error` | health check |
 | `mysql_dynamic_cluster.service.name` | `serviceName` of the query, or the `serviceId` as text. Left out for queries without a service. | operation, query |
@@ -392,6 +392,23 @@ Notes on cardinality and content:
   per node, one series for `valid`, one for `invalid`, and one for every
   distinct pair of `error.type` and status code among its failed checks.
 
+### Two clusters in one process
+
+Since 4.2.0-rc.3 (#86) every point carries the `clusterName` of the cluster
+that records it. The cluster passes its name with each record, from the
+context `createPoolCluster` built for it, and so do its pools and their
+health checks. `registerPools` keeps the name of the cluster of each pool,
+for the connection metrics and the node gauges read at collection. So a
+second `createPoolCluster` no longer relabels the metrics of the first.
+With one cluster the points are the same as before.
+
+The instruments stay one set on the meter of the app's provider, for every
+cluster. `Metrics.init(clusterName)` still runs at each `createPoolCluster`:
+its name goes on a record that brings none, one of a part built without a
+cluster, such as a `Pool` a unit test makes directly. It is read at each
+record. Two clusters whose pools have the same name, address and port, and
+whose `clusterName` is the same, still share their series.
+
 ## Migrating from the pm2 metrics
 
 The pm2 metrics had the cluster, service and pool baked into each name, and a
@@ -434,7 +451,9 @@ Other changes:
    the no-op provider. Create it after the first three histograms and inside
    its own `_safely`, as the health-check histogram is, so a provider that
    cannot make it still gets the others.
-3. Call the method from the call site. Keep attribute values to a small fixed
+3. Call the method from the call site, with the `clusterName` of the
+   context of the cluster, and add it to the attributes with
+   `_addClusterName`, as the other records do. Keep attribute values to a small fixed
    set, never raw SQL, ids of rows or error messages. A value of the query
    path goes through `recordOperation` instead, as a new field of
    `IOperationMetricOptions`: about 20 test suites mock `Metrics` with a

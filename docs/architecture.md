@@ -4,9 +4,11 @@
 across a Galera cluster with health-aware pool selection, service-sticky
 routing via cluster hashing, optional Redis caching, OpenTelemetry metrics, and
 a console logger that the app can replace with its own. The library
-exposes a single factory, `createPoolCluster`, that assembles a process-
-wide `GaleraCluster` instance backed by a shared configuration, metric
-registry, logger, and Redis client.
+exposes a single factory, `createPoolCluster`, that assembles a
+`GaleraCluster` instance with a logger and a metrics cluster name of its
+own, backed by a configuration, metric instruments, an event emitter and
+a Redis client that every cluster of the process shares, see
+[Singletons](#singletons).
 
 Terms used here (Pool, Validator, Load factor, Cluster hashing, Pool
 score) are defined in [glossary.md](./glossary.md).
@@ -39,15 +41,22 @@ constructing `GaleraCluster`:
 5. `init(redisInstant, logger)` runs the per-process bootstrap —
    [index.ts](../index.ts):
    - `Logger.init(level, logger)` ([index.ts](../index.ts)) sets
-     the log level and the logger: the app-supplied `logger` if given,
-     otherwise the console. See [subsystems/logger.md](subsystems/logger.md).
+     the log level and the logger of the module logger: the app-supplied
+     `logger` if given, otherwise the console. The module logger logs for
+     the parts every cluster shares. See [subsystems/logger.md](subsystems/logger.md).
    - `Metrics.init(clusterName)`
-     ([index.ts](../index.ts)) stores the cluster name that every
-     metric carries as an attribute. Instruments are created on first use.
+     ([index.ts](../index.ts)) stores the cluster name a metric carries
+     when the part that records it has no cluster of its own. Instruments
+     are created on first use.
    - `Redis.init(...)` is called only when `redisInstant` is an
      `ioredis` `Cluster` or `Redis` instance
      ([index.ts](../index.ts)).
-6. `new GaleraCluster()` is returned — [index.ts](../index.ts).
+6. `new GaleraCluster(clusterContext(logger))` is returned —
+   [index.ts](../index.ts). Since 4.2.0-rc.3 (#86) `clusterContext`
+   builds the context of the new cluster, `IClusterContext` in
+   [src/types/ClusterContextInterfaces.ts](../src/types/ClusterContextInterfaces.ts):
+   a logger with the `logs.level` and the `logger` of these settings,
+   and their `clusterName` for its metrics.
    The constructor reads `useClusterHashing`, `clusterName`,
    `errorRetryCount`, `redis.enabled`, and the host list from
    `config.current`, then constructs one `Pool` per host
@@ -134,20 +143,33 @@ performs four actions in order:
 
 ## Singletons
 
-Every collaborator below is exported as a module-level singleton. There
-is exactly one instance per Node process, regardless of how many times
-`createPoolCluster` is called.
+Since 4.2.0-rc.3 (#86) each `GaleraCluster` has two things of its own,
+held in the context `createPoolCluster` builds for it. The cluster
+hands the context to its pools, its hashing and its service names, and
+each pool hands it on to its health check, its validator and load
+factor, its `Borrow`, its `SessionState` and its check connection.
 
-| Singleton | Source | Consequence if duplicated |
+| Per cluster | What it is | A later `createPoolCluster` |
 | --- | --- | --- |
-| `Logger` | [src/utils/Logger.ts](../src/utils/Logger.ts) | A second `Logger.init()` would overwrite the log level and the app-supplied logger set by the first cluster. |
-| `Redis` | [src/Redis/Redis.ts:93](../src/Redis/Redis.ts#L93) | A second Redis singleton would overwrite the `clusterName` prefix and the injected `ioredis` client, mixing cache keys between clusters. |
-| `Metrics` | [src/metrics/Metrics.ts](../src/metrics/Metrics.ts) | The cluster name attribute is stored once; a second `init()` would relabel the metrics of the first cluster. The pools of every connected cluster are in one registry and report their connection metrics under that one name. Two pools with the same name, address and port become one series. |
-| `config` | [src/configs/index.ts](../src/configs/index.ts) | `config.current` holds one set of settings; calling `config.load(...)` again overwrites the first cluster's hosts, validators, and Redis settings. |
-| `Events` | [src/utils/Events.ts:4](../src/utils/Events.ts#L4) | The single `EventEmitter` would fan out `connected` / `disconnected` / `hashing_created` events from both clusters into every subscriber. |
+| Its logger | A view of the module `Logger` with the `logs.level` and the `logger` of the cluster's own settings. Every part of the cluster logs through it. | Leaves it as it is. |
+| Its metrics cluster name | The `clusterName` of its settings, on every point the cluster and its pools record, and on the pool connection metrics and node gauges read at collection. | Leaves it as it is. |
 
-**Net effect:** the library supports effectively one `GaleraCluster`
-per process. Constructing a second cluster against a different host
-set would silently corrupt the first one's configuration, metrics
-registry, and Redis prefix. If multi-cluster routing is needed, isolate
-each cluster in its own process.
+The pools, and what the constructor read off `config.current`, are the
+cluster's own as well.
+
+Every collaborator below is still exported as a module-level singleton.
+There is exactly one instance per Node process, regardless of how many
+times `createPoolCluster` is called.
+
+| Singleton | Source | What the clusters of one process share |
+| --- | --- | --- |
+| `Logger` | [src/utils/Logger.ts](../src/utils/Logger.ts) | The module logger, with the level and the logger of the last `createPoolCluster`. It logs what no cluster owns: `Initialized app`, the warning that `createPoolCluster` was called again, the lines of `Events` and `Redis`, and the first metric that failed to record. The logger of a cluster is a view of it: the methods are the module logger's, and only the level and the app's logger are the cluster's. |
+| `Metrics` | [src/metrics/Metrics.ts](../src/metrics/Metrics.ts) | One set of instruments on the meter of the app's provider, and one registry of the pools of every connected cluster, each kept with the name of its cluster. `init()` sets the name of a record that brings none: one of a part built without a cluster. Two pools with the same name, address, port and cluster name become one series. |
+| `config` | [src/configs/index.ts](../src/configs/index.ts) | `config.current` holds the settings of the last `createPoolCluster`. A cluster reads it only in its constructor, so an earlier cluster keeps its hosts, validators and Redis switch. |
+| `Redis` | [src/Redis/Redis.ts:93](../src/Redis/Redis.ts#L93) | One `ioredis` client and one key prefix: those of the last `createPoolCluster` that passed a `redisInstant`. The cache keys of two clusters mix under that prefix, and `disconnect()` of either cluster disconnects the shared client. |
+| `Events` | [src/utils/Events.ts:4](../src/utils/Events.ts#L4) | One `EventEmitter`: a listener added with `cluster.on()` of one cluster hears the `connected`, `disconnected`, `hashing_created` and pool events of every cluster. |
+
+**Net effect:** two clusters in one process keep their logs and their
+metrics apart. They share the event emitter and the Redis cache. If
+their listeners must not hear each other, or each needs a Redis cache of
+its own, isolate each cluster in its own process.
