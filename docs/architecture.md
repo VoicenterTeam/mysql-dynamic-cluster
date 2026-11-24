@@ -95,7 +95,8 @@ Each call walks the following steps:
    (the `if` block after the SQL is formatted).
 5. **Retry loop** — up to `retryCount` (capped by
    `_maxRetryCount(maxRetry, activePools.length)`)
-   pools are tried in order; the first success returns the result
+   pools are tried in order, skipping a pool that is no longer valid at
+   its turn (#151); the first success returns the result
    (the `for` loop in `query`). The next pool is tried only when the
    statement cannot have run on the one before: it was never sent, or
    the node answered 1047. Never after an error reply, a timeout or a
