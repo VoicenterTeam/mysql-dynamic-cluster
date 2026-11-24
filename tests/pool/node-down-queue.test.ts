@@ -259,6 +259,31 @@ describe('a node that goes down fails the requests that wait for its connections
             expect(failedCalls).toEqual([]);
         });
 
+    // The mark that lets a wrapped request of the check ask again is used up by the request
+    // the node failed. An app that hands that error to failWaiting() later fails the check
+    it('failWaiting() with an MDC_NODE_DOWN error the app caught fails a waiting legacy ' +
+        'check, as before 4.2.0', async () => {
+        const long = { queryTimeout: 0, timerCheckRange: { start: 1000, end: 600000 } };
+        const { pool, queue } = await connected(undefined, [PASS], long);
+        delete pool.query;
+        const app = pool.getConnection().then(() => 'resolved', (error: any) => error);
+        const deciding = pool.status.checkStatus();
+        queue.pop()(null, connection(NO));
+        await deciding;
+        const caught = await app;
+        expectNodeDown([caught]);
+        const waiting = pool.status.checkStatus();
+        expect(queue).toHaveLength(1);
+
+        expect(pool.failWaiting(caught)).toBe(1);
+        expect(queue).toHaveLength(0);
+        await waiting;
+
+        expect([pool.status.isValid, pool.status._failedChecks]).toEqual([false, 1]);
+        expect(pool.checkError).toEqual({});
+        expect(checkFailed).toHaveBeenCalledTimes(1);
+    });
+
     // known issue 16: a queue that is not the one mysql2 3 keeps
     it.each<[string, () => object, 'warn' | 'error', string]>([
         ['has no shift()', () => ({ length: 1, push: jest.fn() }), 'warn', 'cannot be read'],

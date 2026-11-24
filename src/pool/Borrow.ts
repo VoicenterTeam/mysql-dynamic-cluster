@@ -212,7 +212,8 @@ export class Borrow {
 
     /**
      * Mark the error a node that went down fails a waiting request with, see Pool. A request
-     * of a status query of the legacy check that gets it all the same asks mysql2 again
+     * of a status query of the legacy check that gets it all the same asks mysql2 again. The
+     * first request that gets the error uses the mark up
      * @param error the error, made by the pool
      * @returns the same error
      */
@@ -244,6 +245,10 @@ export class Borrow {
             // whichever comes first settles the call: the answer of mysql2, or the abort
             let aborted = false;
             const callback = (error: Error, connection: PoolConnection) => {
+                // The mark is used up here, so each error of a node that went down reaches
+                // one callback as such: one the app hands failWaiting() later fails a check
+                // as any error of the app does
+                const nodeDown = !!error && this._nodeDownErrors.delete(error);
                 // Passive health hears of a connection that could not be opened, also when
                 // the caller is gone by now. The abort itself is never told to it
                 if (error) this._pool.status.realFailure(error, true);
@@ -251,7 +256,7 @@ export class Borrow {
                 // A status query of the legacy check that a node going down failed, though it
                 // keeps its place: mysql2 queued a wrapper of this callback, as it does while
                 // its pool is traced. It asks again, at the end of the queue
-                if (check && !!error && this._nodeDownErrors.has(error)) return ask();
+                if (check && nodeDown) return ask();
                 stopListening();
                 if (error) return reject(error);
                 if (!connection) {
