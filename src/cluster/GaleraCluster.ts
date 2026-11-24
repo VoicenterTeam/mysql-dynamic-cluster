@@ -555,12 +555,13 @@ export class GaleraCluster {
         // Bound values stay apart from the text
         const formatted = queryOptions.execute ? sql : formatSQL();
         // A comment a server can skip, such as /*+ */ or /*!NNNNN */, and values in the text
-        // that can end it, open one in it, or stand where sql-escaper and the server see
-        // different quotes, see _hidesComment() (#134)
-        if (!queryOptions.execute && GaleraCluster._hidesComment(sql, formatted)) {
-            const error = Object.assign(new Error("query: a value holds /* or */ in a " +
-                "statement with a /*+ */ or /*!NNNNN */ comment, which the server can read as " +
-                "the end of that comment"), { code: 'MDC_UNSAFE_COMMENT_VALUE' });
+        // that can end it, open one in it, or stand where sql-escaper and the server read the
+        // text differently, see _unsafeComment() (#134)
+        const unsafeComment = queryOptions.execute
+            ? undefined : GaleraCluster._unsafeComment(sql, formatted);
+        if (unsafeComment) {
+            const error = Object.assign(new Error(unsafeComment),
+                { code: 'MDC_UNSAFE_COMMENT_VALUE' });
             record(undefined, error);
             throw error;
         }
@@ -929,7 +930,6 @@ export class GaleraCluster {
     // Where a comment a server can skip starts (#134): /*+, and /*! or MariaDB's /*M! followed
     // by a version, or by a placeholder that can write one
     private static readonly _skippedComment = /^\/\*(\+|M?!(\d|\?|:))/;
-    private static readonly _quote = /['"`]/;
 
     // how many times mark stands in text
     private static _marks(text: string, mark: string): number {
@@ -937,32 +937,47 @@ export class GaleraCluster {
     }
 
     /**
-     * Whether the values written into the text can change how a server reads a comment it can
-     * skip (#134): /*+ *\/, and /*! or MariaDB's /*M! with a version, or with a placeholder
-     * that can write one. The text of the app is searched as it is, also inside strings and
-     * other comments. A server that skips such a comment ends it at a *\/ and can take a /* in
-     * it as the start of a nested one, also in a value, so a statement with such a comment
-     * takes no value that adds a /* or a *\/. And sql-escaper reads a quote inside such a
-     * comment, from its start to the first *\/ after it, which the server skips, so where a
-     * value stands differs for the two: a statement with such a quote takes no value at all
+     * Why the values written into the text can change how a server reads a comment it can
+     * skip (#134), as the message of the error, or undefined. Such a comment is /*+ *\/, or
+     * /*! or MariaDB's /*M! with a version, or with a placeholder that can write one. The text
+     * of the app is searched as it is, also inside strings and other comments. The server ends
+     * such a comment at the first *\/ after it, or the end of the text.
+     * - A string, identifier or comment that sql-escaper reads as opening inside it, the
+     *   opener being code, and that ends after the server's end, or never ends: sql-escaper
+     *   and the server read the rest of the text differently, so no value can be written
+     * - A value that adds a /* or a *\/: it can end such a comment, or open one nested in it
      * @param sql MySQL query
      * @param formatted the text with the values written into it
      * @private
      */
-    private static _hidesComment(sql: string, formatted: string): boolean {
-        if (formatted === sql) return false;
+    private static _unsafeComment(sql: string, formatted: string): string | undefined {
+        if (formatted === sql) return undefined;
+        // a context that never ends runs past the end of sql
+        const text = sql + ' ';
         let skipped = false;
         for (let at = sql.indexOf('/*'); at !== -1; at = sql.indexOf('/*', at + 1)) {
             if (!GaleraCluster._skippedComment.test(sql.slice(at, at + 5))) continue;
             skipped = true;
-            const end = sql.indexOf('*/', at + 2);
-            if (GaleraCluster._quote.test(sql.slice(at, end === -1 ? sql.length : end + 2))) {
-                return true;
+            const close = sql.indexOf('*/', at + 2);
+            const end = close === -1 ? sql.length : close + 2;
+            for (let position = at + 2; position < end; position++) {
+                const contextEnd = GaleraCluster._contextEnd(text, position);
+                if (contextEnd === -1) continue;
+                if (contextEnd > end) {
+                    return "query: the text inside a /*+ */ or /*!NNNNN */ comment reads " +
+                        "differently to the server and to the escaper, so values cannot be " +
+                        "written into this statement. Use execute()";
+                }
+                position = contextEnd - 1;
             }
         }
         const marks = GaleraCluster._marks;
-        return skipped && (marks(formatted, '/*') > marks(sql, '/*')
-            || marks(formatted, '*/') > marks(sql, '*/'));
+        if (skipped && (marks(formatted, '/*') > marks(sql, '/*')
+            || marks(formatted, '*/') > marks(sql, '*/'))) {
+            return "query: a value holds /* or */ in a statement with a /*+ */ or /*!NNNNN */ " +
+                "comment, which the server can read as the end of that comment";
+        }
+        return undefined;
     }
 
     /**
