@@ -1,5 +1,30 @@
 # Changelog
 
+## 4.2.0-rc.1 (2026-11-24)
+
+### Added
+
+- **`onStep`, a query option called as an attempt enters each step** (#140).
+  - `query()` and `execute()` call `onStep(step, nodeId)` synchronously each time an attempt enters `queue`, `probe`, `prepare` or `statement`, and only when the step or the node changes.
+  - `statement` comes right after mysql2 took the statement, so from then on the statement counts as sent.
+  - When the call settles, the last `onStep` equals the step and node that `onTiming` reports. So an app knows at the moment it calls `abort()` whether the statement may have been sent, with no wait for `onTiming`.
+  - After a failed probe, the new request to mysql2 is `queue` again. `statement` on one node followed by `queue` on another means that node answered 1047 and did not run the statement.
+  - It follows the rules of `onTiming`. A value that is not a function rejects with a `TypeError` and `sent: false` before any node, and `null` counts as no option. A throw or a rejected promise is logged at most once per call and changes nothing. An `abort()` from inside it acts as an abort at that moment.
+  - It is not called for a Redis hit, a refusal before any node, or after the call settled. `getConnection()` and `multiStatementQuery()` do not take it.
+  - Without the option, nothing is allocated per attempt.
+
+### Changed
+
+- **A node that goes down fails the requests that wait for its connections** (#98).
+  - When a node goes from valid to down, for any reason and in both check modes, its pool fails every request waiting for one of its connections. Each request gets its own error: `code: 'MDC_NODE_DOWN'`, `sent: false`, `nodeId`, and a message that names the host.
+  - Before, those requests waited in mysql2's queue behind connection attempts of up to `connectTimeout` each, up to minutes.
+  - `query()` and `execute()` move such an attempt to the next node under the retry rule, and reject with that error when no try is left. `getConnection()` rejects with it.
+  - The legacy check's own status query that waits there is not failed.
+  - The error does not count for passive health. `error.type` of the metrics can now be `MDC_NODE_DOWN`.
+  - One info line names the host and how many requests were failed, when at least one was.
+  - These are not touched: requests that already hold a connection, logins already running, and requests that arrive after the down, including a retry through the node list the call took at its start (#151). So the worst wait left is one connect timeout.
+  - `failWaiting()` is unchanged.
+
 ## 4.1.1 (2026-11-24)
 
 The same code as 4.1.1-rc.2, which vc-dal tested on its unit and MySQL contract suites and a three-node Galera rig.
