@@ -6,11 +6,11 @@ import { cleanUp, describeRig, logger, readEnv } from './support';
 // The contract test of #134 on the three-node Galera rig (tests/rig/galera.sh), MySQL 8.0.42.
 // Skipped unless MDC_TEST_GALERA is set. A server that reads /*+ */ or /*!NNNNN */ as a plain
 // comment ends it at a */ inside the quotes of a value, and a skipped /*!NNNNN */ nests a /* of a
-// value in it: the rest of the value runs as SQL. The raw text is the one query() would send,
-// written by sql-escaper's format()
+// value in it: the rest of the value runs as SQL. A value can write the version of /*! too. The
+// raw text is the one query() would send, written by sql-escaper's format()
 
 // the statement with a ? for each value, and values that add a column named injected
-const CASES: [string, string, string[]][] = [
+const CASES: [string, string, (string | number)[]][] = [
     ['/*+ */ after a select item', 'SELECT 1 AS a /*+ ? */', ['*/ , 2 AS injected -- ']],
     ['/*+ */ in a hint position', 'SELECT /*+ QB_NAME(?) */ 2 AS a', ['*/ 1 AS injected, /*']],
     ['/*!99999 */, above the version of the server', 'SELECT 2 AS a /*!99999 ? */',
@@ -19,11 +19,14 @@ const CASES: [string, string, string[]][] = [
     ['a comment nested in /*!99999 */', 'SELECT 2 AS a /*!99999 /* note */ , ? AS b */',
         ['*/ , 1 AS injected -- ']],
     ['a /* in /*!99999 */, a */ after it', 'SELECT 1 AS a /*!99999 ? */ FROM t WHERE name = ?',
-        ['/*', '*/ , 1 AS injected -- ']]
+        ['/*', '*/ , 1 AS injected -- ']],
+    // the version written by a value
+    ['the version of /*! from a value', 'SELECT 2 AS a /*!? , ? AS b */',
+        [99999, '*/ , 1 AS injected -- ']]
 ];
 
 // the same statement with :v0, :v1 ... and an object of the values
-const named = (sql: string, values: string[]) => {
+const named = (sql: string, values: (string | number)[]) => {
     let k = 0;
     return {
         sql: sql.replace(/\?/g, () => ':v' + k++),

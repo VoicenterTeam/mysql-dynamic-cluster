@@ -15,11 +15,13 @@ import { GaleraCluster } from '../../src/cluster/GaleraCluster';
 import Metrics from '../../src/metrics/Metrics';
 import Redis from '../../src/Redis/Redis';
 
-// Values in a statement with a /*+ */ or /*!NNNNN */ comment (#134). A server that reads such a
-// comment as a plain one ends it at a */ a value adds, and may nest a /* a value adds in it,
-// so the rest of the value runs as SQL. Text of the app inside such a comment, such as a quote,
-// a -- or a #, can hide where a value stands. So query() refuses a value that adds a /* or a */
-// to a statement with such a comment anywhere. /*! */ alone is code to the server: no check.
+// Values in a statement with a comment a server can skip (#134): /*+ */, and /*! or MariaDB's
+// /*M! with a version, or with a placeholder that can write one. Such a server ends the comment
+// at a */ a value adds, and may nest a /* a value adds in it, so the rest of the value runs as
+// SQL. Text of the app inside such a comment, such as a quote, a -- or a #, can hide where a
+// value stands. So query() refuses a value that adds a /* or a */ to a statement with such a
+// comment anywhere, and any value written into a statement where such a comment holds a quote.
+// /*! */ alone is code to the server: no check.
 // A cluster with pools that record the sql they get, built without the config singletons
 const makeCluster = (valid = true, useRedis = false) => {
     const poolQuery = jest.fn().mockResolvedValue([]);
@@ -47,7 +49,7 @@ const raw = (sql: string) => ({ toSqlString: () => sql });
 
 beforeEach(() => jest.clearAllMocks());
 
-describe('a value that adds /* or */ to a statement with /*+ or /*!NNNNN is refused', () => {
+describe('a value that adds /* or */ to a statement with a skipped comment is refused', () => {
     it.each([
         // the inputs of the review: a comment nested in a skipped one, and a /* that opens one
         ['a */ after a comment nested in /*!99999 */',
@@ -77,6 +79,19 @@ describe('a value that adds /* or */ to a statement with /*+ or /*!NNNNN is refu
         ['the key of a plain object after SET', 'UPDATE t /*+ BKA(t) */ SET ?', [{ '*/x': 1 }]],
         // a */ made of the value and the text around it
         ['a raw value next to the text', 'SELECT 1 /*+ ?/ */', [raw('*')]],
+        // MariaDB's versioned comment, also with a comment nested in it
+        ['a */ after a comment nested in /*M!999999 */',
+            'SELECT 2 AS a /*M!999999 /* note */ , ? AS b */', [CLOSE]],
+        ['the same with a :name', 'SELECT 2 AS a /*M!999999 /* note */ , :v AS b */',
+            { v: CLOSE }],
+        ['a */ after /*M!999999 */', 'SELECT 1 AS a /*M!999999 x */ FROM t WHERE name = ?',
+            [CLOSE]],
+        // a value that writes the version
+        ['the version from a ?', 'SELECT 2 AS a /*!? , ? AS b */', [99999, CLOSE]],
+        ['the version from a :name', 'SELECT 2 AS a /*!:ver , :v AS b */',
+            { ver: 99999, v: CLOSE }],
+        ['the version from a ?, a /* in the comment, a */ after it',
+            'SELECT 1 AS a /*!? ? */ FROM t WHERE name = ?', [99999, '/*', CLOSE]],
         // the text is searched as it is: a /*+ inside a string counts too
         ['/*+ inside a string', "SELECT '/*+', ?", [CLOSE]]
     ])('%s', async (_where, sql, values) => {
@@ -122,6 +137,55 @@ describe('a value that adds /* or */ to a statement with /*+ or /*!NNNNN is refu
     });
 });
 
+// sql-escaper reads a quote inside a comment the server skips: a value can stand in a string
+// for one and outside it for the other, with no /* or */ in it
+describe('a value written into a statement whose skipped comment holds a quote is refused', () => {
+    it.each([
+        ['an apostrophe in /*!99999 */',
+            "SELECT 1 /*!99999 it's */ AS a, 'why?' AS q FROM t WHERE id = ?", [' OR 1=1 -- ']],
+        ['an apostrophe in a hint', "SELECT /*+ BKA(') */ a FROM t WHERE b = ' AND c = ?",
+            [' OR 1=1 -- ']],
+        ['the same with a :name', "SELECT /*+ BKA(') */ a FROM t WHERE b = ' AND c = :v",
+            { v: ' OR 1=1 -- ' }],
+        ['a double quote in a hint', 'SELECT /*+ QB_NAME("q") */ a FROM t WHERE b = ?', [1]],
+        ['a backtick in a hint', 'SELECT /*+ BKA(`t`) */ a FROM t WHERE b = ?', [1]],
+        ['a quote in /*M!999999 */', "SELECT 1 /*M!999999 it's */ AS a FROM t WHERE id = ?", [1]],
+        ['a quote in an unterminated hint', "SELECT ? /*+ BKA(')", [1]]
+    ])('%s', async (_where, sql, values) => {
+        const { cluster, poolQuery } = makeCluster();
+        const lookup = jest.spyOn(cluster as any, '_getActivePools');
+
+        const error = await cluster.query(sql, values as any).catch(thrown => thrown);
+
+        expect(error.code).toBe('MDC_UNSAFE_COMMENT_VALUE');
+        expect(error.message).toBe(MESSAGE);
+        expect(lookup).not.toHaveBeenCalled();
+        expect(poolQuery).not.toHaveBeenCalled();
+        expect(Metrics.recordQuery).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ['no values', "SELECT /*+ SET_VAR(sql_mode = 'ANSI') */ 1", undefined],
+        ['values that write nothing', "SELECT /*+ SET_VAR(sql_mode = 'ANSI') */ 1", []],
+        ['a :name the object does not have', "SELECT /*+ SET_VAR(sql_mode = 'ANSI') */ :x",
+            { y: 1 }]
+    ])('a quote in a hint with %s is sent as it is', async (_where, sql, values) => {
+        const { sent } = makeCluster();
+        expect(await sent(sql, values)).toBe(sql);
+    });
+
+    it('a quote in a hint with execute() is sent as it is', async () => {
+        const { cluster, poolQuery } = makeCluster();
+        await cluster.execute("SELECT /*+ SET_VAR(sql_mode = 'ANSI') */ ?", [1]);
+        expect(poolQuery.mock.calls[0][0]).toBe("SELECT /*+ SET_VAR(sql_mode = 'ANSI') */ ?");
+    });
+
+    it('a quote after the end of the hint does not count', async () => {
+        const { sent } = makeCluster();
+        expect(await sent("SELECT /*+ BKA(t) */ 'x', ?", [1])).toBe("SELECT /*+ BKA(t) */ 'x', 1");
+    });
+});
+
 describe('everything else is written as before', () => {
     it.each([
         ['MAX_EXECUTION_TIME(:ms) with a number', 'SELECT /*+ MAX_EXECUTION_TIME(:ms) */ 1',
@@ -145,7 +209,14 @@ describe('everything else is written as before', () => {
         ['a */ in /*! */', 'SELECT 2 AS a /*! , ? AS b */', [CLOSE],
             "SELECT 2 AS a /*! , '*/ , 1 AS injected -- ' AS b */"],
         ['a :name with */ in /*! */', 'SELECT 2 AS a /*! , :v AS b */', { v: CLOSE },
-            "SELECT 2 AS a /*! , '*/ , 1 AS injected -- ' AS b */"]
+            "SELECT 2 AS a /*! , '*/ , 1 AS injected -- ' AS b */"],
+        // /*! with a space before the digits is run as code too
+        ['a */ in /*! 99999 */', 'SELECT 2 AS a /*! 99999 , ? AS b */', [CLOSE],
+            "SELECT 2 AS a /*! 99999 , '*/ , 1 AS injected -- ' AS b */"],
+        // a /*+ inside a value is a string to the server
+        ['a value holding /*+', 'SELECT ? AS a', ['/*+ x */'], "SELECT '/*+ x */' AS a"],
+        // sql-escaper reads /*M! as a plain comment: a ? in it stays text
+        ['a ? inside /*M! */', 'SELECT 2 AS a /*M!? */', [999999], 'SELECT 2 AS a /*M!? */']
     ])('%s', async (_where, sql, values, expected) => {
         const { sent } = makeCluster();
         expect(await sent(sql, values)).toBe(expected);

@@ -64,7 +64,8 @@ describe.each([
         expect(records()[0].error).toBeTruthy();
     });
 
-    it('is recorded once when no node is valid and Redis is read for stale data', async () => {
+    // the values go into the text before the service name and the nodes are looked up (#134)
+    it('is recorded once, before Redis is read, when no node is valid and Redis is on', async () => {
         const boom = new Error('toSqlString failed');
         const cluster = makeCluster([node(1, false)], true);
 
@@ -72,6 +73,22 @@ describe.each([
 
         expect(records()).toEqual([expect.objectContaining({ source: undefined, error: boom })]);
         expect(Redis.get).not.toHaveBeenCalled();
+    });
+
+    it('rejects with its own error before the service name and the nodes are looked up, ' +
+        'when no node is valid and Redis is off', async () => {
+        const boom = new Error('toSqlString failed');
+        const cluster = makeCluster([node(1, false)]);
+        const getID = jest.fn().mockResolvedValue(5);
+        cluster._serviceNames = { getID };
+        const lookup = jest.spyOn(cluster, '_getActivePools');
+
+        await expect(cluster.query(sql, valuesOf(raising(boom)), { serviceName: 'svc' }))
+            .rejects.toBe(boom);
+
+        expect(getID).not.toHaveBeenCalled();
+        expect(lookup).not.toHaveBeenCalled();
+        expect(records()).toEqual([expect.objectContaining({ source: undefined, error: boom })]);
     });
 });
 // The check of the placeholders of an object of values runs before _formatSQL: what it throws
