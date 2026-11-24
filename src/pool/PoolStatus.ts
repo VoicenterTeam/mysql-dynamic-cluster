@@ -439,7 +439,15 @@ export class PoolStatus {
         this._isValid = valid;
         if (!changed) return;
         if (this._healthCheck) this._logState(valid, reason);
-        if (!valid) this._wentDown?.();
+        if (valid || !this._wentDown) return;
+        // the pool fails the requests that wait. What it throws must not stop a check or
+        // reach a callback of mysql2
+        try {
+            this._wentDown();
+        } catch (thrown) {
+            Logger.error("Pool " + this._pool.name + ": failing the requests that waited for " +
+                "a connection threw: " + PoolStatus._errorText(thrown));
+        }
     }
 
     /**

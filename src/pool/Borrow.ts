@@ -67,6 +67,8 @@ export class Borrow {
     private readonly _unsearchable = new WeakSet<object>();
     // the callbacks of the requests of the status queries of the legacy check, see isCheck()
     private readonly _checks = new WeakSet<object>();
+    // the errors a node that went down failed the waiting requests with, see markNodeDown()
+    private readonly _nodeDownErrors = new WeakSet<object>();
 
     /**
      * @param _probeIdle time in ms a connection may be idle before it is probed
@@ -209,6 +211,17 @@ export class Borrow {
     }
 
     /**
+     * Mark the error a node that went down fails a waiting request with, see Pool. A request
+     * of a status query of the legacy check that gets it all the same asks mysql2 again
+     * @param error the error, made by the pool
+     * @returns the same error
+     */
+    public markNodeDown<E extends object>(error: E): E {
+        this._nodeDownErrors.add(error);
+        return error;
+    }
+
+    /**
      * One request to mysql2, the queue and the abort while it waits there. With a signal the
      * wait ends when the signal aborts: the request leaves the queue of mysql2, and a
      * connection that still arrives for it goes back to the pool
@@ -235,6 +248,10 @@ export class Borrow {
                 // the caller is gone by now. The abort itself is never told to it
                 if (error) this._pool.status.realFailure(error, true);
                 if (aborted) return this._releaseLate(connection);
+                // A status query of the legacy check that a node going down failed, though it
+                // keeps its place: mysql2 queued a wrapper of this callback, as it does while
+                // its pool is traced. It asks again, at the end of the queue
+                if (check && !!error && this._nodeDownErrors.has(error)) return ask();
                 stopListening();
                 if (error) return reject(error);
                 if (!connection) {
@@ -258,13 +275,16 @@ export class Borrow {
                 reject(abortReason(signal));
             });
 
-            try {
-                mysqlPool.getConnection(callback);
-            } catch (thrown) {
-                // a listener of an event of mysql2 threw. The call fails, as it did before
-                stopListening();
-                reject(thrown);
-            }
+            const ask = () => {
+                try {
+                    mysqlPool.getConnection(callback);
+                } catch (thrown) {
+                    // a listener of an event of mysql2 threw. The call fails, as it did before
+                    stopListening();
+                    reject(thrown);
+                }
+            };
+            ask();
         });
     }
 

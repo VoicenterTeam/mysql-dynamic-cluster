@@ -739,12 +739,19 @@ export class Pool {
      * failWaiting() does, each with an MDC_NODE_DOWN error of its own. The status query of the
      * legacy check that waits keeps its place, so the check counts no failure for it.
      * Connections in use and logins that are still running are left alone. PoolStatus calls it.
-     * One info line when a request was failed
+     * One info line when a request was failed. A queue that is not the one mysql2 3 keeps is
+     * left as it is, with one warn line
      * @private
      */
     private _nodeWentDown(): void {
         const queue = (this._pool as any)?._connectionQueue;
         if (!queue) return;
+        if (typeof queue.shift !== 'function' || typeof queue.push !== 'function') {
+            Logger.warn("Pool " + this.name + " went down, but the queue of this mysql2 " +
+                "cannot be read: the requests that wait for a connection stay in it",
+                { nodeId: this.id, pool: this.name });
+            return;
+        }
         const failed = this._failQueue(
             queue, () => this._nodeDownError(), callback => this._borrow.isCheck(callback)
         );
@@ -763,9 +770,9 @@ export class Pool {
     private _nodeDownError(): Error {
         const error = new Error("The node " + this.host + ":" + this.port +
             " went down while the request waited for a connection");
-        return Object.assign(PoolStatus.ownError(error), {
+        return this._borrow.markNodeDown(Object.assign(PoolStatus.ownError(error), {
             code: 'MDC_NODE_DOWN', sent: false, nodeId: this.id
-        });
+        }));
     }
 
     /**
