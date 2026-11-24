@@ -397,7 +397,8 @@ count toward `maxRetry` or `errorRetryCount`. When no node is left, the call rej
 the error of the last node tried, as before (not `MDC_NO_NODE_AVAILABLE`), and the stale
 Redis fallback works as before. The first attempt and the retry rule below are unchanged.
 
-First success records the query with source `pool` and returns. Each failure is kept as `{ nodeId, error }` in
+First success records the query with source `pool` and returns.
+Each failure is kept as `{ nodeId, error }` in
 `errors`. The loop goes on to the next pool only when the statement cannot
 have run on the one that failed, so one call never writes twice.
 
