@@ -1,5 +1,31 @@
 # Changelog
 
+## 4.1.1-rc.1 (2026-11-24)
+
+### Fixed
+
+- **`query()` refuses values that a `/*+ */` or `/*!NNNNN */` comment can turn into SQL** (#134). A server that skips such a comment ends it at a `*/`, also one written by a value, and takes a `/*` in it as a nested comment. A rig with MySQL 8.0.42 ran a value written there as SQL. `query()` now rejects with `code: 'MDC_UNSAFE_COMMENT_VALUE'`, before any node is asked, in two cases. In the first, the statement holds `/*+`, MariaDB's `/*M!`, or a `/*!` followed by a version or by a placeholder that can write one, and its values add a `/*` or a `*/`. In the second, values are written into a statement where such a comment holds a `/*`, or where a string, identifier or comment opens inside such a comment and runs past its end, so the server and sql-escaper read the rest differently. That case has its own message, which points to `execute()`. Balanced quotes in a hint (`SET_VAR(sql_mode = 'X')`), `MAX_EXECUTION_TIME(:ms)`, `/*! */` alone, statements without such a comment and `execute()` are unchanged. Two harmless shapes are refused too: an opener inside a string with no `*/` after it, such as `LIKE '%/*+%'`, and a `/*` nested in a hint. Use `execute()` for them. `query()` also writes the values into the text once, before it waits for anything. So a `toSqlString()` runs once, a later change to the values does not reach the text, and a value that throws while it is written rejects with its own error before the service-name lookup and before `MDC_NO_NODE_AVAILABLE`.
+- **The log line of a failed attempt names the error** (#106). It carries the `code` and the `errno`. An `AggregateError`, `undefined` or `null` is named, where the line used to end at the colon.
+- **An error whose `errors`, `code` or `errno` throws when it is read no longer replaces the error of the call** (#106). The call is recorded, and its query-duration point is still written.
+- **A throw while values are written into the text is recorded as a failed query** (#48), also a throw while the placeholders of an object of values are checked, and also on the stale-cache path.
+- **A pinned node that is not valid is left out** (#43). The node a service is pinned to is never the first attempt when it is not valid. Cluster hashing builds its schema on the first valid node.
+- **`connect()` of a cluster** (#61):
+  - A cluster without hosts resolves at once.
+  - `connect()` rejects with a string for any rejection of a pool, and `ready` and `firstReady` resolve, also for a value that cannot be made text.
+  - A second `connect()` without `disconnect()` settles. It settles within one tick when the cluster is connected, and otherwise with the connect that is running. It keeps its own `ready` and `firstReady`.
+  - A `connect()` that `disconnect()` came after no longer marks the cluster connected, starts hashing, or emits `connected` or `hashing_created` after `disconnected`, also when `disconnect()` comes while the hashing runs.
+  - Overlapping connects of cluster hashing share one run. A run that `disconnect()` stopped no longer interleaves its schema statements with the next run or marks hashing connected.
+  - A pool no longer emits `pool_connected` after `pool_disconnected` when a `disconnect()` or a later `connect()` comes during the health check of its `connect()`.
+- **Listeners that throw** (#61). A `connection`, `acquire`, `release`, `pool_connected` or `pool_disconnected` listener that throws is logged at warn. It no longer loses a connection, leaves `getConnection()` or `query()` pending, rejects `connect()`, or cuts `cluster.disconnect()` short. Such a listener also no longer keeps the listeners after it from the event: the first throw still reaches the code that emitted the event, and later ones are logged at warn with the name of the event. A `pool_check_failed` listener that throws a value whose stack cannot be read no longer rejects the health check.
+- **`failWaiting()` logs one info line** with the host and how many requests it failed (#61).
+- **The idle reaper** (#102) no longer logs a false "an idle connection failed its ping and was closed" for a connection its age rule closed. On a node without a `healthCheck` block, it forgets and drops idle connections that mysql2 took out of its pool.
+- **A health check no longer asks again on a new connection** when a check connection that was still logging in is lost (#97). A check that asks on a new connection writes one debug line with how that connection ended.
+- **One warn per host about its id** (#71): an id that is negative, not an integer, shared with another host, or above 127 with `useClusterHashing`. Ids the cluster gave are included, and the warning about a replaced id 0 is merged into it.
+
+### Changed
+
+- **The package no longer ships source maps** (#38). `sourceMap` is off in `tsconfig.build.json`, so the tarball holds 78 files instead of 112.
+
 ## 4.1.0 (2026-11-23)
 
 The same code as 4.1.0-rc.1, which vc-dal tested on its unit and MySQL contract suites and a three-node Galera rig.
