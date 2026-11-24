@@ -538,7 +538,7 @@ describe('createPoolCluster', () => {
         expect(config.current.clusterName).toBe('first');
     });
 
-    it('warns the logger of the first cluster when createPoolCluster is called again, saying what it keeps', () => {
+    it('warns the first cluster of a second call, with what it keeps', () => {
         const { createPoolCluster, config } = loadPackage();
         const first = makeLogger();
         const second = makeLogger();
@@ -551,6 +551,8 @@ describe('createPoolCluster', () => {
         expect(first.warn).toHaveBeenCalledWith(expect.stringContaining('called again'));
         expect(first.warn).toHaveBeenCalledWith(expect.stringContaining(
             'the earlier cluster keeps its own hosts, logger and metrics name'));
+        expect(first.warn).toHaveBeenCalledWith(expect.stringContaining(
+            'the Redis client and the events are shared'));
         expect(second.warn).not.toHaveBeenCalled();
     });
 
