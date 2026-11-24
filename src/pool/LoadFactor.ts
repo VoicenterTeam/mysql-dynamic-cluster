@@ -4,18 +4,23 @@
 
 import { GlobalStatusResult, ILoadFactorParams } from "../types/PoolInterfaces";
 import Logger from "../utils/Logger";
+import { ILogger } from "../types/LoggerInterfaces";
 
 /**
  * Load factor for pools to easily sort them
  */
 export class LoadFactor {
     private _loadFactors: ILoadFactorParams[];
+    // the logger of the cluster of the pool (#86)
+    private readonly _logger: ILogger;
 
     /**
      * @param loadFactors parameters by which values pools should sort
+     * @param logger the logger of the cluster. Left out: the module logger
      */
-    constructor(loadFactors: ILoadFactorParams[]) {
+    constructor(loadFactors: ILoadFactorParams[], logger: ILogger = Logger) {
         this._loadFactors = loadFactors;
+        this._logger = logger;
     }
 
     /**

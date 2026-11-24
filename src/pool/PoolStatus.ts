@@ -4,6 +4,8 @@
 
 import { GlobalStatusResult, ICheckOutcome } from "../types/PoolInterfaces";
 import Logger from "../utils/Logger";
+import { ILogger } from "../types/LoggerInterfaces";
+import { IClusterContext } from "../types/ClusterContextInterfaces";
 import Events from "../utils/Events";
 import { Utils } from "../utils/Utils";
 import { Timer } from "../utils/Timer";
@@ -115,6 +117,9 @@ export class PoolStatus {
     private readonly _healthCheck?: IHealthCheck;
     // called when the node goes from valid to down
     private readonly _wentDown?: () => void;
+    // the logger and the metrics name of the cluster of the pool (#86)
+    private readonly _context: IClusterContext;
+    private readonly _logger: ILogger;
 
     /**
      * @param pool pool of what status to check
@@ -122,8 +127,15 @@ export class PoolStatus {
      * @param active default pool active status before status check
      * @param wentDown called when the node goes from valid to down, after the line that says
      * so: the pool fails the requests that wait for one of its connections
+     * @param context the logger and the metrics name of the cluster. Left out: the module
+     * logger, and the name of Metrics.init
      */
-    constructor(pool: Pool, settings: IUserPoolSettings, active: boolean, wentDown?: () => void) {
+    constructor(
+        pool: Pool, settings: IUserPoolSettings, active: boolean, wentDown?: () => void,
+        context: IClusterContext = { logger: Logger }
+    ) {
+        this._context = context;
+        this._logger = context.logger;
         this._pool = pool;
         this._wentDown = wentDown;
 
@@ -132,8 +144,8 @@ export class PoolStatus {
         this._isValid = false;
         this._loadScore = 100000;
 
-        this._validator = new Validator(this, settings.validators);
-        this._loadFactor = new LoadFactor(settings.loadFactors);
+        this._validator = new Validator(this, settings.validators, this._logger);
+        this._loadFactor = new LoadFactor(settings.loadFactors, this._logger);
 
         // complete by now: Settings.mixSettings filled both halves from the defaults
         this.timerCheckRange = settings.timerCheckRange as ITimerCheckRange;

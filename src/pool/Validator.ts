@@ -4,6 +4,7 @@
 
 import { GlobalStatusResult, IValidatorParams } from "../types/PoolInterfaces";
 import Logger from "../utils/Logger";
+import { ILogger } from "../types/LoggerInterfaces";
 import { PoolStatus } from "./PoolStatus";
 
 /**
@@ -12,14 +13,18 @@ import { PoolStatus } from "./PoolStatus";
 export class Validator {
     private readonly _poolStatus: PoolStatus;
     private _validators: IValidatorParams[];
+    // the logger of the cluster of the pool (#86)
+    private readonly _logger: ILogger;
 
     /**
      * @param pool pool what check by validators
      * @param validators validators params by which to check possibility handle queries
+     * @param logger the logger of the cluster. Left out: the module logger
      */
-    constructor(pool: PoolStatus, validators: IValidatorParams[]) {
+    constructor(pool: PoolStatus, validators: IValidatorParams[], logger: ILogger = Logger) {
         this._poolStatus = pool;
         this._validators = validators;
+        this._logger = logger;
     }
 
     /**

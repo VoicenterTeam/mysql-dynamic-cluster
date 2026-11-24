@@ -1,5 +1,6 @@
 import mysql from "mysql2";
 import Logger from "../utils/Logger";
+import { ILogger } from "../types/LoggerInterfaces";
 import { PoolStatus } from "./PoolStatus";
 import { drop } from "./ServerFlags";
 import { NOT_READY, timeoutError } from "../utils/Abort";
@@ -61,13 +62,15 @@ export class SessionState {
      * @param maxStatements the maxPreparedStatements of the pool: how many texts are kept
      * @param _resetAfterStatements the replies after which a connection counts as dirty, so
      * its release resets it: prepared statements a procedure left on it cannot pile up
+     * @param _logger the logger of the cluster of the pool (#86). Left out: the module logger
      */
     constructor(
         private readonly _poolName: string,
         private readonly _database: string,
         private readonly _resetTimeout: number,
         private readonly _maxStatements: number,
-        private readonly _resetAfterStatements: number
+        private readonly _resetAfterStatements: number,
+        private readonly _logger: ILogger = Logger
     ) {}
 
     /**

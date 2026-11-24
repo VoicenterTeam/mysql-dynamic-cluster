@@ -6,6 +6,7 @@ import {
     INodeReadyResult
 } from './src/types/NodeInterfaces';
 import { IQueryTiming, QueryStep } from './src/types/PoolInterfaces';
+import { IClusterContext } from './src/types/ClusterContextInterfaces';
 import Logger from "./src/utils/Logger";
 import { Settings } from "./src/utils/Settings";
 import Redis from "./src/Redis/Redis";
@@ -22,7 +23,7 @@ function createPoolCluster(userSettings: IUserSettings): GaleraCluster {
     const { redisInstant, logger, ...settings } = userSettings;
     config.load(Settings.mixSettings(settings as IUserSettings));
     init(redisInstant, logger);
-    return new GaleraCluster();
+    return new GaleraCluster(clusterContext(logger));
 }
 
 /**
@@ -44,6 +45,18 @@ function init(redisInstant, logger?: ILogger): void {
         Redis.init(redisInstant, config.current.clusterName, config.current.redis);
     }
     Logger.info("Initialized app");
+}
+
+/**
+ * What the new cluster keeps for itself (#86): a logger with the level and the logger of the app
+ * of the settings just loaded, and their clusterName for its metrics. A later createPoolCluster
+ * changes neither. The logger is a view of the module logger: its methods are those of the
+ * module logger, looked up at each call, and only the level and the logger of the app are its own
+ */
+function clusterContext(logger?: ILogger): IClusterContext {
+    const clusterLogger = Object.create(Logger);
+    clusterLogger.init(config.current.logs.level, logger);
+    return { logger: clusterLogger, clusterName: config.current.clusterName };
 }
 
 export {

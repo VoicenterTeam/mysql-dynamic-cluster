@@ -1,6 +1,7 @@
 import mysql from "mysql2";
 import { drop, logOut } from "./ServerFlags";
 import Logger from "../utils/Logger";
+import { ILogger } from "../types/LoggerInterfaces";
 
 /**
  * The connection the health check of a node with a healthCheck block asks on: one per
@@ -26,16 +27,20 @@ export class CheckConnection {
     private readonly _options: object;
     private readonly _database: string;
     private readonly _name: string;
+    // the logger of the cluster of the node (#86)
+    private readonly _logger: ILogger;
 
     /**
      * @param options what mysql2 opens the connection with: those of the pool of the node
      * @param database the database of the node, for the change of user ahead of a query
      * @param name the name of the pool of the node, for the log
+     * @param logger the logger of the cluster. Left out: the module logger
      */
-    constructor(options: object, database: string, name: string) {
+    constructor(options: object, database: string, name: string, logger: ILogger = Logger) {
         this._options = options;
         this._database = database;
         this._name = name;
+        this._logger = logger;
     }
 
     /**

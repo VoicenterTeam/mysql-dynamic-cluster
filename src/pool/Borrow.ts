@@ -1,6 +1,7 @@
 import mysql, { PoolConnection } from "mysql2";
 import { performance } from "perf_hooks";
 import Logger from "../utils/Logger";
+import { ILogger } from "../types/LoggerInterfaces";
 import { IAbortOutcome, IAttemptTiming } from "../types/PoolInterfaces";
 import { PoolStatus } from "./PoolStatus";
 import { SessionState } from "./SessionState";
@@ -73,13 +74,15 @@ export class Borrow {
     /**
      * @param _probeIdle time in ms a connection may be idle before it is probed
      * @param _probeTimeout time in ms a probe may take before the connection is destroyed
+     * @param _logger the logger of the cluster of the pool (#86). Left out: the module logger
      */
     constructor(
         private readonly _pool: IBorrowPool,
         private readonly _session: SessionState,
         private readonly _reaper: IdleConnectionReaper,
         private readonly _probeIdle: number,
-        private readonly _probeTimeout: number
+        private readonly _probeTimeout: number,
+        private readonly _logger: ILogger = Logger
     ) {}
 
     /**

@@ -4,6 +4,8 @@
 
 import mysql, { PoolConnection } from "mysql2";
 import Logger from "../utils/Logger";
+import { ILogger } from "../types/LoggerInterfaces";
+import { IClusterContext } from "../types/ClusterContextInterfaces";
 import { PoolStatus } from './PoolStatus'
 import Metrics from "../metrics/Metrics";
 import {
@@ -82,6 +84,9 @@ export class Pool {
     private readonly _session: SessionState;
     // where every connection of the pool is taken and given back
     private readonly _borrow: Borrow;
+    // the logger and the metrics name of the cluster of this pool (#86)
+    private readonly _context: IClusterContext;
+    private readonly _logger: ILogger;
 
     /**
      * Connections that can still be handed out: limit minus connections in use.
@@ -97,8 +102,16 @@ export class Pool {
     /**
      * @param settings pool settings
      * @param clusterName cluster name used for prefix
+     * @param context the logger and the metrics name of the cluster. Left out: the module
+     * logger, and the name of Metrics.init
      */
-    constructor(settings: IUserPoolSettings, clusterName: string) {
+    constructor(
+        settings: IUserPoolSettings,
+        clusterName: string,
+        context: IClusterContext = { logger: Logger }
+    ) {
+        this._context = context;
+        this._logger = context.logger;
         this.id = settings.id;
         this.host = settings.host;
         this.port = settings.port;
@@ -120,7 +133,7 @@ export class Pool {
         this._maxPreparedStatements = settings.maxPreparedStatements ?? 100;
         this._session = new SessionState(
             this.name, this._database, settings.resetTimeout ?? 1000, this._maxPreparedStatements,
-            settings.resetAfterStatements ?? 1000
+            settings.resetAfterStatements ?? 1000, this._logger
         );
 
         this._reaper = new IdleConnectionReaper(
@@ -130,7 +143,7 @@ export class Pool {
         );
 
         this._checksApart = !!settings.healthCheck;
-        this._status = new PoolStatus(this, settings, false, () => this._nodeWentDown());
+        this._status = new PoolStatus(this, settings, false, () => this._nodeWentDown(), context);
         this._borrow = new Borrow({
             id: this.id,
             name: this.name,
@@ -138,7 +151,8 @@ export class Pool {
             status: this._status,
             mysqlPool: () => this._pool,
             notConnected: () => this._notConnected()
-        }, this._session, this._reaper, settings.probeIdle ?? 1000, settings.probeTimeout ?? 1000);
+        }, this._session, this._reaper, settings.probeIdle ?? 1000, settings.probeTimeout ?? 1000,
+            this._logger);
 
         Logger.info("configuration pool finished in host: " + this.host);
     }
@@ -170,7 +184,8 @@ export class Pool {
         const replaced = this._check;
         this._check = this._checksApart
             ? new CheckConnection(
-                { ...this._connectionOptions(), ...flagsOption }, this._database, this.name)
+                { ...this._connectionOptions(), ...flagsOption }, this._database, this.name,
+                this._logger)
             : undefined;
         replaced?.close(this._check);
 

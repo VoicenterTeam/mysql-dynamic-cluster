@@ -4,6 +4,7 @@
 
 import { GaleraCluster } from "./GaleraCluster";
 import Logger from "../utils/Logger";
+import { ILogger } from "../types/LoggerInterfaces";
 import { Timer } from "../utils/Timer";
 import { IServiceNodeMap } from "../types/PoolInterfaces";
 import { readFileSync, readdirSync }  from 'fs'
@@ -30,13 +31,20 @@ export class ClusterHashing {
     // Bumping it drops and rebuilds the schema, and older versions sharing it would drop it back.
     // Keep schema changes backward compatible and apply them in _upgradeInPlace instead
     private readonly _databaseVersion: number = 1;
+    // the logger of the cluster (#86)
+    private readonly _logger: ILogger;
 
     /**
      * @param cluster cluster for what hashing data
      * @param clusterName cluster name used for prefix
      * @param options cluster settings
+     * @param logger the logger of the cluster. Left out: the module logger
      */
-    constructor(cluster: GaleraCluster, clusterName: string, options: IClusterHashingSettings) {
+    constructor(
+        cluster: GaleraCluster, clusterName: string, options: IClusterHashingSettings,
+        logger: ILogger = Logger
+    ) {
+        this._logger = logger;
         Logger.debug("Configuring hashing in cluster...");
         this._cluster = cluster;
         this._nextCheckTime = options.nextCheckTime;

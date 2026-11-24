@@ -8,6 +8,8 @@ import {
     QueryResult, QueryStep
 } from '../types/PoolInterfaces'
 import Logger from "../utils/Logger";
+import { ILogger } from "../types/LoggerInterfaces";
+import { IClusterContext } from "../types/ClusterContextInterfaces";
 
 import { PoolConnection } from 'mysql2';
 // The format() and escape() mysql2 exports are these. Taken from the package's own dependency,
@@ -54,6 +56,13 @@ export class GaleraCluster {
 
     private readonly _clusterName: string;
     private readonly _nullServiceName: string = "mdc"
+    // the logger and the metrics name of this cluster, which it hands to its pools, its
+    // hashing and its service names (#86). Not set on a cluster its constructor did not build
+    private readonly _context?: IClusterContext;
+    // the logger of this cluster, or the module logger when it has no context
+    private get _logger(): ILogger {
+        return this._context?.logger ?? Logger;
+    }
 
     // the connect of the cluster that the first pool to pass started: the hashing, the event
     // and the log line. A later connect() call settles with it
@@ -92,9 +101,11 @@ export class GaleraCluster {
     }
 
     /**
-     * @param userSettings global user settings
+     * @param context the logger and the metrics name of this cluster. Left out: the module
+     * logger, and the name of Metrics.init
      */
-    constructor() {
+    constructor(context?: IClusterContext) {
+        this._context = context;
         Logger.debug("Configuring cluster...");
 
         this._useClusterHashing = config.current.useClusterHashing
@@ -116,7 +127,7 @@ export class GaleraCluster {
             }
             // a host without `host` never gets here: the settings schema rejects it
             this._pools.push(
-                new Pool(poolSettings, this._clusterName)
+                new Pool(poolSettings, this._clusterName, context)
             )
         })
         // One warning per host at most (#71). The app that wrote 0 is told when the node got
@@ -143,9 +154,11 @@ export class GaleraCluster {
             }
         })
 
-        this._serviceNames = new ServiceNames(this, config.current.serviceMetrics);
+        this._serviceNames = new ServiceNames(this, config.current.serviceMetrics, this._logger);
         const hashingSettings = config.current.clusterHashing;
-        this._clusterHashing = new ClusterHashing(this, this._clusterName, hashingSettings);
+        this._clusterHashing = new ClusterHashing(
+            this, this._clusterName, hashingSettings, this._logger
+        );
 
         Logger.info("Cluster configuration finished");
     }

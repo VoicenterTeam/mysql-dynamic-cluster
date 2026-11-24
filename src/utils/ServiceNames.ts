@@ -4,6 +4,7 @@
 
 import { GaleraCluster } from "../cluster/GaleraCluster";
 import Logger from "./Logger";
+import { ILogger } from "../types/LoggerInterfaces";
 import { IServiceMetricsSettings } from "../types/MetricsInterfaces";
 
 interface ServiceNameResult {
@@ -15,11 +16,14 @@ export default class ServiceNames {
     private _cluster: GaleraCluster;
     private readonly _database: string;
     private readonly _table: string;
+    // the logger of the cluster (#86). The module logger when the cluster passes none
+    private readonly _logger: ILogger;
 
-    constructor(cluster: GaleraCluster, options: IServiceMetricsSettings) {
+    constructor(cluster: GaleraCluster, options: IServiceMetricsSettings, logger: ILogger = Logger) {
         this._cluster = cluster;
         this._database = options.database;
         this._table = options.table;
+        this._logger = logger;
     }
 
     public async getID(serviceName: string): Promise<number> {
