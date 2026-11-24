@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.2.0-rc.4 (2026-11-24)
+
+### Changed
+
+- **The warning of a second `createPoolCluster` says what the earlier cluster keeps** (#86). It now reads "createPoolCluster was called again: the earlier cluster keeps its own hosts, logger and metrics name; the Redis client and the events are shared with the new one". The old text said the settings of the earlier cluster were replaced, which has not been true since 4.2.0-rc.3. The prefix is unchanged.
+
 ## 4.2.0-rc.3 (2026-11-24)
 
 ### Changed
