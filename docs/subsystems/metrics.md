@@ -360,7 +360,8 @@ Notes on cardinality and content:
   `error.type` is its code and `db.response.status_code` its errno.
   `MDC_NO_NODE_AVAILABLE` when no node was valid, and
   `MDC_QUOTED_PLACEHOLDER` when a `:name` of the object stood inside
-  quotes or backticks, before any node. The per-attempt
+  quotes or backticks, and `MDC_UNSAFE_COMMENT_VALUE` when a value
+  holding `*/` stood inside `/*+ */` or `/*!NNNNN */`, before any node. The per-attempt
   `mysql_dynamic_cluster.operation.duration` carries the code of each
   attempt.
 - **`stale_cache` shows outages hidden by the cache.** Those queries succeed

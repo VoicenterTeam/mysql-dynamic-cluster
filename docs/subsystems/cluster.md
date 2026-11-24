@@ -192,7 +192,10 @@ Signature:
   `record` helper of step 2 the call checks it, before step 3: see
   [The `signal` option](#the-signal-option). The values of an `execute`
   call are checked right after it. Then a `:name` of an object of values
-  inside quotes or backticks rejects with `MDC_QUOTED_PLACEHOLDER`.
+  inside quotes or backticks rejects with `MDC_QUOTED_PLACEHOLDER`. Then a
+  value whose text holds `*/` inside `/*+ */` or `/*!NNNNN */` rejects with
+  `MDC_UNSAFE_COMMENT_VALUE`, see
+  [What values do in the SQL text](#what-values-do-in-the-sql-text).
 - `onTiming` gets no default. `null` counts as none, as `undefined` does.
   It is checked right after `timeout`, before the values: see
   [The `onTiming` option](#the-ontiming-option).
@@ -305,7 +308,8 @@ more than put a quoted value in place of each `?` (#121):
 - An object with a `toSqlString()` function is written as raw SQL, a named value too.
 - A `?` inside `'...'`, `"..."`, backticks or a comment (`#`, `-- `, `/* */`) is left alone,
   since sql-escaper 1.6. The exception is `/*! ... */` and `/*+ ... */`: sql-escaper treats
-  those as code, so a `?` there is replaced. 1.5.x also replaced one inside `"..."` or after `#`, so every value
+  those as code, so a `?` there is replaced. When the text of such a `?` or `??` holds `*/`
+  inside `/*+ */` or `/*!NNNNN */`, `query()` rejects, see the next item. 1.5.x also replaced one inside `"..."` or after `#`, so every value
   after it moved one place. mysql2 3.24 allows 1.5.1, so the package depends on
   `sql-escaper ^1.6.0` and calls it itself: `query()` leaves such a `?` alone whatever copy
   mysql2 gets. npm usually resolves the fixed copy for mysql2 too. An app that depends on a
@@ -317,7 +321,15 @@ more than put a quoted value in place of each `?` (#121):
   (see [named values](../configuration.md#named-values)). One in a comment stays text, one
   in `/*! */` or `/*+ */` is replaced, as a `?` there. The server may read such a comment as
   a plain one, which ends at the first `*/`, also one inside a value: keep values out of
-  comments.
+  comments. Since 4.1.1 a `:name`, `?` or `??` in code inside `/*+ */` or `/*!NNNNN */` (a
+  `/*!` with a version), up to the first `*/` after it opens, whose text holds `*/` makes
+  `query()` reject with `MDC_UNSAFE_COMMENT_VALUE` before any node is asked, with one metric
+  record (#134). The text is the one written for it: `escape(value, true)` for a `:name`,
+  what `format()` writes there for a `?` or `??`, so a plain object is checked as pairs after
+  `SET` and as `'[object Object]'` elsewhere. MySQL 8.0.42 ended such a comment inside the
+  value in every position of `/*+ */` and in `/*!99999 */`. It runs `/*! */` and
+  `/*!80000 */` as code and keeps the quotes of the value there, so `/*! */` with no
+  version is not checked. Neither is `execute()`.
 - Only `execute()` keeps the values out of the text.
 - Never pass an object from outside the app, such as a request body or parsed JSON, as a
   value: it can turn into column assignments or raw SQL.
@@ -562,7 +574,8 @@ is called before the promise settles, so the caller has the timing when its
 `await` returns. It is called only for a call that reached step 8. So it
 is not called for a Redis hit, or for a call refused before any node: an
 option that is wrong, a signal that was already aborted,
-`MDC_QUOTED_PLACEHOLDER`, or `MDC_NO_NODE_AVAILABLE` and the stale data
+`MDC_QUOTED_PLACEHOLDER`, `MDC_UNSAFE_COMMENT_VALUE`, or
+`MDC_NO_NODE_AVAILABLE` and the stale data
 of Redis served for it. Stale data served after every node failed (step 9)
 does call it, with the step of the last attempt.
 
