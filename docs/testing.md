@@ -12,6 +12,7 @@ This document describes the test layout of `@voicenter-team/mysql-dynamic-cluste
   - `npm test` runs `jest`.
   - `npm run coverage` runs `jest --coverage`. Coverage is collected from `src/**/*.ts` and `index.ts` (`collectCoverageFrom` in [jest.config.js](../jest.config.js)) and checked against the `coverageThreshold` in the same file: statements 79, branches 73, functions 78, lines 80. Measured with the suites that run: statements 84.89 %, branches 78.83 %, functions 83.41 %, lines 85.63 %. Each floor is the measured number less 5, rounded down. The command exits 1 either way, as `npm test` does, because of the four stale suites below. So a missed threshold does not change the exit code today: look for a line that starts with `Jest: Coverage for` in the output. There is none when the thresholds are met.
 - The `tests/loads` directory is excluded from `npm test` via `testPathIgnorePatterns` ([jest.config.js:9](../jest.config.js#L9)). Load tests must be invoked explicitly (e.g. `npx jest tests/loads`).
+- The build emits no source maps: `tsconfig.build.json` sets `sourceMap` to false. Jest compiles with `tsconfig.json` through ts-jest, which keeps them, so the stack traces of a test still point into the source.
 
 ## Layout
 
@@ -22,6 +23,8 @@ tests/
     hashing.test.ts              # ClusterHashing wiring against a live cluster + helper schema (stale)
     hashing-upgrade.test.ts      # Hashing schema: backward compatible upgrade in place
     hashing-restart.test.ts      # Cluster hashing after stop(): a second connect, a check that ends late
+    hashing-create-db.test.ts    # _createDB runs its statements on the first valid pool, and none when no pool is valid (#43)
+    hashing-connect-overlap.test.ts # Two connect() calls of cluster hashing that overlap (#61): one shared run, a stop() during the schema steps, steps that never interleave; the status check with its timer off
     no-valid-pool-cache.test.ts  # GaleraCluster.query when no pool is valid: stale cache fallback
     named-values.test.ts         # object values: always escaped, an escapeNamedValues option ignored, the setting refused
     named-values-setting.test.ts # named values through createPoolCluster: escaped, the setting refused
@@ -33,6 +36,12 @@ tests/
     query-pool-order.test.ts     # The order query() tries its pools in: load score, the pool of the service first
     query-error.test.ts          # What a failed query() rejects with, real mysql2 on loopback: the mysql2 error, nodeId, errors, MDC_NO_NODE_AVAILABLE
     query-error-edges.test.ts    # The same over fake pools: one error from two nodes, a frozen error, a non-object, the stale cache
+    query-error-log.test.ts      # The log line of a failed attempt (#106): one per node tried; an error whose message, errors, code or errno cannot be read, a Proxy that throws included, does not change what the call rejects with
+    query-error-metric.test.ts   # The query-duration point of an error whose code or errno cannot be read (#106)
+    format-sql-metric.test.ts    # A value that throws while it is written into the text, or an object of values that throws while its placeholders are checked (#48): recorded once as a failed query, before Redis, the service name and the nodes
+    query-retry.test.ts          # Which nodes one query() sends its statement to (#87), real mysql2 on loopback: an error reply, a timeout or a connection lost after the statement went out end the call; a refused connection, a failed USE, 1047 and a refused login
+    query-retry-sent.test.ts     # sent on the outcome and the error of Pool.query(), and which errors let query() try the next node: 1047, retryNotReady, a hashing update that throws
+    query-signal.test.ts         # The signal option of query() (#89), real mysql2 on loopback: already aborted, not an AbortSignal, an abort while queued, during the USE, the reset, or right after the connection arrived
     node-api.test.ts             # Node API over fake pools: getConnection, failWaiting, getPoolStats, nodes
     node-api-public.test.ts      # Node API through createPoolCluster, before connect()
     node-api-loopback.test.ts    # Node API with the real mysql2 against its server class on loopback, getConnection with a signal included
@@ -40,6 +49,7 @@ tests/
     ready.test.ts                # cluster.ready: pass, fail, never rejects, one promise per connect(); connect() as before
     ready-unhandled.test.ts      # cluster.ready and firstReady leave no unhandled rejection, in a clean Node process
     first-ready.test.ts          # cluster.firstReady: first pass, none pass, never rejects, one promise per connect()
+    connect-edges.test.ts        # connect() (#61): a cluster without hosts, a pool that rejects with no Error or with a value that is not text, a second connect() without disconnect()
     check-error.test.ts          # checkError over fake pools: nodes(), the results of ready and firstReady
     check-error-loopback.test.ts # checkError with the real mysql2 on loopback: refused login, timeouts, reconnect
     health-check-refusal-loopback.test.ts # A healthCheck node whose login the real mysql2 sees refused on loopback: down at once, the next login after authRetryInterval, a refusal held back past the timeout
@@ -67,6 +77,7 @@ tests/
     query-hygiene.test.ts        # Pool.query error paths and availableConnectionCount
     query.test.ts                # Single-pool round-trip: connect, query, disconnect, query timeout (stale)
     reaper.test.ts               # IdleConnectionReaper: the age rule
+    reaper-forget.test.ts        # What the reaper forgets (#102): a connection the age rule closed while its ping was out, one mysql2 took out of its free list by itself
     idle-ping.test.ts            # The ping of the idle pooled connections of a healthCheck node: the reaper alone, then a Pool over a mysql2 the test drives. Which connections get a ping, what a ping ends with, its limit, the app drawing the connection, stop and start, the pace of the ping for an `idleCheckInterval` below 100 or above 2147483647, no event, no metric, no check
     status-invalid.test.ts       # PoolStatus.checkStatus validity
     status-missing-key.test.ts   # A status key missing from SHOW GLOBAL STATUS
@@ -79,6 +90,9 @@ tests/
     health-check-legacy.test.ts  # Health check of the legacy mode: waits, timeout, down and up, time to leave rotation
     health-check.test.ts         # Health check with a healthCheck block: interval, timeout, fall, rise, refused logins, authRetryInterval and its slow pace, settings, timing
     check-connection.test.ts     # The check connection of a healthCheck node against a mysql2 the test drives: its options and flags, what a check sends, kept or dropped, the one new connection after a loss, the new connection after a call of the app that could open none, the timeout and its turn of the event loop, connect and disconnect, the operation metric
+    check-connection-loopback.test.ts # The check connection with the real mysql2 on loopback (#97): two checks on a connection that still logs in, the debug line of a check on a new connection
+    lifecycle.test.ts            # Pool lifecycle (#61): a disconnect() during the check of a connect(), pool_connected and pool_disconnected listeners that throw, Events.emit with listeners that throw, the log line of failWaiting()
+    lifecycle-loopback.test.ts   # The same with the real mysql2 on loopback: acquire, release and connection listeners that throw, cluster.disconnect() with a listener that throws, idle connections the server closed
     passive-health.test.ts       # Passive health of a healthCheck node: the four kinds of error from query, transaction and getConnection, the check that opens a new connection for one it lost, once, the check that asks on a new connection after a call that could open none, the check that finds no route itself and counts toward fall, what never counts, one check at a time, fall and rise, passive false, the legacy check, timing
     node-api.test.ts             # Pool.getConnection, failWaiting and stats over a mocked mysql2 pool
     get-connection-signal.test.ts # Pool.getConnection with a signal over a mocked mysql2 pool: queue, login, listener, reason
