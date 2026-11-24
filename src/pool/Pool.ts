@@ -440,6 +440,9 @@ export class Pool {
             const { database, execute } = queryOptions;
             const timeout = Pool._withinTimer(queryOptions.timeout);
             const target = { database, timeout, valuesInText: valuesInText && !execute };
+            // the attempt asks its pool for a connection. An abort inside onStep ends the borrow
+            // before its request reaches mysql2
+            timing.enter?.('queue');
             this._borrow.take({ signal, target, probe }, asked, timing).then(conn => {
                 held = conn;
                 // the signal aborted after the borrow took its listener off
@@ -504,8 +507,10 @@ export class Pool {
                     // with undefined in them: the statement never reached the connection
                     outcome.sent = false;
                     timing.step = before;
-                    fail(thrown, conn);
+                    return fail(thrown, conn);
                 }
+                // mysql2 has the statement: from here onStep counts it as sent
+                timing.enter?.('statement');
             }, error => {
                 if (asked.aborted) return abort(error);
                 fail(error);

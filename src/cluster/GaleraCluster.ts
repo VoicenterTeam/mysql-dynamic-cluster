@@ -5,7 +5,7 @@
 import { IUserSettings } from "../types/SettingsInterfaces";
 import {
     IAttemptTiming, IQueryOptions, IQueryOutcome, IQueryTiming, QueryValues, ClusterEvent,
-    QueryResult
+    QueryResult, QueryStep
 } from '../types/PoolInterfaces'
 import Logger from "../utils/Logger";
 
@@ -509,6 +509,14 @@ export class GaleraCluster {
             record(undefined, error);
             throw error;
         }
+        // null stands for no onStep too
+        const onStep = queryOptions.onStep ?? undefined;
+        if (onStep !== undefined && typeof onStep !== 'function') {
+            const error = new TypeError("query: options.onStep must be a function");
+            Object.assign(error, { sent: false });
+            record(undefined, error);
+            throw error;
+        }
         // mysql2 throws for other values, or fails after the prepare. Before any node.
         // includes() counts the holes of a sparse array as undefined
         const unbindable = queryOptions.execute && values !== undefined && values !== null
@@ -657,6 +665,8 @@ export class GaleraCluster {
         const errors: { nodeId: number, error: any }[] = [];
         // what a pool rejected with when the signal aborted in its call
         let aborted: { reason: unknown } | undefined;
+        // made only for a call with onStep
+        const tellStep = onStep && GaleraCluster._stepTeller(onStep);
 
         for (let i = 0; i < retryCount; i++) {
             const pool = activePools[i];
@@ -664,6 +674,7 @@ export class GaleraCluster {
             const outcome: IQueryOutcome = {};
             // and in this one where the attempt ended and how long it waited for a connection
             const timing: IAttemptTiming = {};
+            if (tellStep) timing.enter = step => tellStep(step, pool.id);
             attempts.push({ nodeId: pool.id, timing });
             let res: T;
             try {
@@ -777,13 +788,51 @@ export class GaleraCluster {
     }
 
     /**
-     * Log what onTiming threw, as text. A value that cannot be made text, such as a Symbol
-     * or an object without a prototype, is named so: nothing here may throw
-     * @param thrown what onTiming threw, or what the promise it returned rejected with
-     * @param nodeId the node of the last attempt
+     * What the attempts of a query call as they enter a step, for its onStep option: onStep
+     * is called when the step or the node differs from what it was told last, so probes in a
+     * row are one 'probe'. It never throws: what onStep throws, and the rejection of a promise
+     * it returns, is logged once per call and changes nothing of the call
+     * @param onStep the option of the query
      * @private
      */
-    private static _timingFailed(thrown: unknown, nodeId: number): void {
+    private static _stepTeller(
+        onStep: IQueryOptions['onStep']
+    ): (step: QueryStep, nodeId: number) => void {
+        let toldStep: QueryStep | undefined;
+        let toldNode: number | undefined;
+        let warned = false;
+        const failed = (thrown: unknown, nodeId: number) => {
+            if (warned) return;
+            warned = true;
+            GaleraCluster._timingFailed(thrown, nodeId, 'onStep');
+        };
+        return (step, nodeId) => {
+            if (step === toldStep && nodeId === toldNode) return;
+            toldStep = step;
+            toldNode = nodeId;
+            try {
+                const returned: any = onStep(step, nodeId);
+                // an async onStep: its rejection is logged, never left unhandled
+                if (typeof returned?.then === 'function') {
+                    returned.then(undefined, (thrown: unknown) => failed(thrown, nodeId));
+                }
+            } catch (thrown) {
+                failed(thrown, nodeId);
+            }
+        };
+    }
+
+    /**
+     * Log what onTiming or onStep threw, as text. A value that cannot be made text, such as a
+     * Symbol or an object without a prototype, is named so: nothing here may throw
+     * @param thrown what the option threw, or what the promise it returned rejected with
+     * @param nodeId the node of the last attempt, or of the step onStep was told
+     * @param option the name of the option
+     * @private
+     */
+    private static _timingFailed(
+        thrown: unknown, nodeId: number, option: 'onTiming' | 'onStep' = 'onTiming'
+    ): void {
         let text: string;
         try {
             text = String((thrown as any)?.message || thrown);
@@ -791,7 +840,7 @@ export class GaleraCluster {
             text = 'a value that is not text';
         }
         // the logger catches what the logger of the app throws
-        Logger.warn("onTiming of a query threw or rejected, the call keeps its result: " + text,
+        Logger.warn(option + " of a query threw or rejected, the call keeps its result: " + text,
             { nodeId });
     }
 

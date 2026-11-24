@@ -60,7 +60,14 @@ export interface IQueryOptions {
     // last attempt ended and how long it waited for connections. Not called for a Redis hit or
     // a call refused before any node. A throw in it, and the rejection of a promise it returns,
     // is logged and changes nothing
-    onTiming?: (timing: IQueryTiming) => void
+    onTiming?: (timing: IQueryTiming) => void,
+    // Called synchronously as an attempt of a call enters a step, with the step and the node of
+    // the attempt: 'queue' as it asks its pool for a connection, 'probe', 'prepare', and
+    // 'statement' once the statement was handed to the connection, so it counts as sent. Only
+    // when the step or the node differs from the last call. Not called for a Redis hit, a call
+    // refused before any node, or after the call settled. A throw in it, and the rejection of a
+    // promise it returns, is logged once per call and changes nothing
+    onStep?: (step: QueryStep, nodeId: number) => void
 }
 
 // Where an attempt of a query ended: waiting for a connection of the pool, in mysql2's queue
@@ -89,13 +96,16 @@ export interface IQueryOutcome extends IAbortOutcome {
     sent?: boolean
 }
 
-// Where one Pool.query() call is, for the onTiming option of the query. The caller hands in an
-// empty object, and the borrow and then the pool fill it
+// Where one Pool.query() call is, for the onTiming and onStep options of the query. The caller
+// hands in an empty object, and the borrow and then the pool fill it
 export interface IAttemptTiming {
     // the step the call is in, and so the one it ended in once it settled
     step?: QueryStep,
     // time in ms the call waited for mysql2 to hand it a connection, over every request
-    queuedMs?: number
+    queuedMs?: number,
+    // set by the cluster for a query with onStep only: the pool and the borrow call it as the
+    // call enters a step. It never throws
+    enter?: (step: QueryStep) => void
 }
 
 // How the health check of one connect() ended. The caller of Pool.connect() hands in an empty

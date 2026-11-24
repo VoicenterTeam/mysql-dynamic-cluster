@@ -95,6 +95,8 @@ export class Borrow {
         // A pool with no limit, connectionLimit 0, has a limited number of idle connections
         const most = this._pool.connectionLimit ? this._pool.connectionLimit + 1 : Infinity;
         for (let tries = 1; ; tries++) {
+            // Not told to onStep: the pool told it 'queue' as the attempt began, and a request
+            // after a failed probe stays 'probe' to it, so probes in a row are one 'probe'
             timing.step = 'queue';
             // a monotonic clock: a change of the time of the system does not count
             const asked = performance.now();
@@ -111,6 +113,7 @@ export class Borrow {
             // with no time limit
             if (probe && (drawn?.ping || this._idle(drawn))) {
                 timing.step = 'probe';
+                timing.enter?.('probe');
                 try {
                     await this._probe(connection, drawn, signal, outcome);
                 } catch (error) {
@@ -123,6 +126,7 @@ export class Borrow {
             }
             if (!target) return connection;
             timing.step = 'prepare';
+            timing.enter?.('prepare');
             return this._prepare(connection, target, signal, outcome);
         }
     }
