@@ -771,7 +771,7 @@ export class GaleraCluster {
         const failed = (thrown: unknown) => {
             if (warned) return;
             warned = true;
-            GaleraCluster._timingFailed(thrown, last.nodeId);
+            GaleraCluster._optionFailed(thrown, last.nodeId);
         };
         try {
             const queuedMs = attempts.reduce(
@@ -805,7 +805,7 @@ export class GaleraCluster {
         const failed = (thrown: unknown, nodeId: number) => {
             if (warned) return;
             warned = true;
-            GaleraCluster._timingFailed(thrown, nodeId, 'onStep');
+            GaleraCluster._optionFailed(thrown, nodeId, 'onStep');
         };
         return (step, nodeId) => {
             if (step === toldStep && nodeId === toldNode) return;
@@ -831,7 +831,7 @@ export class GaleraCluster {
      * @param option the name of the option
      * @private
      */
-    private static _timingFailed(
+    private static _optionFailed(
         thrown: unknown, nodeId: number, option: 'onTiming' | 'onStep' = 'onTiming'
     ): void {
         let text: string;

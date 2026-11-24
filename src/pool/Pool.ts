@@ -35,8 +35,8 @@ export interface IPoolCall {
     // false for the health check of a node without a block only: it draws the connection
     // with no probe, see Borrow
     probe?: boolean,
-    // filled by the pool for the onTiming option of the cluster: the step the call ended in
-    // and the time it waited for a connection
+    // filled by the pool for the onTiming and onStep options of the cluster: the step the call
+    // ended in and the time it waited for a connection
     timing?: IAttemptTiming
 }
 
@@ -440,9 +440,6 @@ export class Pool {
             const { database, execute } = queryOptions;
             const timeout = Pool._withinTimer(queryOptions.timeout);
             const target = { database, timeout, valuesInText: valuesInText && !execute };
-            // the attempt asks its pool for a connection. An abort inside onStep ends the borrow
-            // before its request reaches mysql2
-            timing.enter?.('queue');
             this._borrow.take({ signal, target, probe }, asked, timing).then(conn => {
                 held = conn;
                 // the signal aborted after the borrow took its listener off
