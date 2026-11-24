@@ -519,13 +519,20 @@ export class GaleraCluster {
         }
         // The values of an object take the named pass of _formatSQL. A :name of the object
         // inside quotes or backticks would get a quoted value, whose quotes close the literal
-        // (#131). Before any node. What the check throws, such as a Proxy of values whose trap
-        // throws, is a failed query too, as for formatSQL
+        // (#131). A value written inside /*+ */ or /*!NNNNN */ whose text holds */ would end
+        // that comment early on a server that skips it (#134). Before any node. What the
+        // checks throw, such as a Proxy of values whose trap throws, is a failed query too, as
+        // for formatSQL
         let quoted: { key: string } | undefined;
+        let closesComment = false;
         try {
-            if (!queryOptions.execute && values && typeof values !== 'string'
-                && !Array.isArray(values)) {
-                quoted = GaleraCluster._namedPlaceholders(sql, values).find(found => found.quoted);
+            if (!queryOptions.execute && values) {
+                if (typeof values !== 'string' && !Array.isArray(values)) {
+                    quoted = GaleraCluster._namedPlaceholders(sql, values)
+                        .find(found => found.quoted);
+                }
+                closesComment = !quoted && GaleraCluster._commentValues(sql, values)
+                    .some(text => text.includes('*/'));
             }
         } catch (checkError) {
             record(undefined, checkError || {});
@@ -535,6 +542,13 @@ export class GaleraCluster {
             const error = Object.assign(new Error(`query: the placeholder :${quoted.key} is ` +
                 `inside quotes or backticks. Write it bare, as = :${quoted.key}`),
                 { code: 'MDC_QUOTED_PLACEHOLDER' });
+            record(undefined, error);
+            throw error;
+        }
+        if (closesComment) {
+            const error = Object.assign(new Error("query: a value inside a /*+ */ or " +
+                "/*!NNNNN */ comment holds */, which ends the comment early on the server. " +
+                "Keep values out of comments"), { code: 'MDC_UNSAFE_COMMENT_VALUE' });
             record(undefined, error);
             throw error;
         }
@@ -821,32 +835,92 @@ export class GaleraCluster {
     }
 
     /**
-     * Each :name of the text whose key the object has as its own, in order. The text is read as
-     * sql-escaper 1.7 reads it for a ?, see _contextEnd(): a :name inside a comment is text and
-     * is left out, one inside /*! *\/ or /*+ *\/ is code, as sql-escaper treats a ? there, and
-     * one inside quotes or backticks comes with quoted: true
+     * Each :name of the text whose key the object has as its own, in order, as _placeholders()
+     * finds it
      * @param sql MySQL query
      * @param values the named values
      * @private
      */
     private static _namedPlaceholders(sql: string, values: object) {
-        const found: { key: string, start: number, end: number, quoted: boolean }[] = [];
-        // the placeholders of own keys from start up to end
+        return GaleraCluster._placeholders(sql, /:\w+/g)
+            .map(found => ({ ...found, key: sql.slice(found.start + 1, found.end) }))
+            .filter(found => Object.prototype.hasOwnProperty.call(values, found.key));
+    }
+
+    /**
+     * The text written for each value inside a /*+ *\/ or /*!NNNNN *\/ comment, see
+     * _placeholders(). A :name gets the text of _formatSQL. A ? or ?? gets the text format()
+     * writes there: format() with the values before it as NULL, once with its value and once
+     * without, writes the same text up to it
+     * @param sql MySQL query
+     * @param values values to mix with sql
+     * @private
+     */
+    private static _commentValues(sql: string, values: QueryValues): string[] {
+        // no /*+ and no /*! with a version: no such comment
+        if (!/\/\*(\+|!\d)/.test(sql)) return [];
+        if (typeof values !== 'string' && !Array.isArray(values)) {
+            return GaleraCluster._namedPlaceholders(sql, values)
+                .filter(found => found.comment && !found.quoted)
+                .map(found => escapeValue(values[found.key], true));
+        }
+        const list = Array.isArray(values) ? values : [values];
+        const texts: string[] = [];
+        // each ? and ?? that takes a value, in order. A run of three ? or more takes none
+        GaleraCluster._placeholders(sql, /\?+/g)
+            .filter(found => !found.quoted && found.end - found.start <= 2)
+            .slice(0, list.length)
+            .forEach((found, index) => {
+                if (!found.comment) return;
+                const before: null[] = new Array(index).fill(null);
+                const without = formatValues(sql, before);
+                const written = formatValues(sql, [...before, list[index]]);
+                const start = without.length - (sql.length - found.start);
+                texts.push(written.slice(start, written.length - (sql.length - found.end)));
+            });
+        return texts;
+    }
+
+    /**
+     * Each match of placeholder in the text, in order. The text is read as sql-escaper 1.7
+     * reads it for a ?, see _contextEnd(): a match inside a comment is text and is left out,
+     * one inside /*! *\/ or /*+ *\/ is code, as sql-escaper treats a ? there, and one inside
+     * quotes or backticks comes with quoted: true. A match in code inside /*+ *\/ or a /*!
+     * with a version, /*!NNNNN *\/, comes with comment: true. A server that reads such a
+     * comment as a plain one ends it at the first *\/ after it opens (#134)
+     * @param sql MySQL query
+     * @param placeholder the pattern of a placeholder, with the flag g
+     * @private
+     */
+    private static _placeholders(sql: string, placeholder: RegExp) {
+        const found: { start: number, end: number, quoted: boolean, comment: boolean }[] = [];
+        // /*+ *\/ and /*!NNNNN *\/ that open in code, up to their first *\/
+        const comments: { start: number, end: number }[] = [];
+        const opener = /\/\*(\+|!\d)/y;
+        // the matches from start up to end
         const collect = (start: number, end: number, quoted: boolean) => {
-            const placeholder = /:(\w+)/g;
             const part = sql.slice(start, end);
             let match: RegExpExecArray;
             while ((match = placeholder.exec(part))) {
-                if (!Object.prototype.hasOwnProperty.call(values, match[1])) continue;
                 const at = start + match.index;
-                found.push({ key: match[1], start: at, end: at + match[0].length, quoted });
+                const comment = comments.some(range => at > range.start && at < range.end);
+                found.push({ start: at, end: at + match[0].length, quoted, comment });
             }
         };
         // where the code not looked at yet starts
         let code = 0;
         for (let position = 0; position < sql.length; position++) {
             const end = GaleraCluster._contextEnd(sql, position);
-            if (end === -1) continue;
+            if (end === -1) {
+                opener.lastIndex = position;
+                if (sql[position] === '/' && opener.test(sql)) {
+                    const commentEnd = sql.indexOf('*/', position + 3);
+                    comments.push({
+                        start: position, end: commentEnd === -1 ? sql.length : commentEnd + 2
+                    });
+                }
+                continue;
+            }
             collect(code, position, false);
             // a comment is text
             if ("'\"`".includes(sql[position])) collect(position, end, true);
