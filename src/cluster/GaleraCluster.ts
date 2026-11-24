@@ -927,9 +927,9 @@ export class GaleraCluster {
         return -1;
     }
 
-    // Where a comment a server can skip starts (#134): /*+, and /*! or MariaDB's /*M! followed
+    // Where a comment a server can skip starts (#134): /*+, MariaDB's /*M!, and /*! followed
     // by a version, or by a placeholder that can write one
-    private static readonly _skippedComment = /^\/\*(\+|M?!(\d|\?|:))/;
+    private static readonly _skippedComment = /^\/\*(\+|M!|!(\d|\?|:))/;
 
     // how many times mark stands in text
     private static _marks(text: string, mark: string): number {
@@ -938,13 +938,16 @@ export class GaleraCluster {
 
     /**
      * Why the values written into the text can change how a server reads a comment it can
-     * skip (#134), as the message of the error, or undefined. Such a comment is /*+ *\/, or
-     * /*! or MariaDB's /*M! with a version, or with a placeholder that can write one. The text
-     * of the app is searched as it is, also inside strings and other comments. The server ends
-     * such a comment at the first *\/ after it, or the end of the text.
-     * - A string, identifier or comment that sql-escaper reads as opening inside it, the
-     *   opener being code, and that ends after the server's end, or never ends: sql-escaper
-     *   and the server read the rest of the text differently, so no value can be written
+     * skip (#134), as the message of the error, or undefined. Such a comment is /*+ *\/,
+     * MariaDB's /*M! *\/, also a bare one, which MariaDB runs as code and sql-escaper reads as
+     * a comment, or /*! with a version, or with a placeholder that can write one. The text of
+     * the app is searched as it is, also inside strings and other comments. The server ends
+     * such a comment at the first *\/ after it, or the end of the text, unless a /* stands
+     * before that *\/: a skipped comment takes it as a nested one, and ends at a later *\/.
+     * - A /* in it, or a string, identifier or comment that sql-escaper reads as opening inside
+     *   it, the opener being code, and that ends after the first *\/ or never ends:
+     *   sql-escaper and the server read the rest of the text differently, so no value can be
+     *   written
      * - A value that adds a /* or a *\/: it can end such a comment, or open one nested in it
      * @param sql MySQL query
      * @param formatted the text with the values written into it
@@ -960,15 +963,19 @@ export class GaleraCluster {
             skipped = true;
             const close = sql.indexOf('*/', at + 2);
             const end = close === -1 ? sql.length : close + 2;
-            for (let position = at + 2; position < end; position++) {
+            // a /* in it, also in a string, up to the * of its end for /*/
+            let differs = sql.slice(at + 2, (close === -1 ? sql.length : close) + 1)
+                .includes('/*');
+            for (let position = at + 2; !differs && position < end; position++) {
                 const contextEnd = GaleraCluster._contextEnd(text, position);
                 if (contextEnd === -1) continue;
-                if (contextEnd > end) {
-                    return "query: the text inside a /*+ */ or /*!NNNNN */ comment reads " +
-                        "differently to the server and to the escaper, so values cannot be " +
-                        "written into this statement. Use execute()";
-                }
+                differs = contextEnd > end;
                 position = contextEnd - 1;
+            }
+            if (differs) {
+                return "query: the text inside a /*+ */ or /*!NNNNN */ comment reads " +
+                    "differently to the server and to the escaper, so values cannot be " +
+                    "written into this statement. Use execute()";
             }
         }
         const marks = GaleraCluster._marks;
