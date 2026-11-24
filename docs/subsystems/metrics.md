@@ -378,7 +378,10 @@ Notes on cardinality and content:
   not recorded.** A cached value that does not parse is recorded as a failed
   query.
 - Recording is best effort: an error thrown by the registered SDK never fails
-  a query. The first one is logged at `warn`, later ones are not.
+  a query. The first one in the process is logged at `warn`, later ones are
+  not, whichever cluster they come from. The line goes through the module
+  logger, with the logger and level of the last `createPoolCluster`, see
+  [../architecture.md](../architecture.md#singletons).
 - `db.client.connection.pool.name` and `db.client.connection.state` come from
   the connection pool part of the conventions, which is still marked
   Development.
@@ -406,8 +409,9 @@ The instruments stay one set on the meter of the app's provider, for every
 cluster. `Metrics.init(clusterName)` still runs at each `createPoolCluster`:
 its name goes on a record that brings none, one of a part built without a
 cluster, such as a `Pool` a unit test makes directly. It is read at each
-record. Two clusters whose pools have the same name, address and port, and
-whose `clusterName` is the same, still share their series.
+record. Two pools whose attributes are all the same, name, address, port
+and `clusterName`, report on one series: at each collection the point of
+one overwrites the point of the other.
 
 ## Migrating from the pm2 metrics
 

@@ -369,7 +369,7 @@ The values are lowercase. `LOGLEVEL` is exported from the package for them. Wher
 3. **Mix every host with the default pool settings.** Each host becomes the default pool settings with its own keys on top, merged in `Settings._mix`. A host that omits `port`, or sets it to `undefined`, inherits it. Arrays are concatenated in this step: `validators` on a host are added to the default ones, not swapped for them. `flags` is the exception, a host's value replaces the default one. A `healthCheck` block is mixed key by key and then filled with its defaults, and only for a host that has one after the mix: this step is the one that fills them, not the schema.
 4. **Store.** The result is loaded into the `config` singleton ([src/configs/index.ts](../src/configs/index.ts)). The rest of the library reads `config.current`, a plain typed object.
 
-Before `createPoolCluster` runs, `config.current` holds the defaults. A second `createPoolCluster` call in one process replaces the settings of the first and logs a warning to the first cluster's logger.
+Before `createPoolCluster` runs, `config.current` holds the defaults. A second `createPoolCluster` call in one process replaces `config.current` and logs a warning through the module logger, which still has the logger and level of the call before. Since 4.2.0-rc.3 (#86) the first cluster keeps its hosts, its logger and level, and the `clusterName` of its metrics. `config.current`, the Redis cache and the events stay shared by every cluster of the process, see [architecture.md](architecture.md#singletons).
 
 ## Validation
 
@@ -396,7 +396,7 @@ Adding an option means adding it to the schema in [src/configs/schema.ts](../src
 ## Live objects: `redisInstant` and `logger`
 
 - `redisInstant` is passed to `Redis.init(...)` only when it is an `ioredis` `Cluster`, or an object whose constructor is named `Redis`. Anything else is ignored. Pass a live client here if you want the Redis cache.
-- `logger` is passed to `Logger.init(...)`. See [subsystems/logger.md](subsystems/logger.md).
+- `logger` is passed to `Logger.init(...)` for the module logger, and since 4.2.0-rc.3 (#86) it is also the logger of the new cluster, at the `logs.level` of these settings. See [subsystems/logger.md](subsystems/logger.md) and [architecture.md](architecture.md#singletons).
 
 Neither is validated by the schema.
 

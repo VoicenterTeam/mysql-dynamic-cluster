@@ -92,7 +92,9 @@ checks, validators and load factors, the connections they take and give
 back, the check connection, cluster hashing and the service names. A
 second `createPoolCluster` leaves the logger and the level of the first
 cluster as they are. With one cluster nothing changes: the same lines go
-to the same logger.
+to the same logger. Calling `Logger.init` or `Metrics.init` directly
+after `createPoolCluster` changes only the shared parts: a cluster that
+exists keeps its logger, its level and its metrics cluster name.
 
 The logger of a cluster is a view of the module logger, made by
 `clusterContext` in [index.ts](../../index.ts): it has the methods of the
