@@ -361,7 +361,8 @@ Notes on cardinality and content:
   `MDC_NO_NODE_AVAILABLE` when no node was valid, and
   `MDC_QUOTED_PLACEHOLDER` when a `:name` of the object stood inside
   quotes or backticks, and `MDC_UNSAFE_COMMENT_VALUE` when a value
-  holding `*/` stood inside `/*+ */` or `/*!NNNNN */`, before any node. The per-attempt
+  added a `/*` or a `*/` to a statement with `/*+ */` or `/*!NNNNN */`,
+  before any node. The per-attempt
   `mysql_dynamic_cluster.operation.duration` carries the code of each
   attempt.
 - **`stale_cache` shows outages hidden by the cache.** Those queries succeed
