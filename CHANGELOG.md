@@ -1,35 +1,8 @@
 # Changelog
 
-## 4.2.0-rc.4 (2026-11-24)
+## 4.2.0 (2026-11-25)
 
-### Changed
-
-- **The warning of a second `createPoolCluster` says what the earlier cluster keeps** (#86). It now reads "createPoolCluster was called again: the earlier cluster keeps its own hosts, logger and metrics name; the Redis client and the events are shared with the new one". The old text said the settings of the earlier cluster were replaced, which has not been true since 4.2.0-rc.3. The prefix is unchanged.
-
-## 4.2.0-rc.3 (2026-11-24)
-
-### Changed
-
-- **Each cluster has its own logger and its own metrics `clusterName`** (#86).
-  - Each cluster logs through the `logger` and `logs.level` of its own settings, in every part of it: the cluster, its pools, health checks, validators, load factors, borrows, sessions, check connections, cluster hashing and service names.
-  - Each cluster stamps its own `clusterName` on every metric it records, including the connection metrics and node gauges read at collection.
-  - A second `createPoolCluster` in the same process no longer changes the first cluster's logger, level or metrics name.
-  - Still shared: the event emitter, the Redis client with its key prefix (any cluster's `disconnect()` disconnects it), `config.current`, and the module logger. The shared parts log through the module logger, which gets the settings of the last `createPoolCluster`. See `docs/architecture.md#singletons`.
-  - Calling `Logger.init` or `Metrics.init` directly after `createPoolCluster` now changes only those shared parts.
-  - A one-cluster app sees the same log lines and metric points as before. Exports, settings, event payloads, and metric names and attributes are unchanged.
-
-## 4.2.0-rc.2 (2026-11-24)
-
-### Fixed
-
-- **A retry skips the nodes that are no longer valid** (#151).
-  - `query()` and `execute()` take their list of nodes when the call starts. From the second attempt on, a node that is no longer valid when its turn comes is skipped. It is not asked, it gives no step and no metric record, and one debug line names it.
-  - A skipped node does not count as a try. When no node is left, the call rejects with the error of the last node tried, as before.
-  - The first attempt, the cluster-hashing order and the retry rule are unchanged.
-  - So a call that got `MDC_NODE_DOWN` no longer joins the queue of another node that went down while it waited, the case 4.2.0-rc.1 left open.
-  - "Retrying query..." is logged only when a node is asked.
-
-## 4.2.0-rc.1 (2026-11-24)
+The same code as 4.2.0-rc.4, which vc-dal tested on its unit and MySQL contract suites and a three-node Galera rig.
 
 ### Added
 
@@ -51,8 +24,25 @@
   - The legacy check's own status query that waits there is not failed.
   - The error does not count for passive health. `error.type` of the metrics can now be `MDC_NODE_DOWN`.
   - One info line names the host and how many requests were failed, when at least one was.
-  - These are not touched: requests that already hold a connection, logins already running, and requests that arrive after the down, including a retry through the node list the call took at its start (#151). So the worst wait left is one connect timeout.
+  - These are not touched: requests that already hold a connection, logins already running, and requests that arrive after the down. So the worst wait left is one connect timeout. A retry skips a node that already went down (#151, below).
   - `failWaiting()` is unchanged.
+- **Each cluster has its own logger and its own metrics `clusterName`** (#86).
+  - Each cluster logs through the `logger` and `logs.level` of its own settings, in every part of it: the cluster, its pools, health checks, validators, load factors, borrows, sessions, check connections, cluster hashing and service names.
+  - Each cluster stamps its own `clusterName` on every metric it records, including the connection metrics and node gauges read at collection.
+  - A second `createPoolCluster` in the same process no longer changes the first cluster's logger, level or metrics name.
+  - Still shared: the event emitter, the Redis client with its key prefix (any cluster's `disconnect()` disconnects it), `config.current`, and the module logger. The shared parts log through the module logger, which gets the settings of the last `createPoolCluster`. See `docs/architecture.md#singletons`.
+  - Calling `Logger.init` or `Metrics.init` directly after `createPoolCluster` now changes only those shared parts.
+  - A one-cluster app sees the same log lines and metric points as before. Exports, settings, event payloads, and metric names and attributes are unchanged.
+  - When `createPoolCluster` is called again, the warning says what the earlier cluster keeps: "createPoolCluster was called again: the earlier cluster keeps its own hosts, logger and metrics name; the Redis client and the events are shared with the new one". The prefix is the same as before.
+
+### Fixed
+
+- **A retry skips the nodes that are no longer valid** (#151).
+  - `query()` and `execute()` take their list of nodes when the call starts. From the second attempt on, a node that is no longer valid when its turn comes is skipped. It is not asked, it gives no step and no metric record, and one debug line names it.
+  - A skipped node does not count as a try. When no node is left, the call rejects with the error of the last node tried, as before.
+  - The first attempt, the cluster-hashing order and the retry rule are unchanged.
+  - So a call that got `MDC_NODE_DOWN` no longer joins the queue of another node that went down while it waited.
+  - "Retrying query..." is logged only when a node is asked.
 
 ## 4.1.1 (2026-11-24)
 
