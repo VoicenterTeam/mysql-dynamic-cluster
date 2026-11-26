@@ -277,6 +277,8 @@ describe('two clusters made in one process', () => {
             const client = new Redis();
             const a = makeCluster('A', portA, 'info', loggerA,
                 { redis: { enabled: true }, redisInstant: client });
+            // B passes the client on purpose: B is the last createPoolCluster, so the module
+            // logger and the shared client are B's, though B has redis off
             const b = makeCluster('B', portB, 'info', loggerB,
                 { redis: { enabled: false }, redisInstant: client });
             await a.connect();

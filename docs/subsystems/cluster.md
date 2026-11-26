@@ -163,7 +163,8 @@ Tears the cluster down in this order:
    `_clusterConnect` and `_connecting` are forgotten.
 2. `Metrics.unregisterPools` ends the pool connection metrics of its pools.
 3. `this._clusterHashing?.stop()` halts the hashing refresh timer.
-4. `Redis.disconnect()` closes the shared Redis client.
+4. `Redis.disconnect()` closes the shared Redis client, only when this
+   cluster enabled redis (`redis.enabled` true).
 5. `pool.disconnect()` on every pool (synchronously kicked off via
    `forEach`).
 6. Emits `'disconnected'`.
