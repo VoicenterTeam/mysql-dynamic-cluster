@@ -163,6 +163,10 @@ export const settingsSchema = z.strictObject({
         database: z.string().default('swagger_realtime'),
         table: z.string().default('Service')
     }).prefault({}),
+    metrics: z.strictObject({
+        // false: keep the database, hosts and ports off the metrics of this cluster
+        serverAttributes: z.boolean().default(true)
+    }).prefault({}),
     redis: z.strictObject({
         enabled: z.boolean().default(false),
         keyPrefix: z.string().default('mdc:'),

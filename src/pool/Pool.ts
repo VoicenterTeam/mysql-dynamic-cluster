@@ -52,6 +52,8 @@ export class Pool {
 
     public readonly id: number;
     public readonly name: string;
+    // the pool name of its metrics (#160): name, or the id when the cluster keeps server attributes off
+    public readonly metricName: string;
     public readonly host: string;
     public readonly port: number;
     // max connection count in pool
@@ -116,6 +118,9 @@ export class Pool {
         this.host = settings.host;
         this.port = settings.port;
         this.name = settings.name ? settings.name : `${this.host}:${this.port}`
+        // the host:port of a host without a name is a server attribute (#160)
+        this.metricName = context.serverAttributes === false && !settings.name
+            ? String(this.id) : this.name
         this._logger.debug(`Configure pool named ${this.name} ${this.host}:${this.port}`);
 
         this._user = settings.user;
@@ -643,11 +648,12 @@ export class Pool {
      */
     private _metricOptions(database: string): IOperationMetricOptions {
         return {
-            poolName: this.name,
+            poolName: this.metricName,
             host: this.host,
             port: this.port,
             database,
-            clusterName: this._context.clusterName
+            clusterName: this._context.clusterName,
+            serverAttributes: this._context.serverAttributes
         }
     }
 

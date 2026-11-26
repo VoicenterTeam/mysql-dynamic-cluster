@@ -182,7 +182,9 @@ export class GaleraCluster {
      */
     public async connect(): Promise<void> {
         // the connection metrics of the pools are reported from here until disconnect()
-        Metrics.registerPools(this._pools, this._context?.clusterName);
+        Metrics.registerPools(
+            this._pools, this._context?.clusterName, this._context?.serverAttributes
+        );
         // the first call resolves the promise `ready` already handed out, a later call a new one
         if (!this._resolveReady) this._newReady();
         const resolveReady = this._resolveReady;
@@ -487,7 +489,8 @@ export class GaleraCluster {
                 serviceName: queryOptions.serviceId
                     ? queryOptions.serviceName ?? String(queryOptions.serviceId)
                     : undefined,
-                clusterName: this._context?.clusterName
+                clusterName: this._context?.clusterName,
+                serverAttributes: this._context?.serverAttributes
             });
             if (attempts.length) {
                 GaleraCluster._tellTiming(queryOptions.onTiming, attempts, this._logger);

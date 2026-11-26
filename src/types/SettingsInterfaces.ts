@@ -7,12 +7,13 @@ import { ILogger, ILoggerSettings } from './LoggerInterfaces'
 import { IClusterHashingSettings, IDefaultClusterHashingSettings } from "./ClusterHashingInterfaces";
 import { IDefaultRedisSettings, IRedisSettings } from "./RedisInterfaces";
 import { IDefaultPoolSettings, IDefaultUserPoolSettings, IUserPoolSettings } from "./PoolSettingsInterfaces";
-import { IDefaultServiceMetricsSettings, IServiceMetricsSettings } from "./MetricsInterfaces";
+import { IDefaultMetricsSettings, IDefaultServiceMetricsSettings, IMetricsSettings, IServiceMetricsSettings } from "./MetricsInterfaces";
 
 interface ISettings {
     redisInstant?: Redis | Cluster,
     errorRetryCount?: number,
     serviceMetrics?: IServiceMetricsSettings,
+    metrics?: IMetricsSettings,
     useClusterHashing?: boolean,
     clusterHashing?: IClusterHashingSettings,
     redis?: IRedisSettings,
@@ -31,6 +32,7 @@ export interface IDefaultSettings extends ISettings {
     defaultPoolSettings: IDefaultPoolSettings,
     errorRetryCount: number,
     serviceMetrics: IDefaultServiceMetricsSettings,
+    metrics: IDefaultMetricsSettings,
     useClusterHashing: boolean,
     clusterHashing: IDefaultClusterHashingSettings,
     redis: IDefaultRedisSettings,

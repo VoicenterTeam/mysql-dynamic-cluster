@@ -751,12 +751,13 @@ export class PoolStatus {
      */
     private _recordCheck(result: HealthCheckResult) {
         Metrics.recordHealthCheck(this._queryTime, {
-            poolName: this._pool.name,
+            poolName: this._pool.metricName,
             host: this._pool.host,
             port: this._pool.port,
             result,
             checkError: this._checkError,
-            clusterName: this._context.clusterName
+            clusterName: this._context.clusterName,
+            serverAttributes: this._context.serverAttributes
         });
     }
 

@@ -27,7 +27,9 @@ export interface IOperationMetricOptions {
     // the other callers, which then record no wait
     waitSeconds?: number,
     // the name of the cluster of the pool. Not set: the name of Metrics.init
-    clusterName?: string
+    clusterName?: string,
+    // false: the point has no server.address, server.port and db.namespace (#160). Not set: true
+    serverAttributes?: boolean
 }
 
 // One cluster query, after cache and retries
@@ -39,7 +41,9 @@ export interface IQueryMetricOptions {
     sql?: string,
     error?: any,
     // the name of the cluster. Not set: the name of Metrics.init
-    clusterName?: string
+    clusterName?: string,
+    // false: the point has no db.namespace (#160). Not set: true
+    serverAttributes?: boolean
 }
 
 // How one health check of a node ended. valid and invalid: the status query ran, and the
@@ -57,7 +61,9 @@ export interface IHealthCheckMetricOptions {
     // errno is there only when it came from mysql2, the socket or the server
     checkError?: INodeCheckError,
     // the name of the cluster of the node. Not set: the name of Metrics.init
-    clusterName?: string
+    clusterName?: string,
+    // false: the point has no server.address and server.port (#160). Not set: true
+    serverAttributes?: boolean
 }
 
 // State of an open connection, the value of the db.client.connection.state attribute
@@ -67,6 +73,8 @@ export type ConnectionState = 'idle' | 'used';
 // has all of it
 export interface IPoolMetricSource {
     name: string,
+    // the pool name the metrics carry. Not set: name (#160)
+    metricName?: string,
     host: string,
     port: number,
     // 0 means no limit
@@ -74,6 +82,17 @@ export interface IPoolMetricSource {
     stats(): { used: number, idle: number, pending: number },
     // read by the node gauges
     status: { isValid: boolean, loadScore: number }
+}
+
+// What a cluster keeps off its own metrics (#160)
+export interface IMetricsSettings {
+    // false: no server.address, server.port and db.namespace on its points, and the id of a host
+    // without a name as its pool name. Default true
+    serverAttributes?: boolean
+}
+
+export interface IDefaultMetricsSettings extends IMetricsSettings {
+    serverAttributes: boolean
 }
 
 export interface IServiceMetricsSettings {
