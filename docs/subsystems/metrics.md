@@ -397,14 +397,23 @@ Notes on cardinality and content:
 
 ### Keeping server attributes off a cluster
 
-Since 4.2.1 (#160) `metrics: { serverAttributes: false }` in the settings of a cluster
-removes `server.address`, `server.port` and `db.namespace` from every point that cluster
-records or observes, and a host without `name` reports `String(id)` as its pool name.
-See [configuration](../configuration.md#metrics). It is for clusters made from app data at
-run time. The pool computes its metric name once (`Pool.metricName`) and hands it to each
-record; `IPoolMetricSource.metricName` is optional, and the collection callbacks fall back to
-`name`. The flag travels as `IClusterContext.serverAttributes`, and `registerPools` keeps it
-per pool beside the cluster name. The cache lookup metric never had these attributes.
+Since 4.2.1 (#160) `metrics: { serverAttributes: false }` in the settings of
+a cluster removes `server.address`, `server.port` and `db.namespace` from
+every point that cluster records or observes, and a host without `name`
+reports `String(id)` as its pool name. See
+[configuration](../configuration.md#metrics). It is for clusters made from
+app data at run time. The pool computes its metric name once
+(`Pool.metricName`) and hands it to each record;
+`IPoolMetricSource.metricName` is optional, and the collection callbacks
+fall back to `name`. The flag travels as `IClusterContext.serverAttributes`.
+A pool carries it as `IPoolMetricSource.serverAttributes`, which the
+collection callbacks read beside `metricName`. The cache lookup metric never
+had these attributes.
+
+With the flag `false` only the pool name and `clusterName` tell pools apart.
+Give each such cluster its own `clusterName`, and give hosts distinct ids,
+or names that are not ids: two unnamed hosts with one id, or a host named
+`"1"` beside an unnamed host with id 1, share a series.
 
 ### Two clusters in one process
 
@@ -415,8 +424,11 @@ health checks. `registerPools` keeps the name of the cluster of each pool,
 for the connection metrics and the node gauges read at collection. So a
 second `createPoolCluster` no longer relabels the metrics of the first.
 With one cluster the points are the same as before. The same holds for
-`serverAttributes`: a cluster with it `false` and one without share a process, and only the
-points of the first lose the attributes, in either order of creation.
+`serverAttributes`: a cluster with it `false` and one without share a
+process, and only the points of the first lose the attributes, in either
+order of creation. A cluster with the flag `false` is told apart by its pool
+name and `clusterName` alone, so give it a `clusterName` no other cluster
+has.
 
 The instruments stay one set on the meter of the app's provider, for every
 cluster. `Metrics.init(clusterName)` still runs at each `createPoolCluster`:
@@ -468,15 +480,21 @@ Other changes:
    the no-op provider. Create it after the first three histograms and inside
    its own `_safely`, as the health-check histogram is, so a provider that
    cannot make it still gets the others.
-3. Call the method from the call site, with the `clusterName` of the
-   context of the cluster, and add it to the attributes with
-   `_addClusterName`, as the other records do. Keep attribute values to a small fixed
-   set, never raw SQL, ids of rows or error messages. A value of the query
-   path goes through `recordOperation` instead, as a new field of
+3. Call the method from the call site, with the `clusterName` of the context
+   of the cluster, and add it to the attributes with `_addClusterName`, as
+   the other records do. Leave `server.*` and `db.namespace` out when
+   `serverAttributes` of the context is `false`. Keep attribute values to a
+   small fixed set, never raw SQL, ids of rows or error messages. A value of
+   the query path goes through `recordOperation` instead, as a new field of
    `IOperationMetricOptions`: about 20 test suites mock `Metrics` with a
    fixed set of methods, and a new method would be missing there.
-4. Cover it in [tests/metrics/otel-metrics.test.ts](../../tests/metrics/otel-metrics.test.ts),
-   which reads the metrics back through an in-memory exporter.
+4. Cover it in
+   [tests/metrics/otel-metrics.test.ts](../../tests/metrics/otel-metrics.test.ts),
+   which reads the metrics back through an in-memory exporter. Also see
+   [tests/metrics/server-attributes.test.ts](../../tests/metrics/server-attributes.test.ts):
+   it fails when an instrument of `MetricNames` makes no point, and when a
+   point of a cluster with `serverAttributes` `false` has `server.*` or
+   `db.namespace`.
 
 A metric whose value is read at collection, like the pool connection
 metrics, takes other steps 2 to 4:

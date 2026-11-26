@@ -338,7 +338,7 @@ Since 4.2.1 (#160). What the metrics of this cluster carry. It is per cluster: a
 |---|---|---|
 | `serverAttributes` | `boolean` | `true` |
 
-With `serverAttributes: false` no point the cluster records or observes carries `server.address`, `server.port` or `db.namespace`. A host without its own `name` reports its `id`, as a string, as `db.client.connection.pool.name` instead of `host:port`; a host with a `name` keeps it. Every other attribute stays. This is the name on the metrics only: `Pool.name`, the logs, the events and `getPoolStats()` keep `host:port`.
+With `serverAttributes: false` no point the cluster records or observes carries `server.address`, `server.port` or `db.namespace`. A host without its own `name` reports its `id`, as a string, as `db.client.connection.pool.name` instead of `host:port`; a host with a `name` keeps it. Every other attribute stays. This is the name on the metrics only: `Pool.name`, `nodes()[].name`, the logs and the events keep `host:port`.
 
 Left out, or `true`, the points are as before. Use `false` for clusters an app makes from its own data at run time, one per tenant: the hosts are tenant data there and the series count has no bound. An unknown key inside `metrics` is rejected, like in the other blocks.
 
