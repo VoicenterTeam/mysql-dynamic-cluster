@@ -695,9 +695,10 @@ What it touches and what it does not:
   tries another node, since the statement was never sent, within `maxRetry` and the valid
   nodes that are left. After an error reply, a timeout or a lost connection it tries no
   other node, see [the rule](subsystems/cluster.md#8-retry-loop). A query that has no node
-  left rejects with `error` itself, with `nodeId` and `errors` set on it. All those queries
-  share that one object, so its
-  `nodeId` and `errors` are those of the query that rejected last. An entry that would lead
+  left rejects with `error` itself, with `nodeId` and `errors` set on it. An `error` that
+  has an `errors` of its own, such as the fields of a validation, keeps it and gets no list
+  of nodes. All those queries share that one object, so its `nodeId` and `errors` are those
+  of the query that rejected last. An entry that would lead
   back to it is left out of `errors`, so the errors never refer to each other in a cycle. A
   health check of the legacy check that waits is failed too and counts as a failed check.
 - Connections in use are left alone. So are logins that are still running.

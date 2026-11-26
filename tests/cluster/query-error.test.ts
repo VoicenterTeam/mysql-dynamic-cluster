@@ -89,6 +89,12 @@ const listen = async (answer: Answer): Promise<number> => {
                 const columns = [column('Variable_name'), column('Value')];
                 return connection.writeTextResult(STATUS, columns);
             }
+            // before it writes values into the text the pool reads the sql_mode of a session it
+            // does not know: an OK with autocommit and without NO_BACKSLASH_ESCAPES
+            if (sql === 'DO 0') {
+                connection.sequenceId = 1;
+                return connection.writeOk({ serverStatus: 2 });
+            }
             if (sql === APP_SQL) asked.push(port);
             if (answer === 'hangs up') return connection.stream.destroy();
             connection.sequenceId = 1;
@@ -158,6 +164,16 @@ describe('cluster.query() on one node that answers with error 1213', () => {
         expect(error.sql).toBe(APP_SQL);
     });
 
+    it('has the values query() wrote into the text in its sql', async () => {
+        const port = await listen(DEADLOCK);
+        const cluster = await connected([port]);
+        const error = await cluster.query('UPDATE t SET pw = ? WHERE id = ?', ['s3cret', 7],
+            { redis: false }).then(() => undefined, (rejection: any) => rejection);
+
+        expect(error.errno).toBe(1213);
+        expect(error.sql).toBe("UPDATE t SET pw = 's3cret' WHERE id = 7");
+    });
+
     it('adds the node it came from, and no earlier errors', async () => {
         const port = await listen(DEADLOCK);
         const error = await failedQuery(await connected([port]));
@@ -168,13 +184,15 @@ describe('cluster.query() on one node that answers with error 1213', () => {
 });
 
 describe('cluster.query() on a node that closes the connection on the query', () => {
-    it('rejects with the lost connection of mysql2, fatal and without errno', async () => {
+    it('rejects with the lost connection of mysql2, fatal, without errno or sql', async () => {
         const port = await listen('hangs up');
         const error = await failedQuery(await connected([port]));
 
         expect(error.code).toBe('PROTOCOL_CONNECTION_LOST');
         expect(error.fatal).toBe(true);
         expect(error.errno).toBeUndefined();
+        // mysql2 puts sql only on an error the server answered with
+        expect(error.sql).toBeUndefined();
         expect(error.nodeId).toBe(1);
     });
 });
