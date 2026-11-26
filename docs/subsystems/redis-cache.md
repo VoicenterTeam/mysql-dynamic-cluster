@@ -66,7 +66,11 @@ for the full write-up and suggested fix.
 
 `Redis.disconnect(reconnect?)`
 ([src/Redis/Redis.ts:55-59](../../src/Redis/Redis.ts#L55)) forwards to
-`ioredis.disconnect` and clears `isReady`.
+`ioredis.disconnect` and clears `isReady`. `GaleraCluster.disconnect()` calls it
+only when that cluster's own `redis.enabled` is true: the client is one per
+process, so a cluster without redis must not close the one another cluster
+uses. Two Redis-enabled clusters still share it, and either one's
+`disconnect()` closes it.
 
 ## Key derivation
 

@@ -136,7 +136,9 @@ performs four actions in order:
 1. Calls `Metrics.unregisterPools`, which ends the pool connection metrics
    of its pools.
 2. Stops the cluster-hashing refresh timer.
-3. Calls `Redis.disconnect()` to close the shared client.
+3. Calls `Redis.disconnect()` to close the shared client, only when this
+   cluster's own `redis.enabled` is true. A cluster without redis leaves
+   the client alone, and logs no `Redis disconnected`.
 4. Iterates over every pool and calls `pool.disconnect()`, which in
    turn calls the underlying `mysql2` `pool.end`.
    It finishes by emitting the `disconnected` cluster event.
@@ -166,7 +168,7 @@ times `createPoolCluster` is called.
 | `Logger` | [src/utils/Logger.ts](../src/utils/Logger.ts) | The module logger, with the level and the logger of the last `createPoolCluster`. It logs what no cluster owns: `Initialized app`, the warning that `createPoolCluster` was called again, the lines of `Events` and `Redis`, and the first metric that failed to record. The logger of a cluster is a view of it: the methods are the module logger's, and only the level and the app's logger are the cluster's. |
 | `Metrics` | [src/metrics/Metrics.ts](../src/metrics/Metrics.ts) | One set of instruments on the meter of the app's provider, and one registry of the pools of every connected cluster, each kept with the name of its cluster. `init()` sets the name of a record that brings none: one of a part built without a cluster. Two pools with the same name, address, port and cluster name report on one series: at each collection the point of one overwrites the point of the other. |
 | `config` | [src/configs/index.ts](../src/configs/index.ts) | `config.current` holds the settings of the last `createPoolCluster`. A cluster reads it only in its constructor, so an earlier cluster keeps its hosts, validators and Redis switch. |
-| `Redis` | [src/Redis/Redis.ts:93](../src/Redis/Redis.ts#L93) | One `ioredis` client and one key prefix: those of the last `createPoolCluster` that passed a `redisInstant`. The cache keys of two clusters mix under that prefix, and `disconnect()` of either cluster disconnects the shared client. |
+| `Redis` | [src/Redis/Redis.ts:93](../src/Redis/Redis.ts#L93) | One `ioredis` client and one key prefix: those of the last `createPoolCluster` that passed a `redisInstant`. The cache keys of two clusters mix under that prefix, and `disconnect()` of a cluster that enabled redis disconnects the shared client (with two Redis-enabled clusters, either one closes it); `disconnect()` of a cluster without redis leaves it alone. |
 | `Events` | [src/utils/Events.ts:4](../src/utils/Events.ts#L4) | One `EventEmitter`: a listener added with `cluster.on()` of one cluster hears the `connected`, `disconnected`, `hashing_created` and pool events of every cluster. |
 
 **Net effect:** two clusters in one process keep their logs and their
