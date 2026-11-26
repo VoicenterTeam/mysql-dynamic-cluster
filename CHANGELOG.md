@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.2.1-rc.2 (2026-11-26)
+
+### Fixed
+
+- **A cluster that did not enable Redis leaves the shared Redis client alone** (#163).
+  - `disconnect()` closes the shared Redis client only when that cluster's own settings have `redis.enabled: true`. Before, closing any cluster, such as one made without Redis at run time, closed the cache client of another cluster in the same process, and logged "Redis disconnected".
+  - Two Redis-enabled clusters still share one client, and either one's `disconnect()` closes it.
+
 ## 4.2.1-rc.1 (2026-11-26)
 
 ### Added
