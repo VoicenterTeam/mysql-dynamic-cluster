@@ -698,8 +698,9 @@ What it touches and what it does not:
   left rejects with `error` itself, with `nodeId`, `sent` and `nodeErrors` set on it, and
   `errors` too unless `error` has an `errors` of its own, such as the fields of a
   validation, which it keeps. All those queries share that one object, on purpose: the
-  caller gets your own `error`. So its `nodeId`, `sent` and lists are those of the query
-  that rejected last: read them in the `catch`, before another query can reject. Pass a new
+  caller gets your own `error`. So its `nodeId`, `sent` and `nodeErrors`, and `errors` when
+  the package set it, are those of the query that rejected last: read them in the `catch`,
+  before another query can reject. Pass a new
   `Error` to each `failWaiting()` call. An entry that would lead back to it is left out of
   the lists, so the errors never refer to each other in a cycle. A health check of the
   legacy check that waits is failed too and counts as a failed check.
