@@ -532,10 +532,10 @@ An error the server answered with has `sql`, the statement mysql2 sent.
 For `query()` with values that is the text with the values `_formatSQL`
 wrote into it. For `execute()` it is the text with its `?` only, since
 the values go bound. When the server refuses the `DO 0` or the `USE` the
-pool sends before the statement, `sql` is that text. A lost connection or a timeout has no `sql`. An app
-that logs or ships the error whole ships those values too, so it should
-drop `sql` first. The package keeps `sql` on purpose: the error is the
-one mysql2 made (#106).
+pool sends before the statement, `sql` is that text. A lost connection
+or a timeout has no `sql`. An app that logs or ships the error whole
+ships those values too, so it should drop `sql` first. The package keeps
+`sql` on purpose: the error is the one mysql2 made (#106).
 
 Since 4.0.0. Before, `query()` rejected with a new `Error` whose message
 joined `Pool: <name>; Error: Query error: <message>` lines and which had
