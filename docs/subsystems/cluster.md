@@ -556,9 +556,10 @@ those of the query that rejected with it last. The queries of one call
 reject at about the same time, often in the same turn, so a caller can
 see the lists of another query even in its `catch` (#106). An entry that
 would lead back to it, itself or through a list an earlier query set
-under either name, is left out, so the errors never form a cycle and `JSON.stringify` works on them. An
-error whose `errors` cannot be read, through a getter or a Proxy that
-throws, gets no list either, since 4.1.1. Each attempt is still logged at
+under either name, is left out, so the errors never form a cycle and
+`JSON.stringify` works on them. An error whose `errors` cannot be read,
+through a getter or a Proxy that throws, gets no list either, since
+4.1.1. Each attempt is still logged at
 `error`, since 4.2.0-rc.3 through the logger of the cluster (#86, see
 [../architecture.md](../architecture.md#singletons)):
 `Query failed in pool <name>: <message> (code <code>, errno <errno>)`.
