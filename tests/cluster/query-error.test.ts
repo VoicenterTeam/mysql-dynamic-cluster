@@ -1,6 +1,6 @@
 import mysql from 'mysql2';
 import { AddressInfo } from 'net';
-import { createPoolCluster } from '../../index';
+import { createPoolCluster, IQueryError, INodeError } from '../../index';
 
 // What a failed cluster.query() rejects with, against the real mysql2 and mysql2's own server
 // class on the loopback interface: the error of mysql2 itself for the node tried last, with
@@ -180,6 +180,7 @@ describe('cluster.query() on one node that answers with error 1213', () => {
 
         expect(error.nodeId).toBe(1);
         expect(error.errors).toEqual([]);
+        expect(error.nodeErrors).toEqual([]);
     });
 });
 
@@ -208,6 +209,18 @@ describe('cluster.query() on two nodes that both answer 1047', () => {
         expect(error.nodeId).toBe(tried[1]);
         expect(error.errors.map((entry: any) => entry.nodeId)).toEqual([tried[0]]);
         expect(error.errors[0].error.nodeId).toBe(tried[0]);
+    });
+
+    it('reads as the exported IQueryError, with nodeErrors as tried', async () => {
+        const ports = [await listen(NOT_READY), await listen(UNKNOWN_COMMAND)];
+        const error: IQueryError = await failedQuery(await connected(ports));
+
+        const tried = asked.map(port => ports.indexOf(port) + 1);
+        const earlier: INodeError[] = error.nodeErrors ?? [];
+        expect(earlier.map(entry => entry.nodeId)).toEqual([tried[0]]);
+        expect(error.nodeId).toBe(tried[1]);
+        expect(error.errno).toBe(1047);
+        expect(error.sqlMessage).toEqual(expect.any(String));
     });
 
     it('has the error of each node, each with its own node', async () => {

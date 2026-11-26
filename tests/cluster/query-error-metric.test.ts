@@ -65,7 +65,7 @@ const throwing = (name: string, base: object) =>
         get() { throw new Error(name + ' cannot be read'); }
     });
 
-describe('the query-duration point of an error whose code or errno cannot be read', () => {
+describe('the query-duration point of an error whose code or errno is unusual', () => {
     beforeAll(() => {
         Metrics.init('c1');
         metrics.setGlobalMeterProvider(provider);
@@ -86,6 +86,15 @@ describe('the query-duration point of an error whose code or errno cannot be rea
         ['the errno throws', throwing('errno', Object.assign(new Error('down'), { code: 'ER_X' })),
             { 'error.type': 'ER_X' }],
         ['both throw', throwing('errno', throwing('code', new Error('down'))),
+            { 'error.type': '_OTHER' }],
+        // db.response.status_code is the error number of the server. The negative errno of a
+        // socket, or one that is no whole number above 0, is none (#106)
+        ['the errno is that of a socket',
+            Object.assign(new Error('refused'), { code: 'ECONNREFUSED', errno: -111 }),
+            { 'error.type': 'ECONNREFUSED' }],
+        ['the errno is 0', Object.assign(new Error('odd'), { code: 'ER_X', errno: 0 }),
+            { 'error.type': 'ER_X' }],
+        ['the errno is no whole number', Object.assign(new Error('odd'), { errno: 1.5 }),
             { 'error.type': '_OTHER' }]
     ])('is written when %s', async (_name, error, expected) => {
         await expect(makeCluster([node(1, error)]).query('SELECT 1')).rejects.toBe(error);

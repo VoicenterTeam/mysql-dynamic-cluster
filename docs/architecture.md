@@ -118,7 +118,7 @@ Each call walks the following steps:
    every pool it tried failed or it stopped early, but a Redis payload
    was read earlier (even if expired), it is returned with a warning;
    otherwise the error of the node tried last is thrown, with the
-   earlier ones in its `errors`
+   earlier ones in its `nodeErrors`
    (the end of `query`, after the loop).
 7. **Metrics on every exit.** The call is timed from entry, and each
    way out records one `mysql_dynamic_cluster.query.duration` sample with

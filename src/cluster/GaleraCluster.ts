@@ -10,6 +10,7 @@ import {
 import Logger from "../utils/Logger";
 import { ILogger } from "../types/LoggerInterfaces";
 import { IClusterContext } from "../types/ClusterContextInterfaces";
+import { INodeError } from "../types/QueryErrorInterfaces";
 
 import { PoolConnection } from 'mysql2';
 // The format() and escape() mysql2 exports are these. Taken from the package's own dependency,
@@ -684,7 +685,7 @@ export class GaleraCluster {
         }
 
         // the error of each node tried, in the order they were tried
-        const errors: { nodeId: number, error: any }[] = [];
+        const errors: INodeError[] = [];
         // what a pool rejected with when the signal aborted in its call
         let aborted: { reason: unknown } | undefined;
         // made only for a call with onStep
@@ -1165,26 +1166,27 @@ export class GaleraCluster {
     }
 
     /**
-     * Sets `errors` on the error a failed query() rejects with: the nodes tried before the
-     * last one, as `{ nodeId, error }`. An error the app handed failWaiting() is one object
-     * that many queries can meet, so an entry that leads back to the error, itself or
-     * through the lists of earlier queries, is left out. The errors keep no cycle and can
-     * be turned into JSON. An error that has an `errors` of its own, of any shape, keeps it:
-     * the AggregateError of a host name whose every address refused, or the fields of an app
-     * error handed to failWaiting(). A frozen error, one that is no object, or one whose
-     * errors cannot be read, gets no list
+     * Sets `nodeErrors` on the error a failed query() rejects with: the nodes tried before the
+     * last one, as `{ nodeId, error }`, always that shape. `errors` gets the same list, as
+     * before `nodeErrors` existed, unless the error has an `errors` of its own, of any shape,
+     * which it keeps: the AggregateError of a host name whose every address refused, or the
+     * fields of an app error handed to failWaiting(). An error the app handed failWaiting() is
+     * one object that many queries can meet, so an entry that leads back to the error, itself
+     * or through the lists of earlier queries, is left out. The errors keep no cycle and can be
+     * turned into JSON. A frozen error, one that is no object, or one whose errors cannot be
+     * read, gets no list
      * @param error the error of the node tried last
      * @param earlier the error of each node tried before it, in the order they were tried
      */
-    private static _listEarlier(error: any, earlier: { nodeId: number, error: any }[]): void {
+    private static _listEarlier(error: any, earlier: INodeError[]): void {
         if (!error || typeof error !== 'object') return;
         try {
             // read in the try: a getter or a Proxy that throws here must not reject the call
             const own = error.errors;
-            if (own !== undefined && !GaleraCluster._lists.has(own)) return;
             const list = earlier.filter(entry => !GaleraCluster._leadsTo(entry.error, error));
-            error.errors = list;
+            error.nodeErrors = list;
             GaleraCluster._lists.add(list);
+            if (own === undefined || GaleraCluster._lists.has(own)) error.errors = list;
         } catch {
             // a frozen error, or one whose errors cannot be read, goes to the caller without
             // the list
@@ -1194,15 +1196,18 @@ export class GaleraCluster {
     // the lists _listEarlier() set, told apart from an errors array of the error's own
     private static _lists = new WeakSet<object>();
 
-    // whether `target` is `from` or can be reached from it through the lists _listEarlier() set
+    // whether `target` is `from` or can be reached from it through the lists _listEarlier() set,
+    // under either name
     private static _leadsTo(from: any, target: any, seen = new Set<any>()): boolean {
         if (from === target) return true;
         if (!from || typeof from !== 'object' || seen.has(from)) return false;
         seen.add(from);
         try {
-            const list = from.errors;
-            if (!Array.isArray(list) || !GaleraCluster._lists.has(list)) return false;
-            return list.some(entry => GaleraCluster._leadsTo(entry.error, target, seen));
+            return [from.nodeErrors, from.errors]
+                .filter(list => GaleraCluster._lists.has(list))
+                .some(list => list.some(
+                    (entry: INodeError) => GaleraCluster._leadsTo(entry.error, target, seen)
+                ));
         } catch {
             // errors that cannot be read lead nowhere
             return false;

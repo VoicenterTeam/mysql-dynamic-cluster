@@ -279,9 +279,10 @@ describe('mysql_dynamic_cluster.health_check.duration', () => {
         ['the query failed with a code and an errno',
             (pool: any) => fails(pool, coded({ code: 'ER_ACCESS_DENIED_ERROR', errno: 1045 })),
             withCode],
-        ['no connection came, with a code and an errno',
+        // the errno of a socket is no answer of the server: no status code (#106)
+        ['no connection came, with a code and the errno of the socket',
             (pool: any) => refuses(pool, coded({ code: 'ECONNREFUSED', errno: -111 })),
-            { 'error.type': 'ECONNREFUSED', 'db.response.status_code': '-111' }],
+            { 'error.type': 'ECONNREFUSED' }],
         ['the error has a code and no errno',
             (pool: any) => fails(pool, coded({ code: 'PROTOCOL_CONNECTION_LOST' })),
             { 'error.type': 'PROTOCOL_CONNECTION_LOST' }],

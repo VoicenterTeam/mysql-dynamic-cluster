@@ -410,7 +410,7 @@ Redis fallback works as before. The first attempt and the retry rule below are u
 
 First success records the query with source `pool` and returns.
 Each failure is kept as `{ nodeId, error }` in
-`errors`. The loop goes on to the next pool only when the statement cannot
+`nodeErrors`. The loop goes on to the next pool only when the statement cannot
 have run on the one that failed, so one call never writes twice.
 
 `mayTryNextNode(error, outcome, queryOptions)` in
@@ -506,15 +506,27 @@ ends without a result, because every node it tried failed or step 8
 stopped it:
 
 - If the signal aborted, in a node or after one failed, reject with the
-  reason of the signal as it is. No stale data, no `nodeId`, no `errors`.
+  reason of the signal as it is. No stale data, no `nodeId`, no
+  `nodeErrors`, no `errors`.
 - If `redisData` is non-null (cache existed but was expired), log a
   warning, record the query with source `stale_cache`, and **return the
   stale payload** anyway.
 - Otherwise reject with the error of the node tried last, as mysql2 made
   it: its own `message`, `code`, `errno`, `sqlState`, `sqlMessage`, `sql`
   and `fatal`, plus `nodeId`. The attempts before it are set on it as
-  `errors`, so a single node gives `errors: []`. The query is recorded
-  as failed with that error, so the metric carries its code.
+  `nodeErrors`, `{ nodeId, error }` in the order tried, so a single node
+  gives `nodeErrors: []`. `errors` gets the same list, unless the error
+  has an `errors` of its own (see below). The query is recorded as failed
+  with that error, so the metric carries its code.
+
+The type of that error is `IQueryError`, and of an entry `INodeError`,
+both exported from the package
+([src/types/QueryErrorInterfaces.ts](../../src/types/QueryErrorInterfaces.ts)).
+Read `nodeErrors`: it is always the list of nodes. `errors` is that list
+too only when the error had no `errors` of its own. `errors` was the
+only name before `nodeErrors` came (#106), and it stays for the callers
+that read it. Both names hold the same array, so `JSON.stringify` writes
+the list twice.
 
 An error the server answered with has `sql`, the statement mysql2 sent.
 For `query()` with values that is the text with the values `_formatSQL`
@@ -529,15 +541,18 @@ joined `Pool: <name>; Error: Query error: <message>` lines and which had
 no code. See the changelog.
 
 A frozen error, or a rejection that is no object, cannot take `nodeId`
-or `errors` and is thrown without them. An error that already has an
-`errors` of its own, of any shape, keeps it and gets no list: Node's
-`AggregateError`, when every address of a host name refused, holds the
-error of each address there, and an app error handed to `failWaiting()`
-can hold the fields of a validation (#106). `MDC_NODE_DOWN` is a new
-object for each request, so its `nodeId` and `errors` are those of its own call. An error
-that the app handed `failWaiting()` is one object that many queries can
-meet. An entry that would lead back
-to it, itself or through the list an earlier query set, is left out, so
+or a list and is thrown without them. An error that already has an
+`errors` of its own, of any shape, keeps it, and its list of nodes is
+only in `nodeErrors`: Node's `AggregateError`, when every address of a
+host name refused, holds the error of each address there, and an app
+error handed to `failWaiting()` can hold the fields of a validation
+(#106). `MDC_NODE_DOWN` is a new object for each request, so its
+`nodeId` and lists are those of its own call. An error that the app
+handed `failWaiting()` is one object that many queries share, on
+purpose: the caller gets the app's own object. Its `nodeId`, `sent` and
+lists are those of the query that rejected last, so a caller reads them
+in its `catch` (#106). An entry that would lead back to it, itself or
+through a list an earlier query set under either name, is left out, so
 the errors never form a cycle and `JSON.stringify` works on them. An
 error whose `errors` cannot be read, through a getter or a Proxy that
 throws, gets no list either, since 4.1.1. Each attempt is still logged at
@@ -572,7 +587,7 @@ aborts. The call then rejects with `abortReason(signal)` of
 [src/utils/Abort.ts](../../src/utils/Abort.ts): the reason of the signal
 as it is, or, for a signal without a reason, an `Error` named
 `AbortError` with the code `ABORT_ERR`. Nothing is written on the
-reason: no `nodeId`, `errors` or `sent`.
+reason: no `nodeId`, `nodeErrors`, `errors` or `sent`.
 
 | The signal aborts | What happens |
 | --- | --- |
