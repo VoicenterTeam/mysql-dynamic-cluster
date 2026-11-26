@@ -10,12 +10,14 @@ export interface INodeError {
  * the socket made it, not a wrapper. A field of mysql2 is there when mysql2 set it. The package
  * adds `nodeId`, `sent` and `nodeErrors`. A query whose signal aborted rejects with the reason
  * of the signal instead, which is the app's and has none of these. An error the app handed
- * failWaiting() is one object that many queries share: its `nodeId`, `sent` and `nodeErrors`
- * are those of the query that rejected last, so read them in the catch
+ * failWaiting() is one object that many queries share. Its `nodeId` and `sent` are the same
+ * for all of them. Its lists are those of the query that rejected with it last, and the
+ * queries of one call reject at about the same time, so a catch can already see the lists of
+ * another query
  */
 export interface IQueryError extends Error {
     // mysql2's code such as ER_LOCK_DEADLOCK or PROTOCOL_CONNECTION_LOST, the socket's such as
-    // ECONNREFUSED, or one of the package, which starts with MDC_
+    // ECONNREFUSED, or one of the package, such as MDC_NO_NODE_AVAILABLE or POOL_NOT_CONNECTED
     code?: string,
     // the error number of the server, or the negative errno of the socket
     errno?: number,

@@ -191,7 +191,8 @@ records that attempt with the same attributes.
 - The two can name one failed check differently. The operation record takes
   `error.type` and the status code from the error as it is. So an error the
   package made, or one the app passed to `failWaiting()`, shows its own code
-  there, such as `POOL_NOT_CONNECTED`, and its `errno` when it has one. The
+  there, such as `POOL_NOT_CONNECTED`, and its `errno` as the status code
+  when that is a whole number above 0. The
   health-check record has `_OTHER` and no status code for the same check.
 - A check that hits its timeout is recorded as a health check at that
   moment. Its operation record is made when the query attempt itself ends.

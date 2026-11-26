@@ -698,11 +698,13 @@ What it touches and what it does not:
   left rejects with `error` itself, with `nodeId`, `sent` and `nodeErrors` set on it, and
   `errors` too unless `error` has an `errors` of its own, such as the fields of a
   validation, which it keeps. All those queries share that one object, on purpose: the
-  caller gets your own `error`. So its `nodeId`, `sent` and `nodeErrors`, and `errors` when
-  the package set it, are those of the query that rejected last: read them in the `catch`,
-  before another query can reject. Pass a new
-  `Error` to each `failWaiting()` call. An entry that would lead back to it is left out of
-  the lists, so the errors never refer to each other in a cycle. A health check of the
+  caller gets your own `error`. Its `nodeId` and `sent` are the same for all of them: this
+  node, and `false`. Its `nodeErrors`, and `errors` when the package set it, are those of the
+  query that rejected with it last. The queries of one call reject at about the same time,
+  often in the same turn, so a caller can see the lists of another query even in its
+  `catch`. Pass a new `Error` to each `failWaiting()` call, so the queries of two calls do
+  not share one. An entry that would lead back to it is left out of the lists, so the
+  errors never refer to each other in a cycle. A health check of the
   legacy check that waits is failed too and counts as a failed check.
 - Connections in use are left alone. So are logins that are still running.
 - The node stays in the cluster, and the call does not set `isValid`. It can still cost the

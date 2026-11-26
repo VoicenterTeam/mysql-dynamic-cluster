@@ -550,11 +550,13 @@ error handed to `failWaiting()` can hold the fields of a validation
 (#106). `MDC_NODE_DOWN` is a new object for each request, so its
 `nodeId` and lists are those of its own call. An error that the app
 handed `failWaiting()` is one object that many queries share, on
-purpose: the caller gets the app's own object. Its `nodeId`, `sent` and
-lists are those of the query that rejected last, so a caller reads them
-in its `catch` (#106). An entry that would lead back to it, itself or
-through a list an earlier query set under either name, is left out, so
-the errors never form a cycle and `JSON.stringify` works on them. An
+purpose: the caller gets the app's own object. Its `nodeId` and `sent`
+are the same for every such query: that node, and `false`. Its lists are
+those of the query that rejected with it last. The queries of one call
+reject at about the same time, often in the same turn, so a caller can
+see the lists of another query even in its `catch` (#106). An entry that
+would lead back to it, itself or through a list an earlier query set
+under either name, is left out, so the errors never form a cycle and `JSON.stringify` works on them. An
 error whose `errors` cannot be read, through a getter or a Proxy that
 throws, gets no list either, since 4.1.1. Each attempt is still logged at
 `error`, since 4.2.0-rc.3 through the logger of the cluster (#86, see
