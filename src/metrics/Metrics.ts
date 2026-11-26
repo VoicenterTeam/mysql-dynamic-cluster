@@ -41,12 +41,6 @@ interface IInstruments {
 
 // The connection metrics of the pools, and the callback that reports them. Kept together so
 // the callback can be taken off the same meter and instruments it was added to
-// What a cluster registered its pools with
-interface IPoolRegistration {
-    clusterName: string | undefined,
-    serverAttributes: boolean | undefined
-}
-
 interface IPoolInstruments {
     meter: Meter,
     connectionCount: ObservableUpDownCounter,
@@ -80,7 +74,7 @@ class Metrics {
     private _nodeInstruments: INodeInstruments;
     // pools of the connected clusters, each with the name of its cluster, or undefined for the
     // name of init(). A map, so a second connect() adds no pool twice
-    private readonly _pools: Map<IPoolMetricSource, IPoolRegistration> = new Map();
+    private readonly _pools: Map<IPoolMetricSource, string | undefined> = new Map();
     private _failureLogged: boolean = false;
 
     /**
@@ -184,15 +178,11 @@ class Metrics {
      * @param pools pools of a cluster that connects
      * @param clusterName the name of that cluster. Left out: the name of init(), read at each
      * collection
-     * @param serverAttributes false: no server.address and server.port on its points (#160).
-     * Left out: true
      */
-    public registerPools(
-        pools: IPoolMetricSource[], clusterName?: string, serverAttributes?: boolean
-    ) {
+    public registerPools(pools: IPoolMetricSource[], clusterName?: string) {
         this._safely(() => {
             Metrics._mustBeList(pools, 'registerPools');
-            pools.forEach(pool => this._pools.set(pool, { clusterName, serverAttributes }));
+            pools.forEach(pool => this._pools.set(pool, clusterName));
             // the instruments are created here when the app registered its provider by now
             this._getInstruments();
         });
@@ -462,9 +452,10 @@ class Metrics {
      * @private
      */
     private _observeNodes(result: BatchObservableResult, instruments: INodeInstruments) {
-        this._pools.forEach(({ clusterName, serverAttributes }, pool) => this._safely(() => {
+        this._pools.forEach((clusterName, pool) => this._safely(() => {
             const attributes = this._nodeAttributes(
-                pool.metricName ?? pool.name, pool.host, pool.port, clusterName, serverAttributes
+                pool.metricName ?? pool.name, pool.host, pool.port, clusterName,
+                pool.serverAttributes
             );
             // read before the first observe, so a pool that throws reports nothing at all
             const { isValid, loadScore } = pool.status;
@@ -520,12 +511,12 @@ class Metrics {
      * @private
      */
     private _observePools(result: BatchObservableResult, instruments: IPoolInstruments) {
-        this._pools.forEach(({ clusterName, serverAttributes }, pool) => this._safely(() => {
+        this._pools.forEach((clusterName, pool) => this._safely(() => {
             const attributes: Attributes = {
                 [MetricAttributes.dbSystem]: 'mysql',
                 [MetricAttributes.poolName]: pool.metricName ?? pool.name
             };
-            if (serverAttributes !== false) {
+            if (pool.serverAttributes !== false) {
                 attributes[MetricAttributes.serverAddress] = pool.host;
                 attributes[MetricAttributes.serverPort] = pool.port;
             }

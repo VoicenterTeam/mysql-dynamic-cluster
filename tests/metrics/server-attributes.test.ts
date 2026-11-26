@@ -5,6 +5,7 @@ import {
     InMemoryMetricExporter, MeterProvider, PeriodicExportingMetricReader, AggregationTemporality
 } from '@opentelemetry/sdk-metrics';
 import { createPoolCluster } from '../../index';
+import Metrics from '../../src/metrics/Metrics';
 import { Settings } from '../../src/utils/Settings';
 import MetricNames from '../../src/metrics/MetricNames';
 
@@ -79,37 +80,6 @@ afterEach(async () => {
     metrics.disable();
 });
 
-const appLogger = () => ({ debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() });
-type AppLogger = ReturnType<typeof appLogger>;
-
-// A cluster of one node. flags are set, so connect() asks no server first, and the next
-// health check is ten minutes away: connect() runs the only one. `more` goes on top of the
-// settings
-const makeCluster = (
-    clusterName: string, port: number, level: string, logger: AppLogger, more: object = {}
-): any => {
-    const cluster: any = createPoolCluster({
-        clusterName,
-        hosts: [{ host: '127.0.0.1', port }],
-        defaultPoolSettings: {
-            user: 'u', password: 'p', database: 'd', flags: [],
-            timerCheckRange: { start: 600000, end: 600000 }
-        },
-        useClusterHashing: false,
-        logs: { level },
-        logger,
-        ...more
-    } as any);
-    clusters.push(cluster);
-    return cluster;
-};
-
-// the messages of one method of an app logger
-const lines = (method: jest.Mock): string[] => method.mock.calls.map(call => call[0]);
-const count = (method: jest.Mock, line: string): number => {
-    return lines(method).filter(message => message === line).length;
-};
-
 const providers: MeterProvider[] = [];
 // The SDK of the app, registered, read back through an in-memory exporter
 const registeredSdk = () => {
@@ -171,7 +141,19 @@ const withServer = (points: { attributes: any }[], key: string) => {
     return points.filter(({ attributes }) => key in attributes).length;
 };
 
-const makeCluster2 = (clusterName: string, hosts: object[], more: object = {}): any => {
+// the instruments whose points name a pool
+const NODE_LEVEL = [
+    'mysql_dynamic_cluster.operation.duration',
+    'mysql_dynamic_cluster.connection.wait_time',
+    'mysql_dynamic_cluster.health_check.duration',
+    'mysql_dynamic_cluster.connection.count',
+    'mysql_dynamic_cluster.connection.pending_requests',
+    'mysql_dynamic_cluster.connection.limit',
+    'mysql_dynamic_cluster.node.valid',
+    'mysql_dynamic_cluster.node.load_score'
+];
+
+const makeCluster = (clusterName: string, hosts: object[], more: object = {}): any => {
     const cluster: any = createPoolCluster({
         clusterName,
         hosts,
@@ -189,7 +171,9 @@ const makeCluster2 = (clusterName: string, hosts: object[], more: object = {}): 
 
 describe('metrics.serverAttributes in the settings', () => {
     const mix = (metricsSettings?: unknown) => {
-        return Settings.mixSettings({ clusterName: 'c', hosts: [{ host: 'h' }], metrics: metricsSettings } as any);
+        return Settings.mixSettings(
+            { clusterName: 'c', hosts: [{ host: 'h' }], metrics: metricsSettings } as any
+        );
     };
 
     it('is true when the block or the key is left out', () => {
@@ -199,7 +183,8 @@ describe('metrics.serverAttributes in the settings', () => {
     });
 
     it('takes false', () => {
-        expect((mix({ serverAttributes: false }) as any).metrics).toEqual({ serverAttributes: false });
+        expect((mix({ serverAttributes: false }) as any).metrics)
+            .toEqual({ serverAttributes: false });
     });
 
     it('rejects a value that is not a boolean and a key it does not know', () => {
@@ -209,12 +194,13 @@ describe('metrics.serverAttributes in the settings', () => {
 });
 
 describe('a cluster with serverAttributes false', () => {
-    it('has no server.address, server.port or db.namespace on any point, and the id as the pool name of a host without a name',
+    it('has no server.address, server.port or db.namespace on any point, and the id as the ' +
+        'pool name of a host without a name',
         async () => {
             const collect = registeredSdk();
             const [portA, portB] = await Promise.all([listen(), listen()]);
             const client = new Redis();
-            const cluster = makeCluster2('hidden', [
+            const cluster = makeCluster('hidden', [
                 { host: '127.0.0.1', port: portA },
                 { host: '127.0.0.1', port: portB, name: 'named' }
             ], {
@@ -233,6 +219,20 @@ describe('a cluster with serverAttributes false', () => {
             expect(points.length).toBeGreaterThan(0);
             for (const key of SERVER) expect(withServer(points, key)).toBe(0);
             for (const { attributes } of points) expect(attributes[CLUSTER]).toBe('hidden');
+            // every point but the cache lookup, which never had db.system.name
+            for (const name of Object.keys(collected)) {
+                if (name === MetricNames.cacheLookupDuration.name) continue;
+                for (const { attributes } of collected[name]) {
+                    expect([name, attributes['db.system.name']]).toEqual([name, 'mysql']);
+                }
+            }
+            // the status query of the check is an operation too: SHOW
+            for (const { attributes } of collected['mysql_dynamic_cluster.query.duration']) {
+                expect(attributes['db.operation.name']).toBe('SELECT');
+            }
+            expect(collected['mysql_dynamic_cluster.operation.duration']
+                .filter(({ attributes }) => attributes['db.operation.name'] === 'SELECT').length)
+                .toBeGreaterThan(0);
 
             const ids = cluster.nodes().map(node => String(node.id));
             expect(ids.length).toBe(2);
@@ -252,7 +252,7 @@ describe('a cluster with serverAttributes false', () => {
 
     it('keeps host:port as the name of the pool, in the nodes and in the stats', async () => {
         const port = await listen();
-        const cluster = makeCluster2('hidden', [{ host: '127.0.0.1', port }], {
+        const cluster = makeCluster('hidden', [{ host: '127.0.0.1', port }], {
             metrics: { serverAttributes: false }
         });
         await cluster.connect();
@@ -272,11 +272,11 @@ describe('two clusters in one process, one with serverAttributes false', () => {
             const hostsB = [{ host: '127.0.0.1', port: portB }];
             let a: any, b: any;
             if (aFirst) {
-                a = makeCluster2('A', hostsA, { metrics: { serverAttributes: false } });
-                b = makeCluster2('B', hostsB);
+                a = makeCluster('A', hostsA, { metrics: { serverAttributes: false } });
+                b = makeCluster('B', hostsB);
             } else {
-                b = makeCluster2('B', hostsB);
-                a = makeCluster2('A', hostsA, { metrics: { serverAttributes: false } });
+                b = makeCluster('B', hostsB);
+                a = makeCluster('A', hostsA, { metrics: { serverAttributes: false } });
             }
             await a.connect();
             await b.connect();
@@ -294,17 +294,50 @@ describe('two clusters in one process, one with serverAttributes false', () => {
             // B as in 4.2.0: all three attributes where they were, and host:port
             expect(poolNames(pointsB)).toEqual(['127.0.0.1:' + portB]);
             expect(withServer(pointsB, 'db.namespace')).toBeGreaterThan(0);
-            for (const key of ['server.address', 'server.port']) {
-                for (const name of [
-                    'mysql_dynamic_cluster.operation.duration',
-                    'mysql_dynamic_cluster.connection.wait_time',
-                    'mysql_dynamic_cluster.health_check.duration',
-                    'mysql_dynamic_cluster.connection.count',
-                    'mysql_dynamic_cluster.node.valid'
-                ]) {
-                    const ofB = collected[name].filter(({ attributes }) => attributes[CLUSTER] === 'B');
-                    expect([name, key, withServer(ofB, key)]).toEqual([name, key, ofB.length]);
+            // every point of B that has a pool name has the host and the port of B, by value
+            let checked = 0;
+            for (const name of Object.keys(collected)) {
+                const ofB = collected[name].filter(({ attributes }) => {
+                    return attributes[CLUSTER] === 'B' && POOL_NAME in attributes;
+                });
+                for (const { attributes } of ofB) {
+                    expect([name, attributes['server.address'], attributes['server.port']])
+                        .toEqual([name, '127.0.0.1', portB]);
+                    checked++;
                 }
+            }
+            // the node-level instruments, each one has a point of B
+            for (const name of NODE_LEVEL) {
+                expect([name, collected[name].some(({ attributes }) => {
+                    return attributes[CLUSTER] === 'B';
+                })]).toEqual([name, true]);
+            }
+            expect(checked).toBeGreaterThan(NODE_LEVEL.length);
+        });
+});
+
+describe('a pool source with serverAttributes false', () => {
+    it('reports neither server.* nor its host as the name, registered with the cluster name only',
+        async () => {
+            const collect = registeredSdk();
+            const source = {
+                name: '10.0.0.1:3306', metricName: '7', serverAttributes: false,
+                host: '10.0.0.1', port: 3306, connectionLimit: 10,
+                stats: () => ({ used: 1, idle: 2, pending: 0 }),
+                status: { isValid: true, loadScore: 3 }
+            };
+            Metrics.registerPools([source], 'unit');
+            const collected = await collect();
+            Metrics.unregisterPools([source]);
+
+            const points = ['connection.count', 'connection.pending_requests',
+                'connection.limit', 'node.valid', 'node.load_score']
+                .flatMap(name => collected['mysql_dynamic_cluster.' + name] || []);
+            expect(points.length).toBeGreaterThanOrEqual(5);
+            for (const { attributes } of points) {
+                expect(attributes['server.address']).toBeUndefined();
+                expect(attributes['server.port']).toBeUndefined();
+                expect(attributes[POOL_NAME]).toBe('7');
             }
         });
 });

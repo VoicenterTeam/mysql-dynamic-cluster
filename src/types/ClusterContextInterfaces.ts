@@ -9,6 +9,7 @@ export interface IClusterContext {
     logger: ILogger,
     // the cluster name its metrics carry. Not set: the name of Metrics.init, read at each record
     clusterName?: string,
-    // false: its metrics carry no server.address, server.port and db.namespace (#160). Not set: true
+    // false: its metrics carry no server.address, server.port and db.namespace (#160). Not set:
+    // true
     serverAttributes?: boolean
 }

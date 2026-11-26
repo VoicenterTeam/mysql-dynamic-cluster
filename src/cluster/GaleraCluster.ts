@@ -182,9 +182,7 @@ export class GaleraCluster {
      */
     public async connect(): Promise<void> {
         // the connection metrics of the pools are reported from here until disconnect()
-        Metrics.registerPools(
-            this._pools, this._context?.clusterName, this._context?.serverAttributes
-        );
+        Metrics.registerPools(this._pools, this._context?.clusterName);
         // the first call resolves the promise `ready` already handed out, a later call a new one
         if (!this._resolveReady) this._newReady();
         const resolveReady = this._resolveReady;

@@ -49,9 +49,10 @@ function init(redisInstant, logger?: ILogger): void {
 
 /**
  * What the new cluster keeps for itself (#86): a logger with the level and the logger of the app
- * of the settings just loaded, and their clusterName and metrics.serverAttributes for its metrics. A later createPoolCluster
- * changes neither. The logger is a view of the module logger: its methods are those of the
- * module logger, looked up at each call, and only the level and the logger of the app are its own
+ * of the settings just loaded, and their clusterName and metrics.serverAttributes for its
+ * metrics. A later createPoolCluster changes none of them. The logger is a view of the module
+ * logger: its methods are those of the module logger, looked up at each call, and only the level
+ * and the logger of the app are its own
  */
 function clusterContext(logger?: ILogger): IClusterContext {
     const clusterLogger = Object.create(Logger);
@@ -59,7 +60,7 @@ function clusterContext(logger?: ILogger): IClusterContext {
     return {
         logger: clusterLogger,
         clusterName: config.current.clusterName,
-        serverAttributes: config.current.metrics.serverAttributes
+        serverAttributes: config.current.metrics?.serverAttributes
     };
 }
 

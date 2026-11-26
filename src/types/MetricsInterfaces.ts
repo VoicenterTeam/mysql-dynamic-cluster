@@ -75,6 +75,8 @@ export interface IPoolMetricSource {
     name: string,
     // the pool name the metrics carry. Not set: name (#160)
     metricName?: string,
+    // false: no server.address and server.port on its points (#160). Not set: true
+    serverAttributes?: boolean,
     host: string,
     port: number,
     // 0 means no limit
