@@ -417,7 +417,8 @@ export class GaleraCluster {
         this._connecting = undefined;
         Metrics.unregisterPools(this._pools);
         this._clusterHashing?.stop();
-        Redis.disconnect();
+        // the client is one per process: only a cluster that enabled redis closes it
+        if (this._useRedis) Redis.disconnect();
         this._pools.forEach((pool) => {
             pool.disconnect();
         })
