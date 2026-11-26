@@ -226,10 +226,10 @@ describe('a cluster with serverAttributes false', () => {
                     expect([name, attributes['db.system.name']]).toEqual([name, 'mysql']);
                 }
             }
-            // the status query of the check is an operation too: SHOW
             for (const { attributes } of collected['mysql_dynamic_cluster.query.duration']) {
                 expect(attributes['db.operation.name']).toBe('SELECT');
             }
+            // the status query of the check is an operation too: SHOW
             expect(collected['mysql_dynamic_cluster.operation.duration']
                 .filter(({ attributes }) => attributes['db.operation.name'] === 'SELECT').length)
                 .toBeGreaterThan(0);
@@ -237,16 +237,9 @@ describe('a cluster with serverAttributes false', () => {
             const ids = cluster.nodes().map(node => String(node.id));
             expect(ids.length).toBe(2);
             // the pool name is the id for the host without a name, its own name for the other
-            const byPool = {};
-            for (const name of [
-                'mysql_dynamic_cluster.operation.duration',
-                'mysql_dynamic_cluster.connection.wait_time',
-                'mysql_dynamic_cluster.health_check.duration',
-                'mysql_dynamic_cluster.connection.count',
-                'mysql_dynamic_cluster.node.valid'
-            ]) byPool[name] = poolNames(collected[name]);
-            for (const name of Object.keys(byPool)) {
-                expect([name, byPool[name]]).toEqual([name, [ids[0], 'named'].sort()]);
+            for (const name of NODE_LEVEL) {
+                expect([name, poolNames(collected[name])])
+                    .toEqual([name, [ids[0], 'named'].sort()]);
             }
         });
 
