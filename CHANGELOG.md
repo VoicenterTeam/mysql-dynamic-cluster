@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.2.1-rc.1 (2026-11-26)
+
+### Added
+
+- **`metrics.serverAttributes`, a per-cluster switch that keeps server and database attributes off a cluster's metrics** (#160).
+  - Default `true`: every metric point is the same as in 4.2.0.
+  - With `false`, no point the cluster records or observes carries `server.address`, `server.port` or `db.namespace`. That covers the operation duration and its connection wait, the cluster query duration, the health-check duration, and the pool connection metrics and node gauges read at collection. Every other attribute stays.
+  - A host with no `name` then reports its id as `db.client.connection.pool.name`, the same `nodeId` that errors, `onStep` and `onTiming` give. A host with a `name` keeps it. `Pool.name`, `nodes()[].name`, the logs and the events keep `host:port`.
+  - The setting is per cluster, like the `clusterName` of #86: a later `createPoolCluster` does not change an earlier cluster.
+  - With `false`, only the pool name and `clusterName` tell pools apart. Give each such cluster its own `clusterName`, and its hosts distinct ids or names that are not ids.
+  - It is meant for clusters made from app data at run time, where the hosts and database names are tenant data and the number of series has no bound.
+
 ## 4.2.0 (2026-11-25)
 
 The same code as 4.2.0-rc.4, which vc-dal tested on its unit and MySQL contract suites and a three-node Galera rig.
