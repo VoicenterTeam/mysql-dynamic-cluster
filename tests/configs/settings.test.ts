@@ -45,7 +45,10 @@ const defaultsOf322 = {
         enabled: false, keyPrefix: 'mdc:', expire: 1000000, expiryMode: 'EX',
         algorithm: 'md5', encoding: 'base64', clearOnStart: false
     },
-    logs: { level: 'info' }
+    logs: { level: 'info' },
+    // not in 3.2.2: added in 4.2.1 (#160), keeps server and database attributes off the metrics
+    // when false
+    metrics: { serverAttributes: true }
 };
 
 // Every environment variable the convict schema of 3.2.2 was bound to
