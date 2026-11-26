@@ -447,6 +447,8 @@ describe('execute()', () => {
             const { error } = await settle(cluster.execute(SELECT, ['x'], { maxRetry: 2 }));
 
             expect([error.errno, error.sent, error.nodeId]).toEqual([1064, true, 1]);
+            // the values go bound, so the sql of the error has only the placeholder
+            expect(error.sql).toBe(SELECT);
             await until(() => n1.app().includes('reset'));
             expect(n1.app()).toEqual(['prepare ' + SELECT, 'reset']);
             expect(n2.app()).toEqual([]);

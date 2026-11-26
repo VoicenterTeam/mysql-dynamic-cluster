@@ -516,9 +516,13 @@ stopped it:
   `errors`, so a single node gives `errors: []`. The query is recorded
   as failed with that error, so the metric carries its code.
 
-`sql` is the statement mysql2 sent, with the values `_formatSQL` wrote
-into it. An app that logs or ships the error whole ships those values
-too, so it should drop `sql` first.
+An error the server answered with has `sql`, the statement mysql2 sent.
+For `query()` with values that is the text with the values `_formatSQL`
+wrote into it. For `execute()` it is the text with its `?` only, since
+the values go bound. A lost connection or a timeout has no `sql`. An app
+that logs or ships the error whole ships those values too, so it should
+drop `sql` first. The package keeps `sql` on purpose: the error is the
+one mysql2 made (#106).
 
 Since 4.0.0. Before, `query()` rejected with a new `Error` whose message
 joined `Pool: <name>; Error: Query error: <message>` lines and which had
@@ -526,10 +530,11 @@ no code. See the changelog.
 
 A frozen error, or a rejection that is no object, cannot take `nodeId`
 or `errors` and is thrown without them. An error that already has an
-`errors` array of its own keeps it and gets no list: Node's
+`errors` of its own, of any shape, keeps it and gets no list: Node's
 `AggregateError`, when every address of a host name refused, holds the
-error of each address there. `MDC_NODE_DOWN` is a new object for each
-request, so its `nodeId` and `errors` are those of its own call. An error
+error of each address there, and an app error handed to `failWaiting()`
+can hold the fields of a validation (#106). `MDC_NODE_DOWN` is a new
+object for each request, so its `nodeId` and `errors` are those of its own call. An error
 that the app handed `failWaiting()` is one object that many queries can
 meet. An entry that would lead back
 to it, itself or through the list an earlier query set, is left out, so

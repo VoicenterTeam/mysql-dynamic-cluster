@@ -161,6 +161,23 @@ describe('an error that has errors of its own', () => {
         expect(error.errors).toEqual([{ nodeId: 1, error: aggregate }]);
         expect(aggregate.errors).toBe(own);
     });
+
+    // An error the app hands failWaiting() can carry errors of any shape, such as the fields
+    // of a validation. They are the app's, not a list of nodes
+    it.each([
+        ['an object', { email: 'is not valid' }],
+        ['a string', 'two fields are not valid'],
+        ['null', null]
+    ])('keeps them when they are %s', async (_shape, own) => {
+        const app = Object.assign(new Error('not valid'), { errors: own });
+        const error = await rejectionOf(
+            makeCluster([node(1, new Error('first')), node(2, app)])
+        );
+
+        expect(error).toBe(app);
+        expect(error.nodeId).toBe(2);
+        expect(error.errors).toBe(own);
+    });
 });
 
 describe('two errors from failWaiting() that two queries meet in opposite order', () => {
