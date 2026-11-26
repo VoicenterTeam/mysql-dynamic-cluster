@@ -69,6 +69,7 @@ tests/
     no-side-effects.test.ts      # Requiring the package has no side effects
     otel-metrics.test.ts         # OpenTelemetry metrics recorded by the cluster, the step of an attempt and its wait for a connection included
     pool-metrics.test.ts         # Pool connection metrics read at collection: values, attributes, connect and disconnect
+    server-attributes.test.ts    # metrics.serverAttributes (#160): the schema, one cluster with it false has no server.address, server.port or db.namespace on any point and the id as pool name of a host without a name, Pool.name stays host:port, two clusters in one process in both orders; every instrument of MetricNames must make a point
     health-metrics.test.ts       # Health-check metric and node gauges: every result, what records nothing, the gauge values
   pool/
     flags.test.ts                # The flags pool setting reaches mysql2's createPool

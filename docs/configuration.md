@@ -15,6 +15,7 @@ Before 4.0.0 the schema was convict, with an environment overlay. See [Migrating
 | `useClusterHashing` | `boolean` | `true` |
 | `clusterHashing` | object | see [below](#clusterhashing) |
 | `serviceMetrics` | object | see [below](#servicemetrics) |
+| `metrics` | object | see [below](#metrics) |
 | `redis` | object | see [below](#redis) |
 | `logs` | object | see [below](#logs) |
 | `redisInstant` | `ioredis` `Redis` or `Cluster` instance | none |
@@ -328,6 +329,18 @@ Identifies the table that maps a service name to its id. The id drives cluster h
 |---|---|---|
 | `database` | `string` | `'swagger_realtime'` |
 | `table` | `string` | `'Service'` |
+
+## `metrics`
+
+Since 4.2.1 (#160). What the metrics of this cluster carry. It is per cluster: a later `createPoolCluster` does not change the flag of an earlier one.
+
+| key | type | default |
+|---|---|---|
+| `serverAttributes` | `boolean` | `true` |
+
+With `serverAttributes: false` no point the cluster records or observes carries `server.address`, `server.port` or `db.namespace`. A host without its own `name` reports its `id`, as a string, as `db.client.connection.pool.name` instead of `host:port`; a host with a `name` keeps it. Every other attribute stays. This is the name on the metrics only: `Pool.name`, the logs, the events and `getPoolStats()` keep `host:port`.
+
+Left out, or `true`, the points are as before. Use `false` for clusters an app makes from its own data at run time, one per tenant: the hosts are tenant data there and the series count has no bound. An unknown key inside `metrics` is rejected, like in the other blocks.
 
 ## `clusterHashing`
 

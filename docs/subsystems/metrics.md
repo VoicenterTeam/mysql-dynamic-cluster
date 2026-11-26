@@ -325,12 +325,12 @@ to look.
 | Attribute | Value | On |
 |---|---|---|
 | `db.system.name` | `mysql` | operation, query, connection, wait, health check, node |
-| `db.namespace` | Database of the query. On the cluster metric only when the caller passed `database`. | operation, query |
+| `db.namespace` | Database of the query. On the cluster metric only when the caller passed `database`. Left out with `metrics.serverAttributes: false`. | operation, query |
 | `db.operation.name` | First SQL keyword, see below | operation, query |
 | `error.type` | mysql2 error `code` such as `ER_ACCESS_DENIED_ERROR` or `ECONNREFUSED`, or `_OTHER`. Set only on failure. Since 4.1.1 a `code` that throws when it is read counts as none on the operation and query metrics, and the point is still written. | operation, query, health check |
 | `db.response.status_code` | `errno` of the error as a string, when it has one. On the health check only for an error of mysql2, the socket or the server. Since 4.1.1 an `errno` that throws when it is read counts as none. | operation, query, health check |
-| `server.address`, `server.port` | Host and port of the pool | operation, connection, wait, health check, node |
-| `db.client.connection.pool.name` | Pool `name` setting, `host:port` by default | operation, connection, wait, health check, node |
+| `server.address`, `server.port` | Host and port of the pool. Left out with `metrics.serverAttributes: false`. | operation, connection, wait, health check, node |
+| `db.client.connection.pool.name` | Pool `name` setting, `host:port` by default. With `metrics.serverAttributes: false` the `id` of a host without a `name`. | operation, connection, wait, health check, node |
 | `db.client.connection.state` | `idle` or `used` | connection count |
 | `mysql_dynamic_cluster.cluster.name` | `clusterName` setting of the cluster that records, see [Two clusters in one process](#two-clusters-in-one-process) | all ten |
 | `mysql_dynamic_cluster.attempt.step` | `queue`, `probe`, `prepare` or `statement`: where an attempt of `Pool.query` ended. Left out for the other attempts. | operation |
@@ -395,6 +395,17 @@ Notes on cardinality and content:
   per node, one series for `valid`, one for `invalid`, and one for every
   distinct pair of `error.type` and status code among its failed checks.
 
+### Keeping server attributes off a cluster
+
+Since 4.2.1 (#160) `metrics: { serverAttributes: false }` in the settings of a cluster
+removes `server.address`, `server.port` and `db.namespace` from every point that cluster
+records or observes, and a host without `name` reports `String(id)` as its pool name.
+See [configuration](../configuration.md#metrics). It is for clusters made from app data at
+run time. The pool computes its metric name once (`Pool.metricName`) and hands it to each
+record; `IPoolMetricSource.metricName` is optional, and the collection callbacks fall back to
+`name`. The flag travels as `IClusterContext.serverAttributes`, and `registerPools` keeps it
+per pool beside the cluster name. The cache lookup metric never had these attributes.
+
 ### Two clusters in one process
 
 Since 4.2.0-rc.3 (#86) every point carries the `clusterName` of the cluster
@@ -403,7 +414,9 @@ context `createPoolCluster` built for it, and so do its pools and their
 health checks. `registerPools` keeps the name of the cluster of each pool,
 for the connection metrics and the node gauges read at collection. So a
 second `createPoolCluster` no longer relabels the metrics of the first.
-With one cluster the points are the same as before.
+With one cluster the points are the same as before. The same holds for
+`serverAttributes`: a cluster with it `false` and one without share a process, and only the
+points of the first lose the attributes, in either order of creation.
 
 The instruments stay one set on the meter of the app's provider, for every
 cluster. `Metrics.init(clusterName)` still runs at each `createPoolCluster`:
