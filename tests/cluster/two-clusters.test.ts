@@ -148,8 +148,9 @@ class Redis {
     async set(): Promise<string> {
         return 'OK';
     }
+    disconnects = 0;
     disconnect() {
-        return undefined;
+        this.disconnects++;
     }
 }
 
@@ -246,7 +247,8 @@ describe('two clusters made in one process', () => {
             const [portA, portB] = await Promise.all([listen(), listen()]);
             const loggerA = appLogger();
             const loggerB = appLogger();
-            const a = makeCluster('A', portA, 'info', loggerA);
+            const a = makeCluster('A', portA, 'info', loggerA,
+                { redis: { enabled: true }, redisInstant: new Redis() });
             const b = makeCluster('B', portB, 'info', loggerB);
             await a.connect();
             await b.connect();
@@ -263,6 +265,33 @@ describe('two clusters made in one process', () => {
                     .toEqual([line, 1, 0]);
             }
             // Redis is one for the process: its line goes to the module logger, B's settings
+            expect(count(loggerB.info, 'Redis disconnected')).toBe(1);
+            expect(count(loggerA.info, 'Redis disconnected')).toBe(0);
+        });
+
+    it('B without redis leaves the shared Redis client alone, A with redis closes it',
+        async () => {
+            const [portA, portB] = await Promise.all([listen(), listen()]);
+            const loggerA = appLogger();
+            const loggerB = appLogger();
+            const client = new Redis();
+            const a = makeCluster('A', portA, 'info', loggerA,
+                { redis: { enabled: true }, redisInstant: client });
+            const b = makeCluster('B', portB, 'info', loggerB,
+                { redis: { enabled: false }, redisInstant: client });
+            await a.connect();
+            await b.connect();
+
+            await b.disconnect();
+            clusters.splice(clusters.indexOf(b), 1);
+            expect(client.disconnects).toBe(0);
+            expect(count(loggerA.info, 'Redis disconnected')).toBe(0);
+            expect(count(loggerB.info, 'Redis disconnected')).toBe(0);
+
+            await a.disconnect();
+            clusters.splice(clusters.indexOf(a), 1);
+            expect(client.disconnects).toBe(1);
+            // the line goes to the module logger, that of the last createPoolCluster
             expect(count(loggerB.info, 'Redis disconnected')).toBe(1);
             expect(count(loggerA.info, 'Redis disconnected')).toBe(0);
         });
@@ -326,6 +355,20 @@ describe('two clusters made in one process', () => {
 });
 
 describe('one cluster alone', () => {
+    it('without redis, its disconnect() does not touch a client it was given', async () => {
+        const port = await listen();
+        const logger = appLogger();
+        const client = new Redis();
+        const cluster = makeCluster('solo', port, 'info', logger,
+            { redis: { enabled: false }, redisInstant: client });
+        await cluster.connect();
+        await cluster.disconnect();
+        clusters.splice(0);
+
+        expect(client.disconnects).toBe(0);
+        expect(count(logger.info, 'Redis disconnected')).toBe(0);
+    });
+
     it('logs the lines of before #86 through the logger of its settings', async () => {
         const port = await listen();
         const logger = appLogger();
@@ -342,7 +385,6 @@ describe('one cluster alone', () => {
             'Pool is connected',
             'Cluster connected',
             'Checking hashing in the cluster stopped',
-            'Redis disconnected',
             'Check status in pool stopped',
             'pool named 127.0.0.1:' + port + ' closed'
         ]);
