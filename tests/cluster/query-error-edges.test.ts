@@ -60,6 +60,15 @@ describe('three nodes that each fail with their own error', () => {
         expect(error.errors.map((entry: any) => entry.nodeId)).toEqual([1, 2]);
         expect(error.errors[0].error).toBe(first);
         expect(error.errors[1].error).toBe(second);
+        // the same list, in the name that never holds anything else
+        expect(error.nodeErrors).toBe(error.errors);
+    });
+
+    it('one node gives empty lists', async () => {
+        const error = await rejectionOf(makeCluster([node(1, new Error('one'))]));
+
+        expect(error.nodeErrors).toEqual([]);
+        expect(error.errors).toBe(error.nodeErrors);
     });
 });
 
@@ -95,6 +104,7 @@ describe('one error object from two nodes', () => {
         expect(error.errors).toHaveLength(1);
         expect(error.errors[0].nodeId).toBe(3);
         expect(error.errors[0].error).toBe(b);
+        expect(error.nodeErrors).toBe(error.errors);
     });
 });
 
@@ -109,6 +119,7 @@ describe('a rejection that cannot take nodeId or errors', () => {
         expect(error).toBe(frozen);
         expect(error.nodeId).toBeUndefined();
         expect(error.errors).toBeUndefined();
+        expect(error.nodeErrors).toBeUndefined();
     });
 
     it('a value that is no object goes to the caller as it is', async () => {
@@ -142,13 +153,14 @@ describe('an error that has errors of its own', () => {
     it('keeps them when it is the error of the node tried last', async () => {
         const aggregate = refused();
         const own = aggregate.errors;
-        const error = await rejectionOf(
-            makeCluster([node(1, new Error('first')), node(2, aggregate)])
-        );
+        const first = new Error('first');
+        const error = await rejectionOf(makeCluster([node(1, first), node(2, aggregate)]));
 
         expect(error).toBe(aggregate);
         expect(error.nodeId).toBe(2);
         expect(error.errors).toBe(own);
+        // the nodes tried before it are still there, in nodeErrors
+        expect(error.nodeErrors).toEqual([{ nodeId: 1, error: first }]);
     });
 
     it('keeps them when it is listed for a node tried before', async () => {
@@ -160,6 +172,23 @@ describe('an error that has errors of its own', () => {
 
         expect(error.errors).toEqual([{ nodeId: 1, error: aggregate }]);
         expect(aggregate.errors).toBe(own);
+    });
+
+    // An error the app hands failWaiting() can carry errors of any shape, such as the fields
+    // of a validation. They are the app's, not a list of nodes
+    it.each([
+        ['an object', { email: 'is not valid' }],
+        ['a string', 'two fields are not valid'],
+        ['null', null]
+    ])('keeps them when they are %s', async (_shape, own) => {
+        const app = Object.assign(new Error('not valid'), { errors: own });
+        const first = new Error('first');
+        const error = await rejectionOf(makeCluster([node(1, first), node(2, app)]));
+
+        expect(error).toBe(app);
+        expect(error.nodeId).toBe(2);
+        expect(error.errors).toBe(own);
+        expect(error.nodeErrors).toEqual([{ nodeId: 1, error: first }]);
     });
 });
 
@@ -177,6 +206,22 @@ describe('two errors from failWaiting() that two queries meet in opposite order'
         expect(() => JSON.stringify(x)).not.toThrow();
         expect(() => JSON.stringify(y)).not.toThrow();
     });
+
+    it('with errors of their own, refer to each other at most one way through nodeErrors',
+        async () => {
+            // the lists of nodes are then only in nodeErrors: the guard must follow that name
+            const x: any =
+                Object.assign(new Error('node 1 is being drained'), { errors: { a: 1 } });
+            const y: any =
+                Object.assign(new Error('node 2 is being drained'), { errors: { b: 2 } });
+            await rejectionOf(makeCluster([node(1, x), node(2, y)]));
+            await rejectionOf(makeCluster([node(2, y), node(1, x, 9)]));
+
+            expect(y.nodeErrors).toEqual([{ nodeId: 1, error: x }]);
+            expect(x.nodeErrors).toEqual([]);
+            expect(() => JSON.stringify(x)).not.toThrow();
+            expect(() => JSON.stringify(y)).not.toThrow();
+        });
 });
 
 describe('every node failed and Redis holds expired data', () => {

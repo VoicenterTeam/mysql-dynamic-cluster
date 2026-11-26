@@ -6,6 +6,7 @@ import {
     INodeReadyResult
 } from './src/types/NodeInterfaces';
 import { IQueryTiming, QueryStep } from './src/types/PoolInterfaces';
+import { IQueryError, INodeError } from './src/types/QueryErrorInterfaces';
 import { IClusterContext } from './src/types/ClusterContextInterfaces';
 import Logger from "./src/utils/Logger";
 import { Settings } from "./src/utils/Settings";
@@ -76,4 +77,4 @@ export {
     INodeReadyResult,
     INodeCheckError
 };
-export type { IQueryTiming, QueryStep };
+export type { IQueryTiming, QueryStep, IQueryError, INodeError };

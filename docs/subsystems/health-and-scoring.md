@@ -1372,8 +1372,8 @@ see the measurement in [Passive health](#passive-health).
   down while the request waited for a connection`.
 - `query()` and `execute()` try the next node, since the statement was
   not sent, see [cluster.md](cluster.md#8-retry-loop). When no try is left
-  the call rejects with that error, with `nodeId` and `errors` as for any
-  other. `getConnection()` rejects with it and tries no other node, see
+  the call rejects with that error, with `nodeId` and `nodeErrors` as for
+  any other. `getConnection()` rejects with it and tries no other node, see
   [../node-api.md](../node-api.md#errors).
 - Only the queue is failed. A call that holds a connection goes on, in its
   probe, its reset, its `USE` or its statement, and so does a connection

@@ -141,8 +141,9 @@ the check when the node does not answer. It is the value the status keeps as `qu
 
 A record with `error` also has `error.type`. It has
 `db.response.status_code` when the error came from mysql2, the socket or the
-server and had a whole number as its `errno`. That is the `errno` as text,
-and a socket `errno` such as `-111` is included. Both follow the rule of
+server and its `errno` is a whole number above 0: the error number of the
+server, as text. A socket `errno` such as `-111` is no answer of the server
+and gives none (#106). Both follow the rule of
 `checkError`, see
 [health-and-scoring.md](./health-and-scoring.md#the-error-of-the-last-check).
 `error.type` is the `code` of the error when mysql2, the socket or the server
@@ -190,7 +191,8 @@ records that attempt with the same attributes.
 - The two can name one failed check differently. The operation record takes
   `error.type` and the status code from the error as it is. So an error the
   package made, or one the app passed to `failWaiting()`, shows its own code
-  there, such as `POOL_NOT_CONNECTED`, and its `errno` when it has one. The
+  there, such as `POOL_NOT_CONNECTED`, and its `errno` as the status code
+  when that is a whole number above 0. The
   health-check record has `_OTHER` and no status code for the same check.
 - A check that hits its timeout is recorded as a health check at that
   moment. Its operation record is made when the query attempt itself ends.
@@ -328,7 +330,7 @@ to look.
 | `db.namespace` | Database of the query. On the cluster metric only when the caller passed `database`. Left out with `metrics.serverAttributes: false`. | operation, query |
 | `db.operation.name` | First SQL keyword, see below | operation, query |
 | `error.type` | mysql2 error `code` such as `ER_ACCESS_DENIED_ERROR` or `ECONNREFUSED`, or `_OTHER`. Set only on failure. Since 4.1.1 a `code` that throws when it is read counts as none on the operation and query metrics, and the point is still written. | operation, query, health check |
-| `db.response.status_code` | `errno` of the error as a string, when it has one. On the health check only for an error of mysql2, the socket or the server. Since 4.1.1 an `errno` that throws when it is read counts as none. | operation, query, health check |
+| `db.response.status_code` | `errno` of the error as a string, when it is a whole number above 0: the error number of the server. The negative `errno` of a socket, such as `-111`, gives none (#106). On the health check only for an error of mysql2, the socket or the server. Since 4.1.1 an `errno` that throws when it is read counts as none. | operation, query, health check |
 | `server.address`, `server.port` | Host and port of the pool. Left out with `metrics.serverAttributes: false`. | operation, connection, wait, health check, node |
 | `db.client.connection.pool.name` | Pool `name` setting, `host:port` by default. With `metrics.serverAttributes: false` the `id` of a host without a `name`. | operation, connection, wait, health check, node |
 | `db.client.connection.state` | `idle` or `used` | connection count |
@@ -357,7 +359,8 @@ Notes on cardinality and content:
   once, with no regular expression.
 - **The cluster metric carries the code of the node tried last.** Since
   4.0.0 a failed `query()` rejects with the mysql2 error itself, so
-  `error.type` is its code and `db.response.status_code` its errno.
+  `error.type` is its code and `db.response.status_code` its errno, for
+  an error the server answered with.
   `MDC_NO_NODE_AVAILABLE` when no node was valid, and
   `MDC_QUOTED_PLACEHOLDER` when a `:name` of the object stood inside
   quotes or backticks, and `MDC_UNSAFE_COMMENT_VALUE` when values

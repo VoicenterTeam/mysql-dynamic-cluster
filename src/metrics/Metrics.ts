@@ -164,7 +164,8 @@ class Metrics {
                 const { code, errno } = options.checkError || {};
                 // the reduced error has a code only when mysql2, the socket or the server made it
                 attributes[MetricAttributes.errorType] = code || '_OTHER';
-                if (errno !== undefined) attributes[MetricAttributes.dbStatusCode] = String(errno);
+                const status = Metrics._serverErrno(errno);
+                if (status) attributes[MetricAttributes.dbStatusCode] = status;
             }
 
             this._getInstruments();
@@ -326,13 +327,24 @@ class Metrics {
             const code = read('code');
             attributes[MetricAttributes.errorType] =
                 typeof code === 'string' && code ? code : '_OTHER';
-            const errno = read('errno');
-            if (typeof errno === 'number') {
-                attributes[MetricAttributes.dbStatusCode] = String(errno);
-            }
+            const status = Metrics._serverErrno(read('errno'));
+            if (status) attributes[MetricAttributes.dbStatusCode] = status;
         }
 
         return attributes;
+    }
+
+    /**
+     * The value of db.response.status_code: the error number the server answered with, as
+     * text. OpenTelemetry gives it to the database. The negative errno of a socket, such as
+     * -111 for a refused connection, is no answer of the server, and neither is a number that
+     * is not a whole one above 0 (#106)
+     * @param errno the errno of the error, as read
+     */
+    private static _serverErrno(errno: unknown): string | undefined {
+        return typeof errno === 'number' && Number.isInteger(errno) && errno > 0
+            ? String(errno)
+            : undefined;
     }
 
     /**
